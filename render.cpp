@@ -49,7 +49,7 @@ void Renderer::cleanup() {
     }
 }
 
-void Renderer::render(const FluidSimulator& simulator) {
+void Renderer::render(const ISimulator& simulator) {
     // clear bg
     std::fill(pixels, pixels + windowWidth * windowHeight, 0xFF000000);
 
@@ -107,7 +107,7 @@ void Renderer::setPixel(int x, int y, Uint8 r, Uint8 g, Uint8 b) {
     }
 }
 
-void Renderer::drawFluidField(const FluidSimulator& simulator) {
+void Renderer::drawFluidField(const ISimulator& simulator) {
     const auto& pressure = simulator.getPressure();
     const auto& density = simulator.getDensity();
     const auto& solid = simulator.getSolid();
@@ -178,7 +178,7 @@ void Renderer::drawFluidField(const FluidSimulator& simulator) {
     }
 }
 
-void Renderer::drawVelocityField(const FluidSimulator& simulator) {
+void Renderer::drawVelocityField(const ISimulator& simulator) {
     const auto& velocityX = simulator.getVelocityX();
     const auto& velocityY = simulator.getVelocityY();
     const auto& solid = simulator.getSolid();

@@ -3,7 +3,7 @@
 
 #include <webgpu/webgpu.h>
 #include <SDL2/SDL.h>
-#include "sim.h"
+#include "irenderer.h"
 #include <vector>
 
 struct UniformData {
@@ -22,14 +22,14 @@ struct UniformData {
     float padding[2]; // 16-byte alignment
 };
 
-class WebGPURenderer {
+class WebGPURenderer : public IRenderer {
 public:
     WebGPURenderer(SDL_Window* window);
     ~WebGPURenderer();
 
-    bool init();
-    void cleanup();
-    void render(const FluidSimulator& simulator);
+    bool init() override;
+    void cleanup() override;
+    void render(const ISimulator& simulator) override;
 
 private:
     SDL_Window* window;
@@ -75,8 +75,8 @@ private:
     bool initBindGroups();
 
     // render methods
-    void updateUniformData(const FluidSimulator& simulator);
-    void updateSimulationTextures(const FluidSimulator& simulator);
+    void updateUniformData(const ISimulator& simulator);
+    void updateSimulationTextures(const ISimulator& simulator);
     void createRenderPass();
     void drawFrame();
 

@@ -2,16 +2,16 @@
 #define RENDERER_H
 
 #include <SDL2/SDL.h>
-#include "sim.h"
+#include "irenderer.h"
 
-class Renderer {
+class Renderer : public IRenderer {
 public:
     Renderer(SDL_Window* window);
     ~Renderer();
 
-    bool init();
-    void cleanup();
-    void render(const FluidSimulator& simulator);
+    bool init() override;
+    void cleanup() override;
+    void render(const ISimulator& simulator) override;
 
 private:
     SDL_Window* window;
@@ -32,8 +32,8 @@ private:
     void convertCoordinates(float simX, float simY, int& pixelX, int& pixelY);
     void mapValueToColor(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b);
     void mapValueToGreyscale(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b);
-    void drawFluidField(const FluidSimulator& simulator);
-    void drawVelocityField(const FluidSimulator& simulator);
+    void drawFluidField(const ISimulator& simulator);
+    void drawVelocityField(const ISimulator& simulator);
     void setPixel(int x, int y, Uint8 r, Uint8 g, Uint8 b);
 };
 

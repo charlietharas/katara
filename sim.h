@@ -2,25 +2,26 @@
 #define FLUID_SIMULATOR_H
 
 #include <vector>
+#include "isimulator.h"
 
-class FluidSimulator {
+class FluidSimulator : public ISimulator {
 public:
     FluidSimulator();
     ~FluidSimulator();
 
-    void init();
-    void update();
-    void reset();
+    void init() override;
+    void update() override;
+    void reset() override;
 
-    int getGridX() const { return gridX; }
-    int getGridY() const { return gridY; }
-    float getCellSize() const { return cellHeight; }
+    int getGridX() const override { return gridX; }
+    int getGridY() const override { return gridY; }
+    float getCellSize() const override { return cellHeight; }
 
-    const std::vector<float>& getVelocityX() const { return x; }
-    const std::vector<float>& getVelocityY() const { return y; }
-    const std::vector<float>& getPressure() const { return p; }
-    const std::vector<float>& getDensity() const { return d; }
-    const std::vector<float>& getSolid() const { return s; }
+    const std::vector<float>& getVelocityX() const override { return x; }
+    const std::vector<float>& getVelocityY() const override { return y; }
+    const std::vector<float>& getPressure() const override { return p; }
+    const std::vector<float>& getDensity() const override { return d; }
+    const std::vector<float>& getSolid() const override { return s; }
 
 private:
     // grid params

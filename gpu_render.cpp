@@ -645,7 +645,7 @@ bool WebGPURenderer::initBindGroups() {
     return true;
 }
 
-void WebGPURenderer::updateUniformData(const FluidSimulator& simulator) {
+void WebGPURenderer::updateUniformData(const ISimulator& simulator) {
     uniformData.gridX = simulator.getGridX();
     uniformData.gridY = simulator.getGridY();
     uniformData.cellSize = simulator.getCellSize();
@@ -663,7 +663,7 @@ void WebGPURenderer::updateUniformData(const FluidSimulator& simulator) {
     wgpuQueueWriteBuffer(queue, uniformBuffer, 0, &uniformData, sizeof(UniformData));
 }
 
-void WebGPURenderer::updateSimulationTextures(const FluidSimulator& simulator) {
+void WebGPURenderer::updateSimulationTextures(const ISimulator& simulator) {
     int gridX = simulator.getGridX();
     int gridY = simulator.getGridY();
 
@@ -893,7 +893,7 @@ void WebGPURenderer::updateSimulationTextures(const FluidSimulator& simulator) {
     }
 }
 
-void WebGPURenderer::render(const FluidSimulator& simulator) {
+void WebGPURenderer::render(const ISimulator& simulator) {
     if (!initialized) return;
 
     updateUniformData(simulator);
