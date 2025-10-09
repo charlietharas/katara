@@ -6,9 +6,13 @@
 #include <SDL2/SDL.h>
 #include "sim.h"
 #include "render.h"
+#include "gpu_render.h"
 
 const int WINDOW_WIDTH = 1200;
 const int WINDOW_HEIGHT = 800;
+
+#define USE_GPU_RENDERER
+#define USE_GPU_SIMULATOR
 
 int main(int argc, char** argv) {
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -28,6 +32,16 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    #if defined(USE_GPU_RENDERER)
+    WebGPURenderer renderer(window);
+    if (!renderer.init()) {
+        std::cerr << "WebGPU renderer initialization error" << std::endl;
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 1;
+    }
+    std::cout << "Using WebGPU for rendering" << std::endl;
+    #else
     Renderer renderer(window);
     if (!renderer.init()) {
         std::cerr << "Renderer initialization error: " << SDL_GetError() << std::endl;
@@ -35,6 +49,8 @@ int main(int argc, char** argv) {
         SDL_Quit();
         return 1;
     }
+    std::cout << "Using CPU for rendering" << std::endl;
+    #endif
 
     FluidSimulator simulator;
     simulator.init();
