@@ -72,7 +72,7 @@ private:
     float neighborhoodY(int i, int j);
     float sample(float i, float j, int type);
 
-    int idx(int i, int j) const { return i * gridY + j; }
+    int idx(int i, int j) const { return j * gridX + i; }
 };
 
 #endif

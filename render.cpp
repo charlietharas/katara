@@ -127,7 +127,7 @@ void Renderer::drawFluidField(const FluidSimulator& simulator) {
     // draw cells
     for (int i = 0; i < gridX; i++) {
         for (int j = 0; j < gridY; j++) {
-            int idx = i * gridY + j;
+            int idx = j * gridX + i;
 
             if (solid[idx] != 0.0f) {
                 Uint8 r, g, b;
@@ -190,7 +190,7 @@ void Renderer::drawVelocityField(const FluidSimulator& simulator) {
     // velocity vectors in white
     for (int i = 0; i < gridX; i++) {
         for (int j = 0; j < gridY; j++) {
-            int idx = i * gridY + j;
+            int idx = j * gridX + i;
 
             if (solid[idx] != 0.0f) {
                 // horizontal vel component
