@@ -1,6 +1,7 @@
 #include "sim.h"
 #include <cmath>
 #include <algorithm>
+#include <omp.h>
 
 FluidSimulator::FluidSimulator()
     : resolution(100), timeStep(1.0f/60.0f), gravity(0.0f), density(1000.0f),
@@ -157,6 +158,7 @@ void FluidSimulator::advect() {
     newX = x;
     newY = y;
 
+    #pragma omp parallel for
     for (int i = 1; i < gridX; i++) {
         for (int j = 1; j < gridY; j++) {
             if (s[idx(i, j)] != 0.0f) {
@@ -186,6 +188,7 @@ void FluidSimulator::advect() {
 }
 
 void FluidSimulator::applyVorticity() {
+    #pragma omp parallel for
     for (int i = 2; i < gridX - 2; i++) {
         for (int j = 2; j < gridY - 2; j++) {
             if (s[idx(i, j)] != 0.0f && s[idx(i-1, j)] != 0.0f &&
@@ -207,6 +210,7 @@ void FluidSimulator::applyVorticity() {
 void FluidSimulator::advectSmoke() {
     newD = d;
 
+    #pragma omp parallel for
     for (int i = 1; i < gridX-1; i++) {
         for (int j = 1; j < gridY-1; j++) {
             if (s[idx(i, j)] != 0.0f) {
