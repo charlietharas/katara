@@ -15,6 +15,11 @@ public:
     void update() override;
     void reset() override;
 
+    // mouse interaction
+    void onMouseDown(int gridX, int gridY) override;
+    void onMouseDrag(int gridX, int gridY) override;
+    void onMouseUp() override;
+
     // grid params
     int getGridX() const override { return cpuSimulator.getGridX(); }
     int getGridY() const override { return cpuSimulator.getGridY(); }

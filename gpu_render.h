@@ -24,7 +24,7 @@ struct UniformData {
 
 class WebGPURenderer : public IRenderer {
 public:
-    WebGPURenderer(SDL_Window* window);
+    WebGPURenderer(SDL_Window* window, bool drawVelocities = false, int drawTarget = 2);
     ~WebGPURenderer();
 
     bool init() override;

@@ -13,6 +13,11 @@ public:
     void update() override;
     void reset() override;
 
+    // mouse interaction methods
+    void onMouseDown(int gridX, int gridY) override;
+    void onMouseDrag(int gridX, int gridY) override;
+    void onMouseUp() override;
+
     int getGridX() const override { return gridX; }
     int getGridY() const override { return gridY; }
     float getCellSize() const override { return cellHeight; }
@@ -53,9 +58,21 @@ private:
     // advection util arrays
     std::vector<float> newX, newY, newD;
 
+    // circle state
+    int circleX, circleY;
+    int circleRadius;
+    bool isDragging;
+
     void setupBoundaries();
     void setupWindTunnel();
     void setupObstacles();
+
+    // circle movement
+    bool isInsideCircle(int i, int j);
+    void moveCircle(int newGridX, int newGridY);
+    void updateSolidFieldForCircle(int prevX, int prevY, int newX, int newY);
+    void enforceBoundaryConditions();
+    void initializeNewlyExposedFluid(int prevX, int prevY, int newX, int newY);
 
     // sim steps
     void integrate();

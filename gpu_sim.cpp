@@ -20,3 +20,15 @@ void GPUFluidSimulator::update() {
 void GPUFluidSimulator::reset() {
     cpuSimulator.reset();
 }
+
+void GPUFluidSimulator::onMouseDown(int gridX, int gridY) {
+    cpuSimulator.onMouseDown(gridX, gridY);
+}
+
+void GPUFluidSimulator::onMouseDrag(int gridX, int gridY) {
+    cpuSimulator.onMouseDrag(gridX, gridY);
+}
+
+void GPUFluidSimulator::onMouseUp() {
+    cpuSimulator.onMouseUp();
+}

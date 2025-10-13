@@ -6,7 +6,7 @@
 
 class Renderer : public IRenderer {
 public:
-    Renderer(SDL_Window* window);
+    Renderer(SDL_Window* window, bool drawVelocities = false, int drawTarget = 2);
     ~Renderer();
 
     bool init() override;

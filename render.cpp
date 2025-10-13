@@ -2,9 +2,9 @@
 #include <algorithm>
 #include <cmath>
 
-Renderer::Renderer(SDL_Window* window)
+Renderer::Renderer(SDL_Window* window, bool drawVelocities, int drawTarget)
     : window(window), renderer(nullptr), texture(nullptr), pixels(nullptr),
-      drawTarget(2), drawVelocities(false) {
+      drawTarget(drawTarget), drawVelocities(drawVelocities) {
 
     SDL_GetWindowSize(window, &windowWidth, &windowHeight);
 

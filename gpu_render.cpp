@@ -138,7 +138,7 @@ fn drawVelocityField(coord: vec2<f32>) -> vec4<f32> {
     // bounds
     if (gridX < 0 || gridX >= uniforms.gridX ||
         gridY < 0 || gridY >= uniforms.gridY) {
-        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
 
     var texX = gridX; // col index
@@ -153,13 +153,52 @@ fn drawVelocityField(coord: vec2<f32>) -> vec4<f32> {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
 
-    // draw lines for velocity
-    var velMag = length(velocity.xy);
-    if (velMag > 0.001) {
-        return vec4<f32>(1.0, 1.0, 1.0, velMag * uniforms.velScale);
+    var velX = velocity.x;
+    var velY = velocity.y;
+
+    // check if we're close enough to a velocity line to draw it
+    var hLineStart = vec2<f32>(f32(gridX) * uniforms.cellSize, (f32(gridY) + 0.5) * uniforms.cellSize);
+    var hLineEnd = vec2<f32>(hLineStart.x + velX * uniforms.velScale, hLineStart.y);
+    var vLineStart = vec2<f32>((f32(gridX) + 0.5) * uniforms.cellSize, f32(gridY) * uniforms.cellSize);
+    var vLineEnd = vec2<f32>(vLineStart.x, vLineStart.y - velY * uniforms.velScale);
+
+    var lineWidth = 0.002;
+    var color = vec3<f32>(0.0, 0.0, 0.0);
+
+    // check distance to horizontal line
+    if (abs(velX) > 0.001) {
+        var hDist = distanceToLineSegment(coord, hLineStart, hLineEnd);
+        if (hDist < lineWidth) {
+            color = vec3<f32>(1.0, 1.0, 1.0);
+        }
     }
 
-    return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    // check distance to vertical line
+    if (abs(velY) > 0.001) {
+        var vDist = distanceToLineSegment(coord, vLineStart, vLineEnd);
+        if (vDist < lineWidth) {
+            color = vec3<f32>(1.0, 1.0, 1.0);
+        }
+    }
+
+    // return white with lower alpha for blending with background
+    return vec4<f32>(color, 0.8);
+}
+
+// Helper function to calculate distance from point to line segment
+fn distanceToLineSegment(point: vec2<f32>, lineStart: vec2<f32>, lineEnd: vec2<f32>) -> f32 {
+    var line = lineEnd - lineStart;
+    var lineLength = length(line);
+
+    if (lineLength < 0.0001) {
+        // line segment is essentially a point
+        return distance(point, lineStart);
+    }
+
+    var t = max(0.0, min(1.0, dot(point - lineStart, line) / (lineLength * lineLength)));
+    var projection = lineStart + t * line;
+
+    return distance(point, projection);
 }
 
 @fragment
@@ -176,15 +215,20 @@ fn fs_main(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
 
     if (uniforms.drawVelocities != 0) {
         var velColor = drawVelocityField(worldCoord);
-        // blend velocity lines
-        color = mix(color, velColor, velColor.a * 0.5);
+        // blend velocity lines on top of fluid color
+        if (velColor.a > 0.0) {
+            return vec4<f32>(
+                velColor.rgb * velColor.a + color.rgb * (1.0 - velColor.a),
+                1.0
+            );
+        }
     }
 
     return color;
 }
 )";
 
-WebGPURenderer::WebGPURenderer(SDL_Window* window)
+WebGPURenderer::WebGPURenderer(SDL_Window* window, bool drawVelocities, int drawTarget)
     : window(window), windowWidth(0), windowHeight(0),
       instance(nullptr), surface(nullptr), adapter(nullptr), device(nullptr),
       queue(nullptr), renderPipeline(nullptr),
@@ -198,8 +242,8 @@ WebGPURenderer::WebGPURenderer(SDL_Window* window)
     SDL_GetWindowSize(window, &windowWidth, &windowHeight);
 
     uniformData = {};
-    uniformData.drawTarget = 2; // draw pressure and smoke
-    uniformData.drawVelocities = 0;
+    uniformData.drawTarget = drawTarget;
+    uniformData.drawVelocities = drawVelocities ? 1 : 0;
     uniformData.velScale = 0.05f;
     uniformData.windowWidth = static_cast<float>(windowWidth);
     uniformData.windowHeight = static_cast<float>(windowHeight);

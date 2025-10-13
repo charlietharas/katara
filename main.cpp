@@ -19,6 +19,8 @@ const int WINDOW_HEIGHT = 800;
 struct SimConfig {
     bool useGPURendering = true;
     bool useGPUSimulation = false;
+    bool drawVelocities = false;
+    int drawTarget = 2; // 0=pressure, 1=smoke, 2=both
 };
 
 SimConfig parseArgs(int argc, char** argv) {
@@ -47,11 +49,27 @@ SimConfig parseArgs(int argc, char** argv) {
                 std::cerr << "Invalid simulator option: " << value << " (use 'gpu' or 'cpu')\n";
                 exit(1);
             }
+        } else if (arg == "--vel") {
+            config.drawVelocities = true;
+        } else if (arg.find("--target=") == 0) {
+            std::string value = arg.substr(9);
+            if (value == "pressure") {
+                config.drawTarget = 0;
+            } else if (value == "smoke") {
+                config.drawTarget = 1;
+            } else if (value == "both") {
+                config.drawTarget = 2;
+            } else {
+                std::cerr << "Invalid target option: " << value << " (use 'pressure', 'smoke', or 'both')\n";
+                exit(1);
+            }
         } else if (arg == "--help" || arg == "-h") {
             std::cout << "Usage: " << argv[0] << " [options]\n"
-                      << "  --render=cpu|gpu     Choose renderer\n"
-                      << "  --sim=cpu|gpu        Choose simulator\n"
-                      << "  --help, -h           Show this help dialog\n";
+                      << "  --render=cpu|gpu              Choose renderer\n"
+                      << "  --sim=cpu|gpu                 Choose simulator\n"
+                      << "  --vel                         Show velocity vectors\n"
+                      << "  --target=pressure|smoke|both  Choose visualization target\n"
+                      << "  --help, -h                    Show this help dialog\n";
             exit(0);
         } else {
             std::cerr << "Unknown option: " << arg << "\n"
@@ -65,9 +83,9 @@ SimConfig parseArgs(int argc, char** argv) {
 
 std::unique_ptr<IRenderer> createRenderer(SDL_Window* window, const SimConfig& config) {
     if (config.useGPURendering) {
-        return std::make_unique<WebGPURenderer>(window);
+        return std::make_unique<WebGPURenderer>(window, config.drawVelocities, config.drawTarget);
     }
-    return std::make_unique<Renderer>(window);
+    return std::make_unique<Renderer>(window, config.drawVelocities, config.drawTarget);
 }
 
 std::unique_ptr<ISimulator> createSimulator(const SimConfig& config) {
@@ -81,9 +99,14 @@ std::unique_ptr<ISimulator> createSimulator(const SimConfig& config) {
 int main(int argc, char** argv) {
     SimConfig config = parseArgs(argc, argv);
 
+    std::string targetName = config.drawTarget == 0 ? "pressure" :
+                             (config.drawTarget == 1 ? "smoke" : "both");
+
     std::cout << "Configuration:\n"
               << "  Rendering: " << (config.useGPURendering ? "GPU" : "CPU") << "\n"
               << "  Simulation: " << (config.useGPUSimulation ? "GPU" : "CPU") << "\n"
+              << "  Velocity vectors: " << (config.drawVelocities ? "Enabled" : "Disabled") << "\n"
+              << "  Visualization target: " << targetName << "\n"
               << std::endl;
 
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -122,6 +145,38 @@ int main(int argc, char** argv) {
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
                 running = false;
+            } else if (event.type == SDL_MOUSEBUTTONDOWN) {
+                if (event.button.button == SDL_BUTTON_LEFT) {
+                    int mouseX = event.button.x;
+                    int mouseY = event.button.y;
+
+                    // convert screen coordinates to grid coordinates
+                    float simX = mouseX / static_cast<float>(WINDOW_WIDTH) * 1.5f;
+                    float simY = (WINDOW_HEIGHT - mouseY) / static_cast<float>(WINDOW_HEIGHT) * 1.0f;
+
+                    int gridX = static_cast<int>(simX / simulator->getCellSize());
+                    int gridY = static_cast<int>(simY / simulator->getCellSize());
+
+                    simulator->onMouseDown(gridX, gridY);
+                }
+            } else if (event.type == SDL_MOUSEBUTTONUP) {
+                if (event.button.button == SDL_BUTTON_LEFT) {
+                    simulator->onMouseUp();
+                }
+            } else if (event.type == SDL_MOUSEMOTION) {
+                if (event.motion.state & SDL_BUTTON_LMASK) {
+                    int mouseX = event.motion.x;
+                    int mouseY = event.motion.y;
+
+                    // convert screen coordinates to grid coordinates
+                    float simX = mouseX / static_cast<float>(WINDOW_WIDTH) * 1.5f;
+                    float simY = (WINDOW_HEIGHT - mouseY) / static_cast<float>(WINDOW_HEIGHT) * 1.0f;
+
+                    int gridX = static_cast<int>(simX / simulator->getCellSize());
+                    int gridY = static_cast<int>(simY / simulator->getCellSize());
+
+                    simulator->onMouseDrag(gridX, gridY);
+                }
             }
         }
 

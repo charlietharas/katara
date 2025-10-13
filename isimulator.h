@@ -12,6 +12,11 @@ public:
     virtual void update() = 0;
     virtual void reset() = 0;
 
+    // mouse interaction
+    virtual void onMouseDown(int gridX, int gridY) = 0;
+    virtual void onMouseDrag(int gridX, int gridY) = 0;
+    virtual void onMouseUp() = 0;
+
     // grid parameters
     virtual int getGridX() const = 0;
     virtual int getGridY() const = 0;
