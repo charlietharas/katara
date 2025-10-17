@@ -69,8 +69,6 @@ private:
     int circleRadius;
     bool isDragging;
 
-    void setupBoundaries();
-    void setupWindTunnel();
     void setupObstacles();
 
     // circle movement
@@ -78,8 +76,9 @@ private:
     void moveCircle(int newGridX, int newGridY);
     void updateSolidFieldForCircle(int prevX, int prevY, int newX, int newY);
     void enforceBoundaryConditions();
-    void initializeNewlyExposedFluid(int prevX, int prevY, int newX, int newY);
     void transferMomentumToFluid();
+    void setupBoundariesAndWindTunnel();
+    void updateCircleAreas(int prevX, int prevY, int newX, int newY);
 
     // sim steps
     void integrate();

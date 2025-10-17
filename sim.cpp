@@ -48,21 +48,10 @@ void FluidSimulator::init() {
     circleX = gridX / 2;
     circleY = gridY / 2;
 
-    setupBoundaries();
     setupObstacles();
-    setupWindTunnel();
+    setupBoundariesAndWindTunnel();
 }
 
-void FluidSimulator::setupBoundaries() {
-    for (int i = 0; i < gridX; i++) {
-        s[idx(i, 0)] = 0.0f;
-        s[idx(i, gridY-1)] = 0.0f;
-    }
-    for (int j = 0; j < gridY; j++) {
-        s[idx(0, j)] = 0.0f;
-        // no right edge
-    }
-}
 
 void FluidSimulator::setupObstacles() {
     for (int i = circleX - circleRadius; i < circleX + circleRadius; i++) {
@@ -78,17 +67,6 @@ void FluidSimulator::setupObstacles() {
     }
 }
 
-void FluidSimulator::setupWindTunnel() {
-    int cx = gridX / 2;
-    int cy = gridY / 2;
-
-    for (int j = cy - pipeHeight / 2; j < cy + pipeHeight / 2; j++) {
-        if (j >= 0 && j < gridY) {
-            x[idx(1, j)] = windTunnelVel;
-            d[idx(0, j)] = 0.0f;
-        }
-    }
-}
 
 void FluidSimulator::update() {
     integrate();
@@ -313,58 +291,13 @@ void FluidSimulator::moveCircle(int newGridX, int newGridY) {
 }
 
 void FluidSimulator::updateSolidFieldForCircle(int prevX, int prevY, int newX, int newY) {
-    // clear previous circle area
-    for (int i = prevX - circleRadius; i < prevX + circleRadius; i++) {
-        for (int j = prevY - circleRadius; j < prevY + circleRadius; j++) {
-            if (i >= 0 && i < gridX && j >= 0 && j < gridY) {
-                float dx = (i + 0.5f) - prevX;
-                float dy = (j + 0.5f) - prevY;
-                float distPrev = sqrt(dx * dx + dy * dy);
-
-                if (distPrev <= circleRadius) {
-                    // check if this cell is not in the new circle area
-                    float newDx = (i + 0.5f) - newX;
-                    float newDy = (j + 0.5f) - newY;
-                    float distNew = sqrt(newDx * newDx + newDy * newDy);
-
-                    if (distNew > circleRadius) {
-                        s[idx(i, j)] = 1.0f; // make it fluid again
-                        d[idx(i, j)] = 1.0f; // reset to default density
-                    }
-                }
-            }
-        }
-    }
-
-    // set new circle area
-    for (int i = newX - circleRadius; i < newX + circleRadius; i++) {
-        for (int j = newY - circleRadius; j < newY + circleRadius; j++) {
-            if (i >= 0 && i < gridX && j >= 0 && j < gridY) {
-                float dx = (i + 0.5f) - newX;
-                float dy = (j + 0.5f) - newY;
-                if (sqrt(dx * dx + dy * dy) <= circleRadius) {
-                    // check if this cell was not in the previous circle area
-                    float prevDx = (i + 0.5f) - prevX;
-                    float prevDy = (j + 0.5f) - prevY;
-                    if (sqrt(prevDx * prevDx + prevDy * prevDy) > circleRadius) {
-                        s[idx(i, j)] = 0.0f; // make it solid
-                        // don't touch the density -- this fixed the wisp !!!
-                    }
-                }
-            }
-        }
-    }
-
-    initializeNewlyExposedFluid(prevX, prevY, newX, newY);
+    updateCircleAreas(prevX, prevY, newX, newY);
 
     // push fluid around
     transferMomentumToFluid();
 
-    // restore boundaries that might have been overwritten
-    setupBoundaries();
-
-    // restore wind tunnel velocity (JANKY)
-    setupWindTunnel();
+    // setup boundaries and wind tunnel
+    setupBoundariesAndWindTunnel();
 
     // enforce boundary conditions after setup
     enforceBoundaryConditions();
@@ -397,32 +330,6 @@ void FluidSimulator::enforceBoundaryConditions() {
     }
 }
 
-void FluidSimulator::initializeNewlyExposedFluid(int prevX, int prevY, int newX, int newY) {
-    // initialize density and velocity in cells that were just uncovered
-    for (int i = prevX - circleRadius; i < prevX + circleRadius; i++) {
-        for (int j = prevY - circleRadius; j < prevY + circleRadius; j++) {
-            if (i >= 0 && i < gridX && j >= 0 && j < gridY) {
-                float dx = (i + 0.5f) - prevX;
-                float dy = (j + 0.5f) - prevY;
-                float distPrev = sqrt(dx * dx + dy * dy);
-
-                // check if this cell was inside the previous circle
-                if (distPrev <= circleRadius) {
-                    // check if now exposed (not in new circle)
-                    float newDx = (i + 0.5f) - newX;
-                    float newDy = (j + 0.5f) - newY;
-                    float distNew = sqrt(newDx * newDx + newDy * newDy);
-
-                    if (distNew > circleRadius && s[idx(i, j)] != 0.0f) {
-                        // clear velocity, solver will handle density
-                        x[idx(i, j)] = 0.0f;
-                        y[idx(i, j)] = 0.0f;
-                    }
-                }
-            }
-        }
-    }
-}
 
 void FluidSimulator::transferMomentumToFluid() {
     if (fabs(circleVelX) < 0.001f && fabs(circleVelY) < 0.001f) {
@@ -468,6 +375,67 @@ void FluidSimulator::transferMomentumToFluid() {
         }
     }
 }
+
+void FluidSimulator::setupBoundariesAndWindTunnel() {
+    int cx = gridX / 2;
+    int cy = gridY / 2;
+
+    for (int i = 0; i < gridX; i++) {
+        for (int j = 0; j < gridY; j++) {
+            // edge boundaries
+            if (j == 0 || j == gridY-1 || i == 0) {
+                s[idx(i, j)] = 0.0f;
+            }
+
+            // wind tunnel
+            if (i == 1 && j >= cy - pipeHeight / 2 && j < cy + pipeHeight / 2) {
+                x[idx(i, j)] = windTunnelVel;
+            }
+            if (i == 0 && j >= cy - pipeHeight / 2 && j < cy + pipeHeight / 2) {
+                d[idx(i, j)] = 0.0f;
+            }
+        }
+    }
+}
+
+void FluidSimulator::updateCircleAreas(int prevX, int prevY, int newX, int newY) {
+    // bounding box surrounding new and old circles
+    int minI = std::min(prevX - circleRadius, newX - circleRadius);
+    int maxI = std::max(prevX + circleRadius, newX + circleRadius);
+    int minJ = std::min(prevY - circleRadius, newY - circleRadius);
+    int maxJ = std::max(prevY + circleRadius, newY + circleRadius);
+
+    for (int i = minI; i <= maxI; i++) {
+        for (int j = minJ; j <= maxJ; j++) {
+            if (i >= 0 && i < gridX && j >= 0 && j < gridY) {
+                float dx = (i + 0.5f);
+                float dy = (j + 0.5f);
+
+                float prevDx = dx - prevX;
+                float prevDy = dy - prevY;
+                float distPrev = sqrt(prevDx * prevDx + prevDy * prevDy);
+
+                float newDx = dx - newX;
+                float newDy = dy - newY;
+                float distNew = sqrt(newDx * newDx + newDy * newDy);
+
+                bool wasInPrevCircle = distPrev <= circleRadius;
+                bool isInNewCircle = distNew <= circleRadius;
+
+                if (wasInPrevCircle && !isInNewCircle) {
+                    s[idx(i, j)] = 1.0f; // make it fluid again
+                    d[idx(i, j)] = 1.0f; // reset to default density
+                    x[idx(i, j)] = 0.0f; // clear velocity
+                    y[idx(i, j)] = 0.0f;
+                } else if (!wasInPrevCircle && isInNewCircle) {
+                    s[idx(i, j)] = 0.0f; // make it solid
+                    // don't touch density -- this fixed the wisp !!!
+                }
+            }
+        }
+    }
+}
+
 
 void FluidSimulator::onMouseDown(int gridX, int gridY) {
     if (isInsideCircle(gridX, gridY)) {
