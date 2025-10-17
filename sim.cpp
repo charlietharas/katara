@@ -7,7 +7,8 @@ FluidSimulator::FluidSimulator()
     : resolution(100), timeStep(1.0f/60.0f), gravity(0.0f), density(1000.0f),
       overrelaxationCoefficient(1.9f), gsIterations(40), doVorticity(true),
       vorticity(10.0f), vorticityLen(5.0f), windTunnelVel(1.5f),
-      circleX(0), circleY(0), circleRadius(0), isDragging(false) {
+      circleX(0), circleY(0), prevCircleX(0), prevCircleY(0), circleVelX(0.0f), circleVelY(0.0f),
+      circleRadius(0), isDragging(false), momentumTransferCoeff(0.25f), momentumTransferRadius(1.0f) {
 }
 
 FluidSimulator::~FluidSimulator() {}
@@ -299,13 +300,16 @@ bool FluidSimulator::isInsideCircle(int i, int j) {
 }
 
 void FluidSimulator::moveCircle(int newGridX, int newGridY) {
-    int prevX = circleX;
-    int prevY = circleY;
+    prevCircleX = circleX;
+    prevCircleY = circleY;
+
+    circleVelX = (newGridX - circleX) / timeStep;
+    circleVelY = (newGridY - circleY) / timeStep;
 
     circleX = newGridX;
     circleY = newGridY;
 
-    updateSolidFieldForCircle(prevX, prevY, circleX, circleY);
+    updateSolidFieldForCircle(prevCircleX, prevCircleY, circleX, circleY);
 }
 
 void FluidSimulator::updateSolidFieldForCircle(int prevX, int prevY, int newX, int newY) {
@@ -352,6 +356,9 @@ void FluidSimulator::updateSolidFieldForCircle(int prevX, int prevY, int newX, i
     }
 
     initializeNewlyExposedFluid(prevX, prevY, newX, newY);
+
+    // push fluid around
+    transferMomentumToFluid();
 
     // restore boundaries that might have been overwritten
     setupBoundaries();
@@ -411,6 +418,51 @@ void FluidSimulator::initializeNewlyExposedFluid(int prevX, int prevY, int newX,
                         x[idx(i, j)] = 0.0f;
                         y[idx(i, j)] = 0.0f;
                     }
+                }
+            }
+        }
+    }
+}
+
+void FluidSimulator::transferMomentumToFluid() {
+    if (fabs(circleVelX) < 0.001f && fabs(circleVelY) < 0.001f) {
+        return;
+    }
+
+    float effectiveRadius = circleRadius + momentumTransferRadius;
+
+    // apply momentum to fluid cells near the ball surface
+    for (int i = circleX - static_cast<int>(effectiveRadius) - 1;
+         i <= circleX + static_cast<int>(effectiveRadius) + 1; i++) {
+        for (int j = circleY - static_cast<int>(effectiveRadius) - 1;
+             j <= circleY + static_cast<int>(effectiveRadius) + 1; j++) {
+
+            if (i >= 0 && i < gridX && j >= 0 && j < gridY) {
+                if (s[idx(i, j)] == 0.0f) continue;
+
+                float dx = (i + 0.5f) - circleX;
+                float dy = (j + 0.5f) - circleY;
+                float distance = sqrt(dx * dx + dy * dy);
+
+                // within influence radius but outside ball
+                if (distance > circleRadius && distance <= effectiveRadius) {
+                    // falloff is 1/r^2
+                    float normalizedDistance = (distance - circleRadius) / momentumTransferRadius;
+                    float falloff = 1.0f - normalizedDistance * normalizedDistance;
+                    falloff = std::max(0.0f, falloff);
+
+                    float densityFactor = d[idx(i, j)]; // weight velocity imparted by local density
+
+                    float momentumX = circleVelX * momentumTransferCoeff * falloff * densityFactor;
+                    float momentumY = circleVelY * momentumTransferCoeff * falloff * densityFactor;
+
+                    x[idx(i, j)] += momentumX;
+                    y[idx(i, j)] += momentumY;
+
+                    // clamp velocities to prevent instability
+                    float maxVel = 8.0f;
+                    x[idx(i, j)] = std::max(-maxVel, std::min(maxVel, x[idx(i, j)]));
+                    y[idx(i, j)] = std::max(-maxVel, std::min(maxVel, y[idx(i, j)]));
                 }
             }
         }

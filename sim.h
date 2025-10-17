@@ -49,6 +49,10 @@ private:
     float windTunnelVel;
     int pipeHeight;
 
+    // momentum transfer parameters
+    float momentumTransferCoeff;
+    float momentumTransferRadius;
+
     std::vector<float> x;        // x vel field
     std::vector<float> y;        // y vel field
     std::vector<float> s;        // solid field (1 = fluid, 0 = solid)
@@ -60,6 +64,8 @@ private:
 
     // circle state
     int circleX, circleY;
+    int prevCircleX, prevCircleY;
+    float circleVelX, circleVelY;
     int circleRadius;
     bool isDragging;
 
@@ -73,6 +79,7 @@ private:
     void updateSolidFieldForCircle(int prevX, int prevY, int newX, int newY);
     void enforceBoundaryConditions();
     void initializeNewlyExposedFluid(int prevX, int prevY, int newX, int newY);
+    void transferMomentumToFluid();
 
     // sim steps
     void integrate();
