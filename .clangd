@@ -1,0 +1,20 @@
+CompileFlags:
+  CompilationDatabase: build/
+
+Index:
+  Background: Build
+
+Diagnostics:
+  Suppress: '*'
+  UnusedIncludes: None
+
+---
+If:
+  PathMatch: .*/_deps/.*
+
+CompileFlags:
+  Remove: [-W*, -w]
+  Add: [-w]
+
+Diagnostics:
+  Suppress: '*'

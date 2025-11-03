@@ -2,6 +2,7 @@
 #include <cmath>
 #include <algorithm>
 #include <omp.h>
+#include <iostream>
 
 FluidSimulator::FluidSimulator()
     : resolution(100), timeStep(1.0f/60.0f), gravity(0.0f), density(1000.0f),
@@ -313,9 +314,7 @@ void FluidSimulator::enforceBoundaryConditions() {
                 y[idx(i, j)] = 0.0f;
 
                 // clear velocity components that would move fluid into the solid
-                if (i > 0) x[idx(i, j)] = 0.0f;
                 if (i < gridX-1) x[idx(i+1, j)] = 0.0f;
-                if (j > 0) y[idx(i, j)] = 0.0f;
                 if (j < gridY-1) y[idx(i, j+1)] = 0.0f;
             }
         }
@@ -437,12 +436,6 @@ void FluidSimulator::updateCircleAreas(int prevX, int prevY, int newX, int newY)
 }
 
 
-void FluidSimulator::onMouseDown(int gridX, int gridY) {
-    if (isInsideCircle(gridX, gridY)) {
-        isDragging = true;
-    }
-}
-
 void FluidSimulator::onMouseDrag(int gridX, int gridY) {
     if (isDragging) {
         // clamp circle to bounds
@@ -453,6 +446,10 @@ void FluidSimulator::onMouseDrag(int gridX, int gridY) {
             moveCircle(newX, newY);
         }
     }
+}
+
+void FluidSimulator::onMouseDown(int gridX, int gridY) {
+    isDragging = true;
 }
 
 void FluidSimulator::onMouseUp() {

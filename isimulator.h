@@ -28,6 +28,8 @@ public:
     virtual const std::vector<float>& getPressure() const = 0;
     virtual const std::vector<float>& getDensity() const = 0;
     virtual const std::vector<float>& getSolid() const = 0;
+
+    virtual bool isInsideCircle(int i, int j) = 0;
 };
 
 #endif

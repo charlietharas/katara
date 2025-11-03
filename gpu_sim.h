@@ -32,6 +32,7 @@ public:
     const std::vector<float>& getDensity() const override { return cpuSimulator.getDensity(); }
     const std::vector<float>& getSolid() const override { return cpuSimulator.getSolid(); }
 
+    bool isInsideCircle(int i, int j) override { return cpuSimulator.isInsideCircle(i, j); }
 private:
     FluidSimulator cpuSimulator;
 };

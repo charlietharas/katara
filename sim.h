@@ -22,6 +22,8 @@ public:
     int getGridY() const override { return gridY; }
     float getCellSize() const override { return cellHeight; }
 
+    bool isInsideCircle(int i, int j);
+
     const std::vector<float>& getVelocityX() const override { return x; }
     const std::vector<float>& getVelocityY() const override { return y; }
     const std::vector<float>& getPressure() const override { return p; }
@@ -72,7 +74,6 @@ private:
     void setupObstacles();
 
     // circle movement
-    bool isInsideCircle(int i, int j);
     void moveCircle(int newGridX, int newGridY);
     void updateSolidFieldForCircle(int prevX, int prevY, int newX, int newY);
     void enforceBoundaryConditions();

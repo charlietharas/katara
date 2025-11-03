@@ -157,7 +157,9 @@ int main(int argc, char** argv) {
                     int gridX = static_cast<int>(simX / simulator->getCellSize());
                     int gridY = static_cast<int>(simY / simulator->getCellSize());
 
-                    simulator->onMouseDown(gridX, gridY);
+                    if (simulator->isInsideCircle(gridX, gridY)) {
+                        simulator->onMouseDown(gridX, gridY);
+                    }
                 }
             } else if (event.type == SDL_MOUSEBUTTONUP) {
                 if (event.button.button == SDL_BUTTON_LEFT) {
