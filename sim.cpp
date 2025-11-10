@@ -282,8 +282,14 @@ void FluidSimulator::moveCircle(int newGridX, int newGridY) {
     prevCircleX = circleX;
     prevCircleY = circleY;
 
-    circleVelX = (newGridX - circleX) / timeStep;
-    circleVelY = (newGridY - circleY) / timeStep;
+    float instantVelX = (newGridX - circleX) / timeStep;
+    float instantVelY = (newGridY - circleY) / timeStep;
+
+    // smoother circle velocity to reduce velocity jitter
+    // (doesn't work that well D: )
+    float alpha = 0.3f;
+    circleVelX = alpha * instantVelX + (1.0f - alpha) * circleVelX;
+    circleVelY = alpha * instantVelY + (1.0f - alpha) * circleVelY;
 
     circleX = newGridX;
     circleY = newGridY;

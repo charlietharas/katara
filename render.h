@@ -2,6 +2,7 @@
 #define RENDERER_H
 
 #include <SDL2/SDL.h>
+#include <vector>
 #include "irenderer.h"
 
 class Renderer : public IRenderer {
@@ -28,13 +29,28 @@ private:
     bool drawVelocities;
     const float velScale = 0.05f;
 
+    // histogram
+    int frameCount;
+    static const int HISTOGRAM_BINS = 64;
+    std::vector<int> histogramBins;
+    float histogramMin, histogramMax;
+    
+    // velocity histogram
+    std::vector<int> velocityHistogramBins;
+    float velocityHistogramMin, velocityHistogramMax;
+
     // draw utils
     void convertCoordinates(float simX, float simY, int& pixelX, int& pixelY);
     void mapValueToColor(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b);
     void mapValueToGreyscale(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b);
+    void mapValueToVelocityColor(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b);
     void drawFluidField(const ISimulator& simulator);
     void drawVelocityField(const ISimulator& simulator);
     void setPixel(int x, int y, Uint8 r, Uint8 g, Uint8 b);
+    void computeHistogram(const ISimulator& simulator);
+    void drawHistogram();
+    void computeVelocityHistogram(const ISimulator& simulator);
+    void drawVelocityHistogram();
 };
 
 #endif

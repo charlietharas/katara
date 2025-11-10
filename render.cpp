@@ -4,7 +4,9 @@
 
 Renderer::Renderer(SDL_Window* window, bool drawVelocities, int drawTarget)
     : window(window), renderer(nullptr), texture(nullptr), pixels(nullptr),
-      drawTarget(drawTarget), drawVelocities(drawVelocities) {
+      drawTarget(drawTarget), drawVelocities(drawVelocities), frameCount(0),
+      histogramBins(HISTOGRAM_BINS, 0), histogramMin(0.0f), histogramMax(0.0f),
+      velocityHistogramBins(HISTOGRAM_BINS, 0), velocityHistogramMin(0.0f), velocityHistogramMax(0.0f) {
 
     SDL_GetWindowSize(window, &windowWidth, &windowHeight);
 
@@ -59,6 +61,17 @@ void Renderer::render(const ISimulator& simulator) {
         drawVelocityField(simulator);
     }
 
+    // compute histograms every n frames
+    if (frameCount % 2 == 0) {
+        computeHistogram(simulator);
+        computeVelocityHistogram(simulator);
+    }
+    
+    drawHistogram();
+    drawVelocityHistogram();
+
+    frameCount++;
+
     SDL_UpdateTexture(texture, nullptr, pixels, windowWidth * sizeof(Uint32));
 
     // render to screen
@@ -99,6 +112,24 @@ void Renderer::mapValueToGreyscale(float value, float min, float max, Uint8& r, 
     float t = (value - min) / (max - min) * 255.0f;
     t = std::max(0.0f, std::min(255.0f, t));
     r = g = b = static_cast<Uint8>(t);
+}
+
+void Renderer::mapValueToVelocityColor(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b) {
+    value = std::max(min, std::min(max - 0.0001f, value));
+    float delta = max - min;
+    float normalized = delta == 0.0f ? 0.5f : (value - min) / delta;
+    
+    if (normalized < 0.5f) {
+        float t = normalized * 2.0f;
+        r = 255;
+        g = static_cast<Uint8>(t * 165.0f);
+        b = 0;
+    } else {
+        float t = (normalized - 0.5f) * 2.0f;
+        r = 255;
+        g = static_cast<Uint8>(165.0f + t * 90.0f);
+        b = 0;
+    }
 }
 
 void Renderer::setPixel(int x, int y, Uint8 r, Uint8 g, Uint8 b) {
@@ -187,16 +218,26 @@ void Renderer::drawVelocityField(const ISimulator& simulator) {
     int gridX = simulator.getGridX();
     int gridY = simulator.getGridY();
 
-    // velocity vectors in white
+    // velocity vectors in white (normalized to unit length, then scaled)
     for (int i = 0; i < gridX; i++) {
         for (int j = 0; j < gridY; j++) {
             int idx = j * gridX + i;
 
             if (solid[idx] != 0.0f) {
+                float vx = velocityX[idx];
+                float vy = velocityY[idx];
+                float magnitude = std::sqrt(vx * vx + vy * vy);
+                
+                if (magnitude > 0.001f) {
+                    float normalizedLength = 0.3f; // CHANGE FOR VELOCITY VECTOR LENGTH
+                    vx = (vx / magnitude) * normalizedLength;
+                    vy = (vy / magnitude) * normalizedLength;
+                }
+                
                 // horizontal vel component
                 int x0, y0;
                 convertCoordinates(i * cellSize, (j + 0.5f) * cellSize, x0, y0);
-                int x1 = x0 + static_cast<int>(velocityX[idx] * velScale * canvasScale);
+                int x1 = x0 + static_cast<int>(vx * velScale * canvasScale);
 
                 // approx velocity line with pixels
                 int steps = std::abs(x1 - x0);
@@ -209,7 +250,7 @@ void Renderer::drawVelocityField(const ISimulator& simulator) {
 
                 // vertical vel component
                 convertCoordinates((i + 0.5f) * cellSize, j * cellSize, x0, y0);
-                int y1 = y0 - static_cast<int>(velocityY[idx] * velScale * canvasScale);
+                int y1 = y0 - static_cast<int>(vy * velScale * canvasScale);
 
                 steps = std::abs(y1 - y0);
                 if (steps > 0) {
@@ -217,6 +258,212 @@ void Renderer::drawVelocityField(const ISimulator& simulator) {
                         int y = y0 + (y1 - y0) * step / steps;
                         setPixel(x0, y, 255, 255, 255);
                     }
+                }
+            }
+        }
+    }
+}
+
+void Renderer::computeHistogram(const ISimulator& simulator) {
+    const auto& pressure = simulator.getPressure();
+    const auto& solid = simulator.getSolid();
+    
+    int gridX = simulator.getGridX();
+    int gridY = simulator.getGridY();
+    
+    bool first = true;
+    for (int i = 0; i < gridX * gridY; i++) {
+        // only look at fluid cells
+        if (solid[i] != 0.0f) {
+            if (first) {
+                histogramMin = pressure[i];
+                histogramMax = pressure[i];
+                first = false;
+            } else {
+                histogramMin = std::min(histogramMin, pressure[i]);
+                histogramMax = std::max(histogramMax, pressure[i]);
+            }
+        }
+    }
+    
+    std::fill(histogramBins.begin(), histogramBins.end(), 0);
+    
+    if (histogramMax > histogramMin) {
+        float binWidth = (histogramMax - histogramMin) / HISTOGRAM_BINS;
+        for (int i = 0; i < gridX * gridY; i++) {
+            if (solid[i] != 0.0f) { // fluid cell
+                int bin = static_cast<int>((pressure[i] - histogramMin) / binWidth);
+                bin = std::max(0, std::min(HISTOGRAM_BINS - 1, bin));
+                histogramBins[bin]++;
+            }
+        }
+    }
+}
+
+void Renderer::drawHistogram() {
+    const int histWidth = 300;
+    const int histHeight = 150;
+    const int histX = 10;
+    const int histY = 10;
+    
+    int maxCount = 0;
+    for (int i = 0; i < HISTOGRAM_BINS; i++) {
+        maxCount = std::max(maxCount, histogramBins[i]);
+    }
+    
+    if (maxCount == 0) return;
+    
+    // background
+    for (int y = histY; y < histY + histHeight; y++) {
+        for (int x = histX; x < histX + histWidth; x++) {
+            if (x >= 0 && x < windowWidth && y >= 0 && y < windowHeight) {
+                Uint8 bg = 40;
+                setPixel(x, y, bg, bg, bg);
+            }
+        }
+    }
+    
+    // border
+    for (int x = histX; x < histX + histWidth; x++) {
+        if (x >= 0 && x < windowWidth) {
+            if (histY >= 0 && histY < windowHeight) {
+                setPixel(x, histY, 200, 200, 200); // top border
+            }
+            if (histY + histHeight - 1 >= 0 && histY + histHeight - 1 < windowHeight) {
+                setPixel(x, histY + histHeight - 1, 200, 200, 200); // bottom border
+            }
+        }
+    }
+    for (int y = histY; y < histY + histHeight; y++) {
+        if (y >= 0 && y < windowHeight) {
+            if (histX >= 0 && histX < windowWidth) {
+                setPixel(histX, y, 200, 200, 200); // left border
+            }
+            if (histX + histWidth - 1 >= 0 && histX + histWidth - 1 < windowWidth) {
+                setPixel(histX + histWidth - 1, y, 200, 200, 200); // right border
+            }
+        }
+    }
+    
+    int barWidth = histWidth / HISTOGRAM_BINS;
+    int padding = 1;
+    
+    // bars
+    for (int i = 0; i < HISTOGRAM_BINS; i++) {
+        int barHeight = static_cast<int>((static_cast<float>(histogramBins[i]) / maxCount) * (histHeight - 20));
+        int barX = histX + 10 + i * barWidth;
+        
+        for (int x = barX; x < barX + barWidth - padding && x < histX + histWidth - 10; x++) {
+            for (int y = histY + histHeight - 10; y >= histY + histHeight - 10 - barHeight && y >= histY + 10; y--) {
+                if (x >= 0 && x < windowWidth && y >= 0 && y < windowHeight) {
+                    float normalized = static_cast<float>(i) / HISTOGRAM_BINS;
+                    Uint8 r, g, b;
+                    mapValueToColor(normalized, 0.0f, 1.0f, r, g, b);
+                    setPixel(x, y, r, g, b);
+                }
+            }
+        }
+    }
+}
+
+void Renderer::computeVelocityHistogram(const ISimulator& simulator) {
+    const auto& velocityX = simulator.getVelocityX();
+    const auto& velocityY = simulator.getVelocityY();
+    const auto& solid = simulator.getSolid();
+    
+    int gridX = simulator.getGridX();
+    int gridY = simulator.getGridY();
+    
+    bool first = true;
+    for (int i = 0; i < gridX * gridY; i++) {
+        if (solid[i] != 0.0f) { // fluid cell
+            float velMagnitude = std::sqrt(velocityX[i] * velocityX[i] + velocityY[i] * velocityY[i]);
+            if (first) {
+                velocityHistogramMin = velMagnitude;
+                velocityHistogramMax = velMagnitude;
+                first = false;
+            } else {
+                velocityHistogramMin = std::min(velocityHistogramMin, velMagnitude);
+                velocityHistogramMax = std::max(velocityHistogramMax, velMagnitude);
+            }
+        }
+    }
+    
+    std::fill(velocityHistogramBins.begin(), velocityHistogramBins.end(), 0);
+    
+    if (velocityHistogramMax > velocityHistogramMin) {
+        float binWidth = (velocityHistogramMax - velocityHistogramMin) / HISTOGRAM_BINS;
+        for (int i = 0; i < gridX * gridY; i++) {
+            if (solid[i] != 0.0f) { // fluid cell
+                float velMagnitude = std::sqrt(velocityX[i] * velocityX[i] + velocityY[i] * velocityY[i]);
+                int bin = static_cast<int>((velMagnitude - velocityHistogramMin) / binWidth);
+                bin = std::max(0, std::min(HISTOGRAM_BINS - 1, bin));
+                velocityHistogramBins[bin]++;
+            }
+        }
+    }
+}
+
+void Renderer::drawVelocityHistogram() {
+    const int histWidth = 300;
+    const int histHeight = 150;
+    const int histX = 320;
+    const int histY = 10;
+    
+    int maxCount = 0;
+    for (int i = 0; i < HISTOGRAM_BINS; i++) {
+        maxCount = std::max(maxCount, velocityHistogramBins[i]);
+    }
+    
+    if (maxCount == 0) return;
+
+    // background
+    for (int y = histY; y < histY + histHeight; y++) {
+        for (int x = histX; x < histX + histWidth; x++) {
+            if (x >= 0 && x < windowWidth && y >= 0 && y < windowHeight) {
+                Uint8 bg = 40;
+                setPixel(x, y, bg, bg, bg);
+            }
+        }
+    }
+    
+    // border
+    for (int x = histX; x < histX + histWidth; x++) {
+        if (x >= 0 && x < windowWidth) {
+            if (histY >= 0 && histY < windowHeight) {
+                setPixel(x, histY, 200, 200, 200); // top border
+            }
+            if (histY + histHeight - 1 >= 0 && histY + histHeight - 1 < windowHeight) {
+                setPixel(x, histY + histHeight - 1, 200, 200, 200); // bottom border
+            }
+        }
+    }
+    for (int y = histY; y < histY + histHeight; y++) {
+        if (y >= 0 && y < windowHeight) {
+            if (histX >= 0 && histX < windowWidth) {
+                setPixel(histX, y, 200, 200, 200); // left border
+            }
+            if (histX + histWidth - 1 >= 0 && histX + histWidth - 1 < windowWidth) {
+                setPixel(histX + histWidth - 1, y, 200, 200, 200); // right border
+            }
+        }
+    }
+    
+    int barWidth = histWidth / HISTOGRAM_BINS;
+    int padding = 1;
+
+    // bars
+    for (int i = 0; i < HISTOGRAM_BINS; i++) {
+        int barHeight = static_cast<int>((static_cast<float>(velocityHistogramBins[i]) / maxCount) * (histHeight - 20));
+        int barX = histX + 10 + i * barWidth;
+        
+        for (int x = barX; x < barX + barWidth - padding && x < histX + histWidth - 10; x++) {
+            for (int y = histY + histHeight - 10; y >= histY + histHeight - 10 - barHeight && y >= histY + 10; y--) {
+                if (x >= 0 && x < windowWidth && y >= 0 && y < windowHeight) {
+                    float normalized = static_cast<float>(i) / HISTOGRAM_BINS;
+                    Uint8 r, g, b;
+                    mapValueToVelocityColor(normalized, 0.0f, 1.0f, r, g, b);
+                    setPixel(x, y, r, g, b);
                 }
             }
         }
