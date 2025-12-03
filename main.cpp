@@ -93,16 +93,16 @@ SimConfig parseArgs(int argc, char** argv) {
 
 std::unique_ptr<IRenderer> createRenderer(SDL_Window* window, const SimConfig& config) {
     if (config.useGPURendering) {
-        return std::make_unique<WebGPURenderer>(window, config.drawVelocities, config.drawTarget);
+        return std::make_unique<WebGPURenderer>(window, config.drawVelocities, config.drawTarget, config.disableHistograms);
     }
     return std::make_unique<Renderer>(window, config.drawVelocities, config.drawTarget, config.disableHistograms);
 }
 
-std::unique_ptr<ISimulator> createSimulator(const SimConfig& config) {
+std::unique_ptr<ISimulator> createSimulator(const SimConfig& config, int resolution) {
     if (config.useGPUSimulation) {
-        return std::make_unique<GPUFluidSimulator>();
+        return std::make_unique<GPUFluidSimulator>(resolution);
     }
-    return std::make_unique<FluidSimulator>();
+    return std::make_unique<FluidSimulator>(resolution);
 }
 
 std::pair<int, int> mouseToGridCoords(const SDL_Event& event, int windowWidth, int windowHeight, ISimulator* simulator) {
@@ -218,7 +218,8 @@ int main(int argc, char** argv) {
     }
 
     auto renderer = createRenderer(window, config);
-    auto simulator = createSimulator(config);
+    int resolution = config.useGPURendering ? 150 : 100; // increase resolution when rendering with GPU
+    auto simulator = createSimulator(config, resolution);
 
     if (!renderer->init()) {
         std::cerr << "Renderer initialization error" << std::endl;

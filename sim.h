@@ -6,7 +6,7 @@
 
 class FluidSimulator : public ISimulator {
 public:
-    FluidSimulator();
+    FluidSimulator(int resolution = 150);
     ~FluidSimulator();
 
     void init(const ImageData* imageData = nullptr) override;

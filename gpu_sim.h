@@ -7,7 +7,7 @@
 // PLACEHOLDER: CURRENTLY WRAPS CPU SIMULATOR
 class GPUFluidSimulator : public ISimulator {
 public:
-    GPUFluidSimulator();
+    GPUFluidSimulator(int resolution = 150);
     ~GPUFluidSimulator() override;
 
     // simulation methods

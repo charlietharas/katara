@@ -1,7 +1,7 @@
 #include "gpu_sim.h"
 
-GPUFluidSimulator::GPUFluidSimulator() {
-    // constructor TODO
+GPUFluidSimulator::GPUFluidSimulator(int resolution) 
+    : cpuSimulator(resolution) {
 }
 
 GPUFluidSimulator::~GPUFluidSimulator() {

@@ -6,238 +6,53 @@
 #include <algorithm>
 #include <cmath>
 
-// vertex shader
-const char* WebGPURenderer::vertexShaderSource = R"(
-@vertex
-fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> @builtin(position) vec4<f32> {
-    var positions = array<vec2<f32>, 6>(
-        vec2<f32>(-1.0, -1.0), // bottom left
-        vec2<f32>( 1.0, -1.0), // bottom right
-        vec2<f32>(-1.0,  1.0), // top left
-        vec2<f32>( 1.0, -1.0), // bottom right
-        vec2<f32>( 1.0,  1.0), // top right
-        vec2<f32>(-1.0,  1.0)  // top left
-    );
-    return vec4<f32>(positions[vertexIndex], 0.0, 1.0);
-}
-)";
-
-// fragment shader
-const char* WebGPURenderer::fragmentShaderSource = R"(
-struct UniformData {
-    drawTarget: i32,
-    gridX: i32,
-    gridY: i32,
-    cellSize: f32,
-    pressureMin: f32,
-    pressureMax: f32,
-    drawVelocities: i32,
-    velScale: f32,
-    windowWidth: f32,
-    windowHeight: f32,
-    simWidth: f32,
-    simHeight: f32,
-    padding: vec2<f32>, // 16-byte alignment
-};
-
-@group(0) @binding(0) var<uniform> uniforms: UniformData;
-@group(0) @binding(1) var pressureSampler: sampler;
-@group(0) @binding(2) var pressureTexture: texture_2d<f32>;
-@group(0) @binding(3) var densityTexture: texture_2d<f32>;
-@group(0) @binding(4) var velocityTexture: texture_2d<f32>;
-@group(0) @binding(5) var solidTexture: texture_2d<f32>;
-
-fn mapValueToColor(value: f32, min: f32, max: f32) -> vec3<f32> {
-    var clampedValue = clamp(value, min, max - 0.0001);
-    var delta = max - min;
-    var normalized = select(0.5, (clampedValue - min) / delta, delta != 0.0);
-
-    var m = 0.25;
-    var num = i32(normalized / m);
-    var s = (normalized - f32(num) * m) / m;
-
-    var color = vec3<f32>(0.0, 0.0, 0.0);
-
-    switch(num) {
-        case 0: { color = vec3<f32>(0.0, s, 1.0); break; }
-        case 1: { color = vec3<f32>(0.0, 1.0, 1.0 - s); break; }
-        case 2: { color = vec3<f32>(s, 1.0, 0.0); break; }
-        case 3: { color = vec3<f32>(1.0, 1.0 - s, 0.0); break; }
-        default: { color = vec3<f32>(1.0, 0.0, 0.0); break; }
-    }
-
-    return color;
-}
-
-fn mapValueToGreyscale(value: f32, min: f32, max: f32) -> vec3<f32> {
-    var t = (value - min) / (max - min);
-    t = clamp(t, 0.0, 1.0);
-    return vec3<f32>(t, t, t);
-}
-
-fn worldToScreen(worldPos: vec2<f32>) -> vec2<f32> {
-    var screenPos = worldPos;
-    screenPos.y = uniforms.simHeight - worldPos.y;
-    screenPos = screenPos / vec2<f32>(uniforms.simWidth, uniforms.simHeight);
-    screenPos = screenPos * 2.0 - 1.0;
-    return screenPos;
-}
-
-fn sampleFluidField(coord: vec2<f32>) -> vec4<f32> {
-    var gridCoord = coord / uniforms.cellSize;
-
-    // integer grid coordinates
-    var gridX = i32(gridCoord.x);
-    var gridY = i32(gridCoord.y);
-
-    // bounds
-    if (gridX < 0 || gridX >= uniforms.gridX ||
-        gridY < 0 || gridY >= uniforms.gridY) {
-        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
-    }
-
-    var texX = gridX; // col index
-    var texY = gridY; // row index
-
-    // load simulation data
-    var pressure = textureLoad(pressureTexture, vec2<i32>(texX, texY), 0);
-    var density = textureLoad(densityTexture, vec2<i32>(texX, texY), 0);
-    var solid = textureLoad(solidTexture, vec2<i32>(texX, texY), 0);
-
-    var color = vec3<f32>(0.0, 0.0, 0.0);
-
-    if (solid.r > 0.5) {
-        // fluid cell
-        if (uniforms.drawTarget == 0) {
-            // draw pressure
-            color = mapValueToColor(pressure.r, uniforms.pressureMin, uniforms.pressureMax);
-        } else if (uniforms.drawTarget == 1) {
-            // draw smoke/density
-            color = mapValueToGreyscale(density.r, 0.0, 1.0);
-        } else {
-            // draw pretty pressure + smoke
-            color = mapValueToColor(pressure.r, uniforms.pressureMin, uniforms.pressureMax);
-            color = color - density.r * vec3<f32>(1.0, 1.0, 1.0);
-            color = max(color, vec3<f32>(0.0, 0.0, 0.0));
-        }
-    } else {
-        // solid boundary
-        color = vec3<f32>(0.49, 0.49, 0.49); // gray
-    }
-
-    return vec4<f32>(color, 1.0);
-}
-
-fn drawVelocityField(coord: vec2<f32>) -> vec4<f32> {
-    var gridCoord = coord / uniforms.cellSize;
-
-    // integer grid coordinates
-    var gridX = i32(gridCoord.x);
-    var gridY = i32(gridCoord.y);
-
-    // bounds
-    if (gridX < 0 || gridX >= uniforms.gridX ||
-        gridY < 0 || gridY >= uniforms.gridY) {
-        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    }
-
-    var texX = gridX; // col index
-    var texY = gridY; // row index
-
-    // load simulation data
-    var solid = textureLoad(solidTexture, vec2<i32>(texX, texY), 0);
-    var velocity = textureLoad(velocityTexture, vec2<i32>(texX, texY), 0);
-
-    // only show velocity in fluid cells
-    if (solid.r <= 0.5) {
-        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    }
-
-    var velX = velocity.x;
-    var velY = velocity.y;
-
-    // check if we're close enough to a velocity line to draw it
-    var hLineStart = vec2<f32>(f32(gridX) * uniforms.cellSize, (f32(gridY) + 0.5) * uniforms.cellSize);
-    var hLineEnd = vec2<f32>(hLineStart.x + velX * uniforms.velScale, hLineStart.y);
-    var vLineStart = vec2<f32>((f32(gridX) + 0.5) * uniforms.cellSize, f32(gridY) * uniforms.cellSize);
-    var vLineEnd = vec2<f32>(vLineStart.x, vLineStart.y - velY * uniforms.velScale);
-
-    var lineWidth = 0.002;
-    var color = vec3<f32>(0.0, 0.0, 0.0);
-
-    // check distance to horizontal line
-    if (abs(velX) > 0.001) {
-        var hDist = distanceToLineSegment(coord, hLineStart, hLineEnd);
-        if (hDist < lineWidth) {
-            color = vec3<f32>(1.0, 1.0, 1.0);
-        }
-    }
-
-    // check distance to vertical line
-    if (abs(velY) > 0.001) {
-        var vDist = distanceToLineSegment(coord, vLineStart, vLineEnd);
-        if (vDist < lineWidth) {
-            color = vec3<f32>(1.0, 1.0, 1.0);
-        }
-    }
-
-    // return white with lower alpha for blending with background
-    return vec4<f32>(color, 0.8);
-}
-
-// Helper function to calculate distance from point to line segment
-fn distanceToLineSegment(point: vec2<f32>, lineStart: vec2<f32>, lineEnd: vec2<f32>) -> f32 {
-    var line = lineEnd - lineStart;
-    var lineLength = length(line);
-
-    if (lineLength < 0.0001) {
-        // line segment is essentially a point
-        return distance(point, lineStart);
-    }
-
-    var t = max(0.0, min(1.0, dot(point - lineStart, line) / (lineLength * lineLength)));
-    var projection = lineStart + t * line;
-
-    return distance(point, projection);
-}
-
-@fragment
-fn fs_main(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
-    var pixelCoord = fragCoord.xy;
-
-    // pixel -> world coords
-    var worldCoord = vec2<f32>(
-        pixelCoord.x / uniforms.windowWidth * uniforms.simWidth,
-        (uniforms.windowHeight - pixelCoord.y) / uniforms.windowHeight * uniforms.simHeight
-    );
-
-    var color = sampleFluidField(worldCoord);
-
-    if (uniforms.drawVelocities != 0) {
-        var velColor = drawVelocityField(worldCoord);
-        // blend velocity lines on top of fluid color
-        if (velColor.a > 0.0) {
-            return vec4<f32>(
-                velColor.rgb * velColor.a + color.rgb * (1.0 - velColor.a),
-                1.0
-            );
-        }
-    }
-
-    return color;
-}
-)";
-
-WebGPURenderer::WebGPURenderer(SDL_Window* window, bool drawVelocities, int drawTarget)
-    : window(window), windowWidth(0), windowHeight(0),
-      instance(nullptr), surface(nullptr), adapter(nullptr), device(nullptr),
-      queue(nullptr), renderPipeline(nullptr),
-      uniformBindGroup(nullptr), bindGroupLayout(nullptr),
-      uniformBuffer(nullptr), vertexBuffer(nullptr),
-      pressureTexture(nullptr), densityTexture(nullptr), velocityTexture(nullptr), solidTexture(nullptr),
+WebGPURenderer::WebGPURenderer(
+    SDL_Window* window,
+    bool drawVelocities,
+    int drawTarget,
+    bool disableHistograms
+)
+    : window(window),
+      windowWidth(0),
+      windowHeight(0),
+      instance(nullptr),
+      surface(nullptr),
+      adapter(nullptr),
+      device(nullptr),
+      queue(nullptr),
+      renderPipeline(nullptr),
+      uniformBindGroup(nullptr),
+      bindGroupLayout(nullptr),
+      uniformBuffer(nullptr),
+      pressureTexture(nullptr),
+      densityTexture(nullptr),
+      velocityTexture(nullptr),
+      solidTexture(nullptr),
+      redInkTexture(nullptr),
+      greenInkTexture(nullptr),
+      blueInkTexture(nullptr),
+      waterTexture(nullptr),
       sampler(nullptr),
-      pressureTextureView(nullptr), densityTextureView(nullptr), velocityTextureView(nullptr), solidTextureView(nullptr),
-      initialized(false) {
+      pressureTextureView(nullptr),
+      densityTextureView(nullptr),
+      velocityTextureView(nullptr),
+      solidTextureView(nullptr),
+      redInkTextureView(nullptr),
+      greenInkTextureView(nullptr),
+      blueInkTextureView(nullptr),
+      waterTextureView(nullptr),
+      initialized(false),
+      disableHistograms(disableHistograms),
+      frameCount(0),
+      densityHistogramBins(IRenderer::HISTOGRAM_BINS, 0),
+      densityHistogramMin(0.0f),
+      densityHistogramMax(0.0f),
+      densityHistogramMaxCount(0),
+      velocityHistogramBins(IRenderer::HISTOGRAM_BINS, 0),
+      velocityHistogramMin(0.0f),
+      velocityHistogramMax(0.0f),
+      velocityHistogramMaxCount(0)
+{
 
     SDL_GetWindowSize(window, &windowWidth, &windowHeight);
 
@@ -247,11 +62,19 @@ WebGPURenderer::WebGPURenderer(SDL_Window* window, bool drawVelocities, int draw
     uniformData.velScale = 0.05f;
     uniformData.windowWidth = static_cast<float>(windowWidth);
     uniformData.windowHeight = static_cast<float>(windowHeight);
+    uniformData.disableHistograms = disableHistograms ? 1 : 0;
 }
 
 WebGPURenderer::~WebGPURenderer() {
-    cleanup();
+    if (!initialized) return;
+
+    releaseResources();
+    initialized = false;
 }
+
+// HOLY
+// BOILERPLATE
+// !!!
 
 bool WebGPURenderer::init() {
     if (!initWebGPU()) {
@@ -284,42 +107,121 @@ bool WebGPURenderer::init() {
         return false;
     }
 
-    if (!initBindGroups()) {
-        std::cerr << "Failed to initialize bind groups" << std::endl;
-        return false;
-    }
-
     initialized = true;
     return true;
 }
 
-void WebGPURenderer::cleanup() {
-    if (!initialized) return;
-
-    releaseResources();
-    initialized = false;
-}
 
 void WebGPURenderer::releaseResources() {
-    if (renderPipeline) wgpuRenderPipelineRelease(renderPipeline);
-    if (uniformBindGroup) wgpuBindGroupRelease(uniformBindGroup);
-    if (bindGroupLayout) wgpuBindGroupLayoutRelease(bindGroupLayout);
-    if (pressureTextureView) wgpuTextureViewRelease(pressureTextureView);
-    if (densityTextureView) wgpuTextureViewRelease(densityTextureView);
-    if (velocityTextureView) wgpuTextureViewRelease(velocityTextureView);
-    if (solidTextureView) wgpuTextureViewRelease(solidTextureView);
-    if (pressureTexture) wgpuTextureRelease(pressureTexture);
-    if (densityTexture) wgpuTextureRelease(densityTexture);
-    if (velocityTexture) wgpuTextureRelease(velocityTexture);
-    if (solidTexture) wgpuTextureRelease(solidTexture);
-    if (sampler) wgpuSamplerRelease(sampler);
-    if (vertexBuffer) wgpuBufferRelease(vertexBuffer);
-    if (uniformBuffer) wgpuBufferRelease(uniformBuffer);
-    if (queue) wgpuQueueRelease(queue);
-    if (device) wgpuDeviceRelease(device);
-    if (adapter) wgpuAdapterRelease(adapter);
-    if (surface) wgpuSurfaceRelease(surface);
-    if (instance) wgpuInstanceRelease(instance);
+    // release views (before textures)
+    if (pressureTextureView) {
+        wgpuTextureViewRelease(pressureTextureView);
+        pressureTextureView = nullptr;
+    }
+    if (densityTextureView) {
+        wgpuTextureViewRelease(densityTextureView);
+        densityTextureView = nullptr;
+    }
+    if (velocityTextureView) {
+        wgpuTextureViewRelease(velocityTextureView);
+        velocityTextureView = nullptr;
+    }
+    if (solidTextureView) {
+        wgpuTextureViewRelease(solidTextureView);
+        solidTextureView = nullptr;
+    }
+    if (redInkTextureView) {
+        wgpuTextureViewRelease(redInkTextureView);
+        redInkTextureView = nullptr;
+    }
+    if (greenInkTextureView) {
+        wgpuTextureViewRelease(greenInkTextureView);
+        greenInkTextureView = nullptr;
+    }
+    if (blueInkTextureView) {
+        wgpuTextureViewRelease(blueInkTextureView);
+        blueInkTextureView = nullptr;
+    }
+    if (waterTextureView) {
+        wgpuTextureViewRelease(waterTextureView);
+        waterTextureView = nullptr;
+    }
+    
+    // release textures
+    if (pressureTexture) {
+        wgpuTextureRelease(pressureTexture);
+        pressureTexture = nullptr;
+    }
+    if (densityTexture) {
+        wgpuTextureRelease(densityTexture);
+        densityTexture = nullptr;
+    }
+    if (velocityTexture) {
+        wgpuTextureRelease(velocityTexture);
+        velocityTexture = nullptr;
+    }
+    if (solidTexture) {
+        wgpuTextureRelease(solidTexture);
+        solidTexture = nullptr;
+    }
+    if (redInkTexture) {
+        wgpuTextureRelease(redInkTexture);
+        redInkTexture = nullptr;
+    }
+    if (greenInkTexture) {
+        wgpuTextureRelease(greenInkTexture);
+        greenInkTexture = nullptr;
+    }
+    if (blueInkTexture) {
+        wgpuTextureRelease(blueInkTexture);
+        blueInkTexture = nullptr;
+    }
+    if (waterTexture) {
+        wgpuTextureRelease(waterTexture);
+        waterTexture = nullptr;
+    }
+    
+    // other resources
+    if (renderPipeline) {
+        wgpuRenderPipelineRelease(renderPipeline);
+        renderPipeline = nullptr;
+    }
+    if (uniformBindGroup) {
+        wgpuBindGroupRelease(uniformBindGroup);
+        uniformBindGroup = nullptr;
+    }
+    if (bindGroupLayout) {
+        wgpuBindGroupLayoutRelease(bindGroupLayout);
+        bindGroupLayout = nullptr;
+    }
+    if (sampler) {
+        wgpuSamplerRelease(sampler);
+        sampler = nullptr;
+    }
+    if (uniformBuffer) {
+        wgpuBufferRelease(uniformBuffer);
+        uniformBuffer = nullptr;
+    }
+    if (queue) {
+        wgpuQueueRelease(queue);
+        queue = nullptr;
+    }
+    if (device) {
+        wgpuDeviceRelease(device);
+        device = nullptr;
+    }
+    if (adapter) {
+        wgpuAdapterRelease(adapter);
+        adapter = nullptr;
+    }
+    if (surface) {
+        wgpuSurfaceRelease(surface);
+        surface = nullptr;
+    }
+    if (instance) {
+        wgpuInstanceRelease(instance);
+        instance = nullptr;
+    }
 }
 
 bool WebGPURenderer::initWebGPU() {
@@ -457,20 +359,6 @@ bool WebGPURenderer::initBuffers() {
         return false;
     }
 
-    // vertex buffer
-    WGPUBufferDescriptor vertexBufferDesc = {};
-    vertexBufferDesc.nextInChain = nullptr;
-    vertexBufferDesc.label = "Vertex Buffer";
-    vertexBufferDesc.size = 6 * sizeof(float) * 2; // 6 vertices * 2 floats per vertex
-    vertexBufferDesc.usage = WGPUBufferUsage_Vertex;
-    vertexBufferDesc.mappedAtCreation = false;
-
-    vertexBuffer = wgpuDeviceCreateBuffer(device, &vertexBufferDesc);
-    if (!vertexBuffer) {
-        std::cerr << "Failed to create vertex buffer" << std::endl;
-        return false;
-    }
-
     return true;
 }
 
@@ -514,9 +402,30 @@ WGPUShaderModule WebGPURenderer::loadShader(const char* source) {
     return wgpuDeviceCreateShaderModule(device, &shaderDesc);
 }
 
+std::string WebGPURenderer::readFile(const char* filename) {
+    std::string path = std::string("../") + filename; // NOTE assuming run from build/ or debug/ !
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        std::cerr << "Failed to open file: " << path << std::endl;
+        return "";
+    }
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
+}
+
 bool WebGPURenderer::initRenderPipeline() {
-    WGPUShaderModule vertexShader = loadShader(vertexShaderSource);
-    WGPUShaderModule fragmentShader = loadShader(fragmentShaderSource);
+    std::string vertexCode = readFile("vertex.wgsl");
+    std::string fragmentCode = readFile("fragment.wgsl");
+
+    if (vertexCode.empty() || fragmentCode.empty()) {
+        std::cerr << "Failed to load shader files" << std::endl;
+        return false;
+    }
+
+    WGPUShaderModule vertexShader = loadShader(vertexCode.c_str());
+    WGPUShaderModule fragmentShader = loadShader(fragmentCode.c_str());
 
     if (!vertexShader || !fragmentShader) {
         std::cerr << "Failed to load shaders" << std::endl;
@@ -591,6 +500,58 @@ bool WebGPURenderer::initRenderPipeline() {
         // solid texture (obstacles)
         {
             .binding = 5,
+            .visibility = WGPUShaderStage_Fragment,
+            .buffer = {},
+            .sampler = {},
+            .texture = {
+                .sampleType = WGPUTextureSampleType_UnfilterableFloat,
+                .viewDimension = WGPUTextureViewDimension_2D,
+                .multisampled = false
+            },
+            .storageTexture = {}
+        },
+        // red ink texture
+        {
+            .binding = 6,
+            .visibility = WGPUShaderStage_Fragment,
+            .buffer = {},
+            .sampler = {},
+            .texture = {
+                .sampleType = WGPUTextureSampleType_UnfilterableFloat,
+                .viewDimension = WGPUTextureViewDimension_2D,
+                .multisampled = false
+            },
+            .storageTexture = {}
+        },
+        // green ink texture
+        {
+            .binding = 7,
+            .visibility = WGPUShaderStage_Fragment,
+            .buffer = {},
+            .sampler = {},
+            .texture = {
+                .sampleType = WGPUTextureSampleType_UnfilterableFloat,
+                .viewDimension = WGPUTextureViewDimension_2D,
+                .multisampled = false
+            },
+            .storageTexture = {}
+        },
+        // blue ink texture
+        {
+            .binding = 8,
+            .visibility = WGPUShaderStage_Fragment,
+            .buffer = {},
+            .sampler = {},
+            .texture = {
+                .sampleType = WGPUTextureSampleType_UnfilterableFloat,
+                .viewDimension = WGPUTextureViewDimension_2D,
+                .multisampled = false
+            },
+            .storageTexture = {}
+        },
+        // water texture
+        {
+            .binding = 9,
             .visibility = WGPUShaderStage_Fragment,
             .buffer = {},
             .sampler = {},
@@ -682,11 +643,27 @@ bool WebGPURenderer::initRenderPipeline() {
     return true;
 }
 
-bool WebGPURenderer::initBindGroups() {
-    // bind groups created in updateSimulationTextures
-    // (need to have the texture views ready)
-
-    return true;
+void WebGPURenderer::computeHistograms(const ISimulator& simulator) {
+    IRenderer::HistogramData data;
+    data.densityHistogramBins = densityHistogramBins;
+    data.velocityHistogramBins = velocityHistogramBins;
+    
+    IRenderer::computeHistograms(simulator, data);
+    
+    densityHistogramMin = data.densityHistogramMin;
+    densityHistogramMax = data.densityHistogramMax;
+    velocityHistogramMin = data.velocityHistogramMin;
+    velocityHistogramMax = data.velocityHistogramMax;
+    densityHistogramBins = data.densityHistogramBins;
+    velocityHistogramBins = data.velocityHistogramBins;
+    
+    // compute max counts
+    densityHistogramMaxCount = 0;
+    velocityHistogramMaxCount = 0;
+    for (int i = 0; i < IRenderer::HISTOGRAM_BINS; i++) {
+        densityHistogramMaxCount = std::max(densityHistogramMaxCount, densityHistogramBins[i]);
+        velocityHistogramMaxCount = std::max(velocityHistogramMaxCount, velocityHistogramBins[i]);
+    }
 }
 
 void WebGPURenderer::updateUniformData(const ISimulator& simulator) {
@@ -703,6 +680,25 @@ void WebGPURenderer::updateUniformData(const ISimulator& simulator) {
         uniformData.pressureMax = *std::max_element(pressure.begin(), pressure.end());
     }
 
+    // histogram data
+    uniformData.densityHistogramMin = densityHistogramMin;
+    uniformData.densityHistogramMax = densityHistogramMax;
+    uniformData.velocityHistogramMin = velocityHistogramMin;
+    uniformData.velocityHistogramMax = velocityHistogramMax;
+    uniformData.densityHistogramMaxCount = densityHistogramMaxCount;
+    uniformData.velocityHistogramMaxCount = velocityHistogramMaxCount;
+    // pack histogram bins into vec4 arrays 
+    for (int i = 0; i < 16; i++) {
+        uniformData.densityHistogramBins[i].x = densityHistogramBins[i * 4 + 0];
+        uniformData.densityHistogramBins[i].y = densityHistogramBins[i * 4 + 1];
+        uniformData.densityHistogramBins[i].z = densityHistogramBins[i * 4 + 2];
+        uniformData.densityHistogramBins[i].w = densityHistogramBins[i * 4 + 3];
+        uniformData.velocityHistogramBins[i].x = velocityHistogramBins[i * 4 + 0];
+        uniformData.velocityHistogramBins[i].y = velocityHistogramBins[i * 4 + 1];
+        uniformData.velocityHistogramBins[i].z = velocityHistogramBins[i * 4 + 2];
+        uniformData.velocityHistogramBins[i].w = velocityHistogramBins[i * 4 + 3];
+    }
+
     // update uniform buffer
     wgpuQueueWriteBuffer(queue, uniformBuffer, 0, &uniformData, sizeof(UniformData));
 }
@@ -713,15 +709,77 @@ void WebGPURenderer::updateSimulationTextures(const ISimulator& simulator) {
 
     // create textures initially or on resize
     if (!pressureTexture || uniformData.gridX != gridX || uniformData.gridY != gridY) {
-        // release old textures
-        if (pressureTextureView) wgpuTextureViewRelease(pressureTextureView);
-        if (densityTextureView) wgpuTextureViewRelease(densityTextureView);
-        if (velocityTextureView) wgpuTextureViewRelease(velocityTextureView);
-        if (solidTextureView) wgpuTextureViewRelease(solidTextureView);
-        if (pressureTexture) wgpuTextureRelease(pressureTexture);
-        if (densityTexture) wgpuTextureRelease(densityTexture);
-        if (velocityTexture) wgpuTextureRelease(velocityTexture);
-        if (solidTexture) wgpuTextureRelease(solidTexture);
+        // release old textures (views first, then textures)
+        if (pressureTextureView) {
+            wgpuTextureViewRelease(pressureTextureView);
+            pressureTextureView = nullptr;
+        }
+        if (densityTextureView) {
+            wgpuTextureViewRelease(densityTextureView);
+            densityTextureView = nullptr;
+        }
+        if (velocityTextureView) {
+            wgpuTextureViewRelease(velocityTextureView);
+            velocityTextureView = nullptr;
+        }
+        if (solidTextureView) {
+            wgpuTextureViewRelease(solidTextureView);
+            solidTextureView = nullptr;
+        }
+        if (redInkTextureView) {
+            wgpuTextureViewRelease(redInkTextureView);
+            redInkTextureView = nullptr;
+        }
+        if (greenInkTextureView) {
+            wgpuTextureViewRelease(greenInkTextureView);
+            greenInkTextureView = nullptr;
+        }
+        if (blueInkTextureView) {
+            wgpuTextureViewRelease(blueInkTextureView);
+            blueInkTextureView = nullptr;
+        }
+        if (waterTextureView) {
+            wgpuTextureViewRelease(waterTextureView);
+            waterTextureView = nullptr;
+        }
+        if (pressureTexture) {
+            wgpuTextureRelease(pressureTexture);
+            pressureTexture = nullptr;
+        }
+        if (densityTexture) {
+            wgpuTextureRelease(densityTexture);
+            densityTexture = nullptr;
+        }
+        if (velocityTexture) {
+            wgpuTextureRelease(velocityTexture);
+            velocityTexture = nullptr;
+        }
+        if (solidTexture) {
+            wgpuTextureRelease(solidTexture);
+            solidTexture = nullptr;
+        }
+        if (redInkTexture) {
+            wgpuTextureRelease(redInkTexture);
+            redInkTexture = nullptr;
+        }
+        if (greenInkTexture) {
+            wgpuTextureRelease(greenInkTexture);
+            greenInkTexture = nullptr;
+        }
+        if (blueInkTexture) {
+            wgpuTextureRelease(blueInkTexture);
+            blueInkTexture = nullptr;
+        }
+        if (waterTexture) {
+            wgpuTextureRelease(waterTexture);
+            waterTexture = nullptr;
+        }
+
+        // release old bind group before creating new textures
+        if (uniformBindGroup) {
+            wgpuBindGroupRelease(uniformBindGroup);
+            uniformBindGroup = nullptr;
+        }
 
         // create new textures
         WGPUTextureDescriptor textureDesc = {};
@@ -732,9 +790,8 @@ void WebGPURenderer::updateSimulationTextures(const ISimulator& simulator) {
         textureDesc.dimension = WGPUTextureDimension_2D;
         textureDesc.format = WGPUTextureFormat_R32Float;
         textureDesc.usage = WGPUTextureUsage_CopyDst | WGPUTextureUsage_TextureBinding;
-
-        pressureTexture = wgpuDeviceCreateTexture(device, &textureDesc);
         textureDesc.label = "Pressure Texture";
+
         pressureTexture = wgpuDeviceCreateTexture(device, &textureDesc);
 
         textureDesc.label = "Density Texture";
@@ -745,10 +802,24 @@ void WebGPURenderer::updateSimulationTextures(const ISimulator& simulator) {
         velocityTexture = wgpuDeviceCreateTexture(device, &textureDesc);
 
         textureDesc.label = "Solid Texture";
-        textureDesc.format = WGPUTextureFormat_R32Float; // Single channel for solid/fluid
+        textureDesc.format = WGPUTextureFormat_R32Float; // single channel for solid/fluid
         solidTexture = wgpuDeviceCreateTexture(device, &textureDesc);
 
-        if (!pressureTexture || !densityTexture || !velocityTexture || !solidTexture) {
+        // create ink textures with the same dimensions as other textures
+        textureDesc.label = "Red Ink Texture";
+        redInkTexture = wgpuDeviceCreateTexture(device, &textureDesc);
+
+        textureDesc.label = "Green Ink Texture";
+        greenInkTexture = wgpuDeviceCreateTexture(device, &textureDesc);
+
+        textureDesc.label = "Blue Ink Texture";
+        blueInkTexture = wgpuDeviceCreateTexture(device, &textureDesc);
+
+        textureDesc.label = "Water Texture";
+        waterTexture = wgpuDeviceCreateTexture(device, &textureDesc);
+
+        if (!pressureTexture || !densityTexture || !velocityTexture || !solidTexture ||
+            !redInkTexture || !greenInkTexture || !blueInkTexture || !waterTexture) {
             std::cerr << "Failed to create simulation textures" << std::endl;
             return;
         }
@@ -772,7 +843,14 @@ void WebGPURenderer::updateSimulationTextures(const ISimulator& simulator) {
         viewDesc.format = WGPUTextureFormat_R32Float;
         solidTextureView = wgpuTextureCreateView(solidTexture, &viewDesc);
 
-        if (!pressureTextureView || !densityTextureView || !velocityTextureView || !solidTextureView) {
+        // create ink texture views
+        redInkTextureView = wgpuTextureCreateView(redInkTexture, &viewDesc);
+        greenInkTextureView = wgpuTextureCreateView(greenInkTexture, &viewDesc);
+        blueInkTextureView = wgpuTextureCreateView(blueInkTexture, &viewDesc);
+        waterTextureView = wgpuTextureCreateView(waterTexture, &viewDesc);
+
+        if (!pressureTextureView || !densityTextureView || !velocityTextureView || !solidTextureView ||
+            !redInkTextureView || !greenInkTextureView || !blueInkTextureView || !waterTextureView) {
             std::cerr << "Failed to create texture views" << std::endl;
             return;
         }
@@ -804,6 +882,22 @@ void WebGPURenderer::updateSimulationTextures(const ISimulator& simulator) {
             {
                 .binding = 5,
                 .textureView = solidTextureView
+            },
+            {
+                .binding = 6,
+                .textureView = redInkTextureView
+            },
+            {
+                .binding = 7,
+                .textureView = greenInkTextureView
+            },
+            {
+                .binding = 8,
+                .textureView = blueInkTextureView
+            },
+            {
+                .binding = 9,
+                .textureView = waterTextureView
             }
         };
 
@@ -934,11 +1028,121 @@ void WebGPURenderer::updateSimulationTextures(const ISimulator& simulator) {
             wgpuQueueWriteTexture(queue, &solidCopy, solid.data(),
                                solid.size() * sizeof(float), &solidLayout, &solidExtent);
         }
+
+        // write ink data to textures
+        const auto& redInk = simulator.getRedInk();
+        const auto& greenInk = simulator.getGreenInk();
+        const auto& blueInk = simulator.getBlueInk();
+
+        // only process those textures if the simulator has ink initialized
+        if (simulator.isInkInitialized() && !redInk.empty()) {
+            WGPUImageCopyTexture redInkCopy = {
+                .texture = redInkTexture,
+                .mipLevel = 0,
+                .origin = {0, 0, 0},
+                .aspect = WGPUTextureAspect_All
+            };
+
+            WGPUTextureDataLayout redInkLayout = {
+                .offset = 0,
+                .bytesPerRow = static_cast<uint32_t>(gridX * sizeof(float)),
+                .rowsPerImage = static_cast<uint32_t>(gridY)
+            };
+
+            WGPUExtent3D redInkExtent = {
+                .width = static_cast<uint32_t>(gridX),
+                .height = static_cast<uint32_t>(gridY),
+                .depthOrArrayLayers = 1
+            };
+
+            wgpuQueueWriteTexture(queue, &redInkCopy, redInk.data(),
+                                   redInk.size() * sizeof(float), &redInkLayout, &redInkExtent);
+        }
+
+        if (!greenInk.empty()) {
+            WGPUImageCopyTexture greenInkCopy = {
+                .texture = greenInkTexture,
+                .mipLevel = 0,
+                .origin = {0, 0, 0},
+                .aspect = WGPUTextureAspect_All
+            };
+
+            WGPUTextureDataLayout greenInkLayout = {
+                .offset = 0,
+                .bytesPerRow = static_cast<uint32_t>(gridX * sizeof(float)),
+                .rowsPerImage = static_cast<uint32_t>(gridY)
+            };
+
+            WGPUExtent3D greenInkExtent = {
+                .width = static_cast<uint32_t>(gridX),
+                .height = static_cast<uint32_t>(gridY),
+                .depthOrArrayLayers = 1
+            };
+
+            wgpuQueueWriteTexture(queue, &greenInkCopy, greenInk.data(),
+                                   greenInk.size() * sizeof(float), &greenInkLayout, &greenInkExtent);
+        }
+
+        if (!blueInk.empty()) {
+            WGPUImageCopyTexture blueInkCopy = {
+                .texture = blueInkTexture,
+                .mipLevel = 0,
+                .origin = {0, 0, 0},
+                .aspect = WGPUTextureAspect_All
+            };
+
+            WGPUTextureDataLayout blueInkLayout = {
+                .offset = 0,
+                .bytesPerRow = static_cast<uint32_t>(gridX * sizeof(float)),
+                .rowsPerImage = static_cast<uint32_t>(gridY)
+            };
+
+            WGPUExtent3D blueInkExtent = {
+                .width = static_cast<uint32_t>(gridX),
+                .height = static_cast<uint32_t>(gridY),
+                .depthOrArrayLayers = 1
+            };
+
+            wgpuQueueWriteTexture(queue, &blueInkCopy, blueInk.data(),
+                                   blueInk.size() * sizeof(float), &blueInkLayout, &blueInkExtent);
+        }
+
+        // write water data to texture
+        const auto& water = simulator.getWaterContent();
+        if (!water.empty()) {
+            WGPUImageCopyTexture waterCopy = {
+                .texture = waterTexture,
+                .mipLevel = 0,
+                .origin = {0, 0, 0},
+                .aspect = WGPUTextureAspect_All
+            };
+
+            WGPUTextureDataLayout waterLayout = {
+                .offset = 0,
+                .bytesPerRow = static_cast<uint32_t>(gridX * sizeof(float)),
+                .rowsPerImage = static_cast<uint32_t>(gridY)
+            };
+
+            WGPUExtent3D waterExtent = {
+                .width = static_cast<uint32_t>(gridX),
+                .height = static_cast<uint32_t>(gridY),
+                .depthOrArrayLayers = 1
+            };
+
+            wgpuQueueWriteTexture(queue, &waterCopy, water.data(),
+                                   water.size() * sizeof(float), &waterLayout, &waterExtent);
+        }
     }
 }
 
 void WebGPURenderer::render(const ISimulator& simulator) {
     if (!initialized) return;
+
+    // compute histograms every n frames
+    int histogramFrameInterval = 1;
+    if (!disableHistograms && frameCount++ % histogramFrameInterval == 0) {
+        computeHistograms(simulator);
+    }
 
     updateUniformData(simulator);
     updateSimulationTextures(simulator);
@@ -1034,4 +1238,3 @@ void WebGPURenderer::render(const ISimulator& simulator) {
     wgpuTextureViewRelease(nextTexture);
     wgpuTextureRelease(surfaceTexture.texture);
 }
-

@@ -23,10 +23,10 @@ Renderer::Renderer(
     disableHistograms(disableHistograms),
 
     // histograms
-    densityHistogramBins(HISTOGRAM_BINS, 0),
+    densityHistogramBins(IRenderer::HISTOGRAM_BINS, 0),
     densityHistogramMin(0.0f),
     densityHistogramMax(0.0f),
-    velocityHistogramBins(HISTOGRAM_BINS, 0),
+    velocityHistogramBins(IRenderer::HISTOGRAM_BINS, 0),
     velocityHistogramMin(0.0f),
     velocityHistogramMax(0.0f)
 {
@@ -127,6 +127,7 @@ void Renderer::mapValueToColor(float value, float min, float max, Uint8& r, Uint
         case 1: fr = 0.0f; fg = 1.0f; fb = 1.0f - s; break;
         case 2: fr = s; fg = 1.0f; fb = 0.0f; break;
         case 3: fr = 1.0f; fg = 1.0f - s; fb = 0.0f; break;
+        default: fr = 1.0f; fg = 0.0f; fb = 0.0f; break;
     }
 
     r = static_cast<Uint8>(fr * 255);
@@ -148,17 +149,17 @@ void Renderer::mapValueToVelocityColor(float value, float min, float max, Uint8&
     if (normalized < 0.5f) {
         float t = normalized * 2.0f;
         r = 255;
-        g = static_cast<Uint8>(t * 165.0f);
+        g = static_cast<Uint8>(t * 165.0f); // orange to yellow
         b = 0;
     } else {
         float t = (normalized - 0.5f) * 2.0f;
         r = 255;
-        g = static_cast<Uint8>(165.0f + t * 90.0f);
+        g = static_cast<Uint8>(165.0f + t * 90.0f); // yellow to white
         b = 0;
     }
 }
 
-void Renderer::mapInkToColor(float r, float g, float b, float water, float pressure, float velX, float velY, Uint8& outR, Uint8& outG, Uint8& outB) {
+void Renderer::mapInkToColor(float r, float g, float b, float water, Uint8& outR, Uint8& outG, Uint8& outB) {
     r = std::max(0.0f, std::min(1.0f, r));
     g = std::max(0.0f, std::min(1.0f, g));
     b = std::max(0.0f, std::min(1.0f, b));
@@ -171,13 +172,6 @@ void Renderer::mapInkToColor(float r, float g, float b, float water, float press
     outR = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, r * inkStrength * 255.0f)));
     outG = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, g * inkStrength * 255.0f)));
     outB = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, b * inkStrength * 255.0f)));
-
-    // dark colors have some minimum visibility
-    if (outR + outG + outB < 30) {
-        outR = std::max(static_cast<Uint8>(10), outR);
-        outG = std::max(static_cast<Uint8>(10), outG);
-        outB = std::max(static_cast<Uint8>(10), outB);
-    }
 }
 
 void Renderer::setPixel(int x, int y, Uint8 r, Uint8 g, Uint8 b) {
@@ -203,6 +197,20 @@ void Renderer::drawFluidField(const ISimulator& simulator) {
         maxP = std::max(maxP, pressure[i]);
     }
 
+    // get ink references if needed
+    bool inkInitialized = false;
+    const std::vector<float>* r_ink_ptr = nullptr;
+    const std::vector<float>* g_ink_ptr = nullptr;
+    const std::vector<float>* b_ink_ptr = nullptr;
+    const std::vector<float>* water_ptr = nullptr;
+    if (drawTarget == 3 && simulator.isInkInitialized()) {
+        r_ink_ptr = &simulator.getRedInk();
+        g_ink_ptr = &simulator.getGreenInk();
+        b_ink_ptr = &simulator.getBlueInk();
+        water_ptr = &simulator.getWaterContent();
+        inkInitialized = true;
+    }
+
     // draw cells
     for (int i = 0; i < gridX; i++) {
         for (int j = 0; j < gridY; j++) {
@@ -219,23 +227,8 @@ void Renderer::drawFluidField(const ISimulator& simulator) {
                     mapValueToGreyscale(density[idx], 0.0f, 1.0f, r, g, b);
                 } else if (drawTarget == 3) {
                     // draw ink diffusion
-                    const auto& r_ink = simulator.getRedInk();
-                    const auto& g_ink = simulator.getGreenInk();
-                    const auto& b_ink = simulator.getBlueInk();
-                    const auto& water = simulator.getWaterContent();
-                    const auto& velX = simulator.getVelocityX();
-                    const auto& velY = simulator.getVelocityY();
-
-                    if (simulator.isInkInitialized() && r_ink.size() > idx) {
-                        float ink_r = r_ink[idx];
-                        float ink_g = g_ink[idx];
-                        float ink_b = b_ink[idx];
-                        float water_content = water[idx];
-                        float pressure_local = pressure[idx];
-                        float vel_x_local = velX[idx];
-                        float vel_y_local = velY[idx];
-
-                        mapInkToColor(ink_r, ink_g, ink_b, water_content, pressure_local, vel_x_local, vel_y_local, r, g, b);
+                    if (inkInitialized && r_ink_ptr->size() > idx) {
+                        mapInkToColor((*r_ink_ptr)[idx], (*g_ink_ptr)[idx], (*b_ink_ptr)[idx], (*water_ptr)[idx], r, g, b);
                     } else {
                         // default to white
                         r = 255; g = 255; b = 255;
@@ -289,6 +282,8 @@ void Renderer::drawVelocityField(const ISimulator& simulator) {
     int gridX = simulator.getGridX();
     int gridY = simulator.getGridY();
 
+    float VELOCITY_VECTOR_LENGTH = 0.3f;
+
     // velocity vectors in white (normalized to unit length, then scaled)
     for (int i = 0; i < gridX; i++) {
         for (int j = 0; j < gridY; j++) {
@@ -300,34 +295,39 @@ void Renderer::drawVelocityField(const ISimulator& simulator) {
                 float magnitude = std::sqrt(vx * vx + vy * vy);
                 
                 if (magnitude > 0.001f) {
-                    float normalizedLength = 0.3f; // CHANGE FOR VELOCITY VECTOR LENGTH
+                    float normalizedLength = VELOCITY_VECTOR_LENGTH;
                     vx = (vx / magnitude) * normalizedLength;
                     vy = (vy / magnitude) * normalizedLength;
                 }
                 
                 // horizontal vel component
-                int x0, y0;
-                convertCoordinates(i * cellSize, (j + 0.5f) * cellSize, x0, y0);
-                int x1 = x0 + static_cast<int>(vx * velScale * canvasScale);
+                if (std::abs(vx) > 0.001f) {
+                    int x0, y0;
+                    convertCoordinates(i * cellSize, (j + 0.5f) * cellSize, x0, y0);
+                    int x1 = x0 + static_cast<int>(vx * velScale * canvasScale);
 
-                // approx velocity line with pixels
-                int steps = std::abs(x1 - x0);
-                if (steps > 0) {
-                    for (int step = 0; step <= steps; step++) {
-                        int x = x0 + (x1 - x0) * step / steps;
-                        setPixel(x, y0, 255, 255, 255);
+                    // approx velocity line with pixels
+                    int steps = std::abs(x1 - x0);
+                    if (steps > 0) {
+                        for (int step = 0; step <= steps; step++) {
+                            int x = x0 + (x1 - x0) * step / steps;
+                            setPixel(x, y0, 255, 255, 255);
+                        }
                     }
                 }
 
                 // vertical vel component
-                convertCoordinates((i + 0.5f) * cellSize, j * cellSize, x0, y0);
-                int y1 = y0 - static_cast<int>(vy * velScale * canvasScale);
+                if (std::abs(vy) > 0.001f) {
+                    int x0, y0;
+                    convertCoordinates((i + 0.5f) * cellSize, j * cellSize, x0, y0);
+                    int y1 = y0 - static_cast<int>(vy * velScale * canvasScale);
 
-                steps = std::abs(y1 - y0);
-                if (steps > 0) {
-                    for (int step = 0; step <= steps; step++) {
-                        int y = y0 + (y1 - y0) * step / steps;
-                        setPixel(x0, y, 255, 255, 255);
+                    int steps = std::abs(y1 - y0);
+                    if (steps > 0) {
+                        for (int step = 0; step <= steps; step++) {
+                            int y = y0 + (y1 - y0) * step / steps;
+                            setPixel(x0, y, 255, 255, 255);
+                        }
                     }
                 }
             }
@@ -336,69 +336,18 @@ void Renderer::drawVelocityField(const ISimulator& simulator) {
 }
 
 void Renderer::computeHistograms(const ISimulator& simulator) {
-    const auto& pressure = simulator.getPressure();
-    const auto& solid = simulator.getSolid();
-    const auto& velocityX = simulator.getVelocityX();
-    const auto& velocityY = simulator.getVelocityY();
-    int gridX = simulator.getGridX();
-    int gridY = simulator.getGridY();
-
-    // density histogram
-    bool first = true;
-    for (int i = 0; i < gridX * gridY; i++) {
-        if (solid[i] != 0.0f) { // only fluid cells
-            if (first) {
-                densityHistogramMin = pressure[i];
-                densityHistogramMax = pressure[i];
-                first = false;
-            } else {
-                densityHistogramMin = std::min(densityHistogramMin, pressure[i]);
-                densityHistogramMax = std::max(densityHistogramMax, pressure[i]);
-            }
-        }
-    }
-    std::fill(densityHistogramBins.begin(), densityHistogramBins.end(), 0);
+    IRenderer::HistogramData data;
+    data.densityHistogramBins = densityHistogramBins;
+    data.velocityHistogramBins = velocityHistogramBins;
     
-    if (densityHistogramMax > densityHistogramMin) {
-        float binWidth = (densityHistogramMax - densityHistogramMin) / HISTOGRAM_BINS;
-        for (int i = 0; i < gridX * gridY; i++) {
-            if (solid[i] != 0.0f) { // only fluid cells
-                int bin = static_cast<int>((pressure[i] - densityHistogramMin) / binWidth);
-                bin = std::max(0, std::min(HISTOGRAM_BINS - 1, bin));
-                densityHistogramBins[bin]++;
-            }
-        }
-    }
+    IRenderer::computeHistograms(simulator, data);
     
-    // velocity histogram
-    first = true;
-    for (int i = 0; i < gridX * gridY; i++) {
-        if (solid[i] != 0.0f) { // only fluid cells
-            float velMagnitude = std::sqrt(velocityX[i] * velocityX[i] + velocityY[i] * velocityY[i]);
-            if (first) {
-                velocityHistogramMin = velMagnitude;
-                velocityHistogramMax = velMagnitude;
-                first = false;
-            } else {
-                velocityHistogramMin = std::min(velocityHistogramMin, velMagnitude);
-                velocityHistogramMax = std::max(velocityHistogramMax, velMagnitude);
-            }
-        }
-    }
-    
-    std::fill(velocityHistogramBins.begin(), velocityHistogramBins.end(), 0);
-    
-    if (velocityHistogramMax > velocityHistogramMin) {
-        float binWidth = (velocityHistogramMax - velocityHistogramMin) / HISTOGRAM_BINS;
-        for (int i = 0; i < gridX * gridY; i++) {
-            if (solid[i] != 0.0f) { // only fluid cells
-                float velMagnitude = std::sqrt(velocityX[i] * velocityX[i] + velocityY[i] * velocityY[i]);
-                int bin = static_cast<int>((velMagnitude - velocityHistogramMin) / binWidth);
-                bin = std::max(0, std::min(HISTOGRAM_BINS - 1, bin));
-                velocityHistogramBins[bin]++;
-            }
-        }
-    }
+    densityHistogramMin = data.densityHistogramMin;
+    densityHistogramMax = data.densityHistogramMax;
+    velocityHistogramMin = data.velocityHistogramMin;
+    velocityHistogramMax = data.velocityHistogramMax;
+    densityHistogramBins = data.densityHistogramBins;
+    velocityHistogramBins = data.velocityHistogramBins;
 }
 
 void Renderer::drawHistograms() {
@@ -414,7 +363,7 @@ void Renderer::drawHistograms() {
     
     int dmaxCount = 0;
     int vmaxCount = 0;
-    for (int i = 0; i < HISTOGRAM_BINS; i++) {
+    for (int i = 0; i < IRenderer::HISTOGRAM_BINS; i++) {
         dmaxCount = std::max(dmaxCount, densityHistogramBins[i]);
         vmaxCount = std::max(vmaxCount, velocityHistogramBins[i]);
     }
@@ -480,14 +429,14 @@ void Renderer::drawHistograms() {
         }
     }
     
-    int barWidth = histWidth / HISTOGRAM_BINS;
+    int barWidth = histWidth / IRenderer::HISTOGRAM_BINS;
     int padding = 1;
     
     // bars
-    for (int i = 0; i < HISTOGRAM_BINS; i++) {
+    for (int i = 0; i < IRenderer::HISTOGRAM_BINS; i++) {
         int barHeight = static_cast<int>((static_cast<float>(densityHistogramBins[i]) / dmaxCount) * (histHeight - 20));
         int barX = dhistX + 10 + i * barWidth;
-        float normalized = static_cast<float>(i) / HISTOGRAM_BINS;
+        float normalized = static_cast<float>(i) / IRenderer::HISTOGRAM_BINS;
         
         for (int x = barX; x < barX + barWidth - padding && x < dhistX + histWidth - 10; x++) {
             for (int y = dhistY + histHeight - 10; y >= dhistY + histHeight - 10 - barHeight && y >= dhistY + 10; y--) {

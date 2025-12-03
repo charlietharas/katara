@@ -5,9 +5,15 @@
 #include <SDL2/SDL.h>
 #include "irenderer.h"
 #include <vector>
+#include <string>
+#include <fstream>
+
+struct alignas(16) Vec4Int {
+    int x, y, z, w;
+};
 
 struct UniformData {
-    int drawTarget; // 0=pressure, 1=smoke, 2=both
+    int drawTarget; // 0=pressure, 1=smoke, 2=both, 3=ink
     int gridX;
     int gridY;
     float cellSize;
@@ -19,16 +25,24 @@ struct UniformData {
     float windowHeight;
     float simWidth;
     float simHeight;
-    float padding[2]; // 16-byte alignment
+    int disableHistograms; // 0=enabled, 1=disabled
+    float densityHistogramMin;
+    float densityHistogramMax;
+    float velocityHistogramMin;
+    float velocityHistogramMax;
+    int densityHistogramMaxCount;
+    int velocityHistogramMaxCount;
+    Vec4Int densityHistogramBins[16]; // packed as vec4 for 16-byte alignment
+    Vec4Int velocityHistogramBins[16]; // packed as vec4 for 16-byte alignment
 };
 
 class WebGPURenderer : public IRenderer {
 public:
-    WebGPURenderer(SDL_Window* window, bool drawVelocities = false, int drawTarget = 2);
+    WebGPURenderer(SDL_Window* window, bool drawVelocities = false, int drawTarget = 2, bool disableHistograms = false);
     ~WebGPURenderer();
 
     bool init() override;
-    void cleanup() override;
+    void cleanup() override {}
     void render(const ISimulator& simulator) override;
 
 private:
@@ -48,11 +62,14 @@ private:
   
     // buffers and textures
     WGPUBuffer uniformBuffer;
-    WGPUBuffer vertexBuffer;
     WGPUTexture pressureTexture;
     WGPUTexture densityTexture;
     WGPUTexture velocityTexture;
     WGPUTexture solidTexture;
+    WGPUTexture redInkTexture;
+    WGPUTexture greenInkTexture;
+    WGPUTexture blueInkTexture;
+    WGPUTexture waterTexture;
     WGPUSampler sampler;
 
     // simulation data textures
@@ -60,10 +77,24 @@ private:
     WGPUTextureView densityTextureView;
     WGPUTextureView velocityTextureView;
     WGPUTextureView solidTextureView;
+    WGPUTextureView redInkTextureView;
+    WGPUTextureView greenInkTextureView;
+    WGPUTextureView blueInkTextureView;
+    WGPUTextureView waterTextureView;
 
     // render state
     UniformData uniformData;
     bool initialized;
+    bool disableHistograms;
+    
+    // histogram state
+    int frameCount;
+    std::vector<int> densityHistogramBins;
+    float densityHistogramMin, densityHistogramMax;
+    int densityHistogramMaxCount;
+    std::vector<int> velocityHistogramBins;
+    float velocityHistogramMin, velocityHistogramMax;
+    int velocityHistogramMaxCount;
 
     // initialization methods
     bool initWebGPU();
@@ -72,21 +103,18 @@ private:
     bool initRenderPipeline();
     bool initBuffers();
     bool initTextures();
-    bool initBindGroups();
 
     // render methods
     void updateUniformData(const ISimulator& simulator);
     void updateSimulationTextures(const ISimulator& simulator);
+    void computeHistograms(const ISimulator& simulator);
     void createRenderPass();
     void drawFrame();
 
-    // utilz
-    WGPUShaderModule loadShader(const char* filename);
-      void releaseResources();
-
-    // shader source strings
-    static const char* vertexShaderSource;
-    static const char* fragmentShaderSource;
+    // utilities
+    WGPUShaderModule loadShader(const char* source);
+    std::string readFile(const char* filename);
+    void releaseResources();
 };
 
 #endif

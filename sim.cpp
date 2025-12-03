@@ -5,10 +5,10 @@
 #include <iostream>
 #include <SDL2/SDL.h>
 
-FluidSimulator::FluidSimulator()
+FluidSimulator::FluidSimulator(int resolution)
     : 
     // sim params
-    resolution(150), // grid cells per world unit
+    resolution(resolution), // grid cells per world unit
     timeStep(1.0f / 60.0f),
     gravity(0.0f),
     density(1000.0f),
