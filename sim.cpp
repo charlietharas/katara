@@ -21,7 +21,7 @@ FluidSimulator::FluidSimulator()
     // wind tunnel state
     windTunnelStart(0.45f),
     windTunnelEnd(0.55f),
-    windTunnelSide(0), // 0=left, 1=top, 2=bottom, 3=right, -1=disabled
+    windTunnelSide(3), // 0=left, 1=top, 2=bottom, 3=right, -1=disabled
     windTunnelVelocity(1.5f),
 
     // circle state
@@ -117,20 +117,20 @@ void FluidSimulator::init(
         case 3: // right
             windTunnelStartCell = static_cast<int>(windTunnelStart * gridY);
             windTunnelEndCell = static_cast<int>(windTunnelEnd * gridY);
+            windTunnelStartCell = std::max(0, std::min(gridY - 1, windTunnelStartCell));
+            windTunnelEndCell = std::max(0, std::min(gridY - 1, windTunnelEndCell));
             break;
         case 1: // top
         case 2: // bottom
             windTunnelStartCell = static_cast<int>(windTunnelStart * gridX);
             windTunnelEndCell = static_cast<int>(windTunnelEnd * gridX);
+            windTunnelStartCell = std::max(0, std::min(gridX - 1, windTunnelStartCell));
+            windTunnelEndCell = std::max(0, std::min(gridX - 1, windTunnelEndCell));
             break;
         default:
             windTunnelStartCell = static_cast<int>(0.45f * gridY);
             windTunnelEndCell = static_cast<int>(0.55f * gridY);
     }
-
-    // clamp to valid range
-    windTunnelStartCell = std::max(0, std::min(std::max(gridX, gridY) - 1, windTunnelStartCell));
-    windTunnelEndCell = std::max(0, std::min(std::max(gridX, gridY) - 1, windTunnelEndCell));
 
     // setup obstacles
     setupCircle();
@@ -176,26 +176,22 @@ void FluidSimulator::setupEdges() {
                         }
                         break;
                     case 1: // top
-                        if (j == gridY-2 && i >= windTunnelStartCell && i < windTunnelEndCell) {
-                            y[idx(i, j)] = windTunnelVelocity;
-                        }
                         if (j == gridY-1 && i >= windTunnelStartCell && i < windTunnelEndCell) {
+                            y[idx(i, j)] = -windTunnelVelocity;
                             d[idx(i, j)] = 0.0f;
                         }
                         break;
                     case 2: // bottom
                         if (j == 1 && i >= windTunnelStartCell && i < windTunnelEndCell) {
-                            y[idx(i, j)] = -windTunnelVelocity;
+                            y[idx(i, j)] = windTunnelVelocity;
                         }
                         if (j == 0 && i >= windTunnelStartCell && i < windTunnelEndCell) {
                             d[idx(i, j)] = 0.0f;
                         }
                         break;
                     case 3: // right
-                        if (i == gridX-2 && j >= windTunnelStartCell && j < windTunnelEndCell) {
-                            x[idx(i, j)] = -windTunnelVelocity;
-                        }
                         if (i == gridX-1 && j >= windTunnelStartCell && j < windTunnelEndCell) {
+                            x[idx(i, j)] = -windTunnelVelocity;
                             d[idx(i, j)] = 0.0f;
                         }
                         break;
@@ -660,21 +656,21 @@ void FluidSimulator::enforceBoundaryConditions() {
             case 1: // top
                 for (int i = windTunnelStartCell; i < windTunnelEndCell; i++) {
                     if (i >= 0 && i < gridX) {
-                        y[idx(i, gridY-2)] = windTunnelVelocity;
+                        y[idx(i, gridY-1)] = -windTunnelVelocity;
                     }
                 }
                 break;
             case 2: // bottom
                 for (int i = windTunnelStartCell; i < windTunnelEndCell; i++) {
                     if (i >= 0 && i < gridX) {
-                        y[idx(i, 1)] = -windTunnelVelocity;
+                        y[idx(i, 1)] = windTunnelVelocity;
                     }
                 }
                 break;
             case 3: // right
                 for (int j = windTunnelStartCell; j < windTunnelEndCell; j++) {
                     if (j >= 0 && j < gridY) {
-                        x[idx(gridX-2, j)] = -windTunnelVelocity;
+                        x[idx(gridX-1, j)] = -windTunnelVelocity;
                     }
                 }
                 break;
