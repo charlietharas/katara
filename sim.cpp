@@ -21,7 +21,7 @@ FluidSimulator::FluidSimulator()
     // wind tunnel state
     windTunnelStart(0.45f),
     windTunnelEnd(0.55f),
-    windTunnelSide(3), // 0=left, 1=top, 2=bottom, 3=right, -1=disabled
+    windTunnelSide(0), // 0=left, 1=top, 2=bottom, 3=right, -1=disabled
     windTunnelVelocity(1.5f),
 
     // circle state
@@ -221,6 +221,8 @@ void FluidSimulator::initializeInkFromImage(void* imageData, int imageWidth, int
     if (!imageData) return;
     Uint8* pixels = static_cast<Uint8*>(imageData);
 
+    float DARKEST_BLACK = 0.05f; // minimum ink color; if it's 0 ink persists because it fucks up some multiplication somewhere
+
     float START_WATER = 0.05f;
     for (int j = 0; j < gridY; j++) {
         for (int i = 0; i < gridX; i++) {
@@ -242,9 +244,9 @@ void FluidSimulator::initializeInkFromImage(void* imageData, int imageWidth, int
                 }
 
                 // normalize
-                r_ink[cellIndex] = std::max(0.0f, std::min(1.0f, r / 255.0f));
-                g_ink[cellIndex] = std::max(0.0f, std::min(1.0f, g / 255.0f));
-                b_ink[cellIndex] = std::max(0.0f, std::min(1.0f, b / 255.0f));
+                r_ink[cellIndex] = std::max(0.05f, std::min(1.0f, r / 255.0f));
+                g_ink[cellIndex] = std::max(0.05f, std::min(1.0f, g / 255.0f));
+                b_ink[cellIndex] = std::max(0.05f, std::min(1.0f, b / 255.0f));
                 water[cellIndex] = START_WATER;
 
                 r_ink_prev[cellIndex] = r_ink[cellIndex];
