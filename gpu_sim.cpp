@@ -8,17 +8,13 @@ GPUFluidSimulator::~GPUFluidSimulator() {
     // destructor TODO
 }
 
-void GPUFluidSimulator::init() {
-    cpuSimulator.init();
+void GPUFluidSimulator::init(bool imageLoaded) {
+    cpuSimulator.init(imageLoaded);
 }
 
 void GPUFluidSimulator::update() {
     // TODO replace with compute shader dispatches
     cpuSimulator.update();
-}
-
-void GPUFluidSimulator::reset() {
-    cpuSimulator.reset();
 }
 
 void GPUFluidSimulator::onMouseDown(int gridX, int gridY) {

@@ -9,26 +9,35 @@ public:
     FluidSimulator();
     ~FluidSimulator();
 
-    void init() override;
+    void init(bool imageLoaded) override;
     void update() override;
-    void reset() override;
 
     // mouse interaction methods
     void onMouseDown(int gridX, int gridY) override;
     void onMouseDrag(int gridX, int gridY) override;
     void onMouseUp() override;
+    bool isInsideCircle(int i, int j);
 
     int getGridX() const override { return gridX; }
     int getGridY() const override { return gridY; }
     float getCellSize() const override { return cellHeight; }
+    float getDomainWidth() const override { return domainWidth; }
+    float getDomainHeight() const override { return domainHeight; }
 
-    bool isInsideCircle(int i, int j);
+    // ink initialization
+    void initializeInkFromImage(void* imageData, int imageWidth, int imageHeight, int bytesPerPixel, int rShift, int gShift, int bShift);
+    void setResolutionFromImage(int imageWidth, int imageHeight);
 
     const std::vector<float>& getVelocityX() const override { return x; }
     const std::vector<float>& getVelocityY() const override { return y; }
     const std::vector<float>& getPressure() const override { return p; }
     const std::vector<float>& getDensity() const override { return d; }
     const std::vector<float>& getSolid() const override { return s; }
+    const std::vector<float>& getRedInk() const override { return r_ink; }
+    const std::vector<float>& getGreenInk() const override { return g_ink; }
+    const std::vector<float>& getBlueInk() const override { return b_ink; }
+    const std::vector<float>& getWaterContent() const override { return water; }
+    bool isInkInitialized() const override { return inkInitialized; }
 
 private:
     // grid params
@@ -48,21 +57,41 @@ private:
     bool doVorticity;
     float vorticity;
     float vorticityLen;
-    float windTunnelVel;
+
+    // wind tunnel state
+    float windTunnelStart; // 0-1 (pass this one in)
+    float windTunnelEnd;
+    int windTunnelStartCell; // reference; calculated in init
+    int windTunnelEndCell;
     int pipeHeight;
+    int windTunnelSide; // 0, 1, 2, 3 = left, top, bottom, right; -1 = disabled
+    float windTunnelVelocity; // magnitude; direction inferred
 
     // momentum transfer parameters
     float momentumTransferCoeff;
     float momentumTransferRadius;
 
-    std::vector<float> x;        // x vel field
-    std::vector<float> y;        // y vel field
-    std::vector<float> s;        // solid field (1 = fluid, 0 = solid)
-    std::vector<float> p;        // pressure field
-    std::vector<float> d;        // density field
+    std::vector<float> x; // x vel field
+    std::vector<float> y; // y vel field
+    std::vector<float> s; // solid field (1 = fluid, 0 = solid)
+    std::vector<float> p; // pressure field
+    std::vector<float> d; // density field
 
     // advection util arrays
     std::vector<float> newX, newY, newD;
+
+    // ink diffusion
+    std::vector<float> r_ink, g_ink, b_ink;
+    std::vector<float> water;
+    std::vector<float> r_ink_prev, g_ink_prev, b_ink_prev;
+    float mixingRate;
+    float diffusionRate;
+    float pressureStrength;
+    float temporalWeightCurrent;
+    bool inkInitialized;
+
+    // configuration
+    bool domainSetByImage;
 
     // circle state
     int circleX, circleY;
@@ -71,14 +100,13 @@ private:
     int circleRadius;
     bool isDragging;
 
-    void setupObstacles();
-
     // circle movement
+    void setupCircle();
     void moveCircle(int newGridX, int newGridY);
-    void updateSolidFieldForCircle(int prevX, int prevY, int newX, int newY);
+    void updateCircle(int prevX, int prevY, int newX, int newY);
     void enforceBoundaryConditions();
-    void transferMomentumToFluid();
-    void setupBoundariesAndWindTunnel();
+    void circleMomentumTransfer();
+    void setupEdges();
     void updateCircleAreas(int prevX, int prevY, int newX, int newY);
 
     // sim steps
@@ -87,7 +115,14 @@ private:
     void extrapolate();
     void advect();
     void applyVorticity();
-    void advectSmoke();
+    void smokeAdvect();
+
+    // ink diffusion methods
+    void inkUpdate();
+    void inkAdvection();
+    void inkDiffusion();
+    void inkWaterMix();
+    void inkTemporalBlend();
 
     // grid utils
     float div(int i, int j);
@@ -97,6 +132,8 @@ private:
     float neighborhoodY(int i, int j);
     float sample(float i, float j, int type);
 
+    // misc helpers
+    bool shouldSkipInkCell(int i, int j, bool checkNoInk = true) const;
     int idx(int i, int j) const { return j * gridX + i; }
 };
 

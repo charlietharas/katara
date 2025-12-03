@@ -2,17 +2,24 @@
 #define RENDERER_H
 
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_image.h>
 #include <vector>
+#include <string>
 #include "irenderer.h"
 
 class Renderer : public IRenderer {
 public:
-    Renderer(SDL_Window* window, bool drawVelocities = false, int drawTarget = 2);
+    Renderer(SDL_Window* window, bool drawVelocities = false, int drawTarget = 2, bool disableHistograms = false);
     ~Renderer();
 
     bool init() override;
     void cleanup() override;
     void render(const ISimulator& simulator) override;
+
+    // ink diffusion
+    void initSimulatorInk(ISimulator& simulator);
+    bool loadInputImage(const std::string& imagePath);
+    void setResolutionFromImage(ISimulator& simulator);
 
 private:
     SDL_Window* window;
@@ -27,30 +34,33 @@ private:
     // draw params
     int drawTarget; // 0=pressure, 1=smoke, 2=both
     bool drawVelocities;
+    bool disableHistograms;
     const float velScale = 0.05f;
 
-    // histogram
+    // histograms
     int frameCount;
     static const int HISTOGRAM_BINS = 64;
-    std::vector<int> histogramBins;
-    float histogramMin, histogramMax;
-    
-    // velocity histogram
+    std::vector<int> densityHistogramBins;
+    float densityHistogramMin, densityHistogramMax;
     std::vector<int> velocityHistogramBins;
     float velocityHistogramMin, velocityHistogramMax;
+
+    // ink diffusion
+    SDL_Surface* inputImage;
+    bool imageLoaded;
 
     // draw utils
     void convertCoordinates(float simX, float simY, int& pixelX, int& pixelY);
     void mapValueToColor(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b);
     void mapValueToGreyscale(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b);
     void mapValueToVelocityColor(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b);
+    void mapInkToColor(float r, float g, float b, float water, float pressure, float velX, float velY, Uint8& outR, Uint8& outG, Uint8& outB);
     void drawFluidField(const ISimulator& simulator);
     void drawVelocityField(const ISimulator& simulator);
+    void computeHistograms(const ISimulator& simulator);
+    void drawHistograms();
     void setPixel(int x, int y, Uint8 r, Uint8 g, Uint8 b);
-    void computeHistogram(const ISimulator& simulator);
-    void drawHistogram();
-    void computeVelocityHistogram(const ISimulator& simulator);
-    void drawVelocityHistogram();
+
 };
 
 #endif

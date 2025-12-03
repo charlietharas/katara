@@ -11,10 +11,8 @@ public:
     ~GPUFluidSimulator() override;
 
     // simulation methods
-    void init() override;
+    void init(bool imageLoaded) override;
     void update() override;
-    void reset() override;
-
     // mouse interaction
     void onMouseDown(int gridX, int gridY) override;
     void onMouseDrag(int gridX, int gridY) override;
@@ -24,6 +22,9 @@ public:
     int getGridX() const override { return cpuSimulator.getGridX(); }
     int getGridY() const override { return cpuSimulator.getGridY(); }
     float getCellSize() const override { return cpuSimulator.getCellSize(); }
+
+    float getDomainWidth() const override { return cpuSimulator.getDomainWidth(); }
+    float getDomainHeight() const override { return cpuSimulator.getDomainHeight(); }
 
     // data accessors
     const std::vector<float>& getVelocityX() const override { return cpuSimulator.getVelocityX(); }
