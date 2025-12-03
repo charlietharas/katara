@@ -28,11 +28,7 @@ Renderer::Renderer(
     densityHistogramMax(0.0f),
     velocityHistogramBins(HISTOGRAM_BINS, 0),
     velocityHistogramMin(0.0f),
-    velocityHistogramMax(0.0f),
-
-    // input image for ink diffusion
-    inputImage(nullptr),
-    imageLoaded(false)
+    velocityHistogramMax(0.0f)
 {
     SDL_GetWindowSize(window, &windowWidth, &windowHeight);
 
@@ -66,10 +62,6 @@ bool Renderer::init() {
 }
 
 void Renderer::cleanup() {
-    if (inputImage) {
-        SDL_FreeSurface(inputImage);
-        inputImage = nullptr;
-    }
     if (texture) {
         SDL_DestroyTexture(texture);
         texture = nullptr;
@@ -522,54 +514,3 @@ void Renderer::drawHistograms() {
     }
 }
 
-bool Renderer::loadInputImage(const std::string& imagePath) {
-    inputImage = IMG_Load(imagePath.c_str());
-    if (!inputImage) {
-        std::cerr << "Failed to load image " << imagePath << ": " << IMG_GetError() << std::endl;
-        imageLoaded = false;
-        return false;
-    }
-
-    // 32-bit RGB
-    SDL_Surface* converted = SDL_ConvertSurfaceFormat(inputImage, SDL_PIXELFORMAT_RGB888, 0);
-    if (converted) {
-        SDL_FreeSurface(inputImage);
-        inputImage = converted;
-    }
-
-    imageLoaded = true;
-    return imageLoaded;
-}
-
-void Renderer::initSimulatorInk(ISimulator& simulator) {
-    if (!imageLoaded || !inputImage || drawTarget != 3) {
-        return;
-    }
-
-    FluidSimulator* fluidSim = dynamic_cast<FluidSimulator*>(&simulator);
-    if (fluidSim) {
-        SDL_LockSurface(inputImage);
-        SDL_PixelFormat* format = inputImage->format;
-        fluidSim->initializeInkFromImage(
-            inputImage->pixels,
-            inputImage->w,
-            inputImage->h,
-            format->BytesPerPixel,
-            format->Rshift,
-            format->Gshift,
-            format->Bshift
-        );
-        SDL_UnlockSurface(inputImage);
-    }
-}
-
-void Renderer::setResolutionFromImage(ISimulator& simulator) {
-    if (!imageLoaded || !inputImage) {
-        return;
-    }
-
-    FluidSimulator* fluidSim = dynamic_cast<FluidSimulator*>(&simulator);
-    if (fluidSim) {
-        fluidSim->setResolutionFromImage(inputImage->w, inputImage->h);
-    }
-}

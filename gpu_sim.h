@@ -11,7 +11,7 @@ public:
     ~GPUFluidSimulator() override;
 
     // simulation methods
-    void init(bool imageLoaded) override;
+    void init(const ImageData* imageData = nullptr) override;
     void update() override;
     // mouse interaction
     void onMouseDown(int gridX, int gridY) override;
@@ -34,6 +34,13 @@ public:
     const std::vector<float>& getSolid() const override { return cpuSimulator.getSolid(); }
 
     bool isInsideCircle(int i, int j) override { return cpuSimulator.isInsideCircle(i, j); }
+
+    // ink data accessors
+    const std::vector<float>& getRedInk() const override { return cpuSimulator.getRedInk(); }
+    const std::vector<float>& getGreenInk() const override { return cpuSimulator.getGreenInk(); }
+    const std::vector<float>& getBlueInk() const override { return cpuSimulator.getBlueInk(); }
+    const std::vector<float>& getWaterContent() const override { return cpuSimulator.getWaterContent(); }
+    bool isInkInitialized() const override { return cpuSimulator.isInkInitialized(); }
 private:
     FluidSimulator cpuSimulator;
 };

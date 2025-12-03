@@ -9,7 +9,7 @@ public:
     FluidSimulator();
     ~FluidSimulator();
 
-    void init(bool imageLoaded) override;
+    void init(const ImageData* imageData = nullptr) override;
     void update() override;
 
     // mouse interaction methods
@@ -24,10 +24,7 @@ public:
     float getDomainWidth() const override { return domainWidth; }
     float getDomainHeight() const override { return domainHeight; }
 
-    // ink initialization
-    void initializeInkFromImage(void* imageData, int imageWidth, int imageHeight, int bytesPerPixel, int rShift, int gShift, int bShift);
-    void setResolutionFromImage(int imageWidth, int imageHeight);
-
+  
     const std::vector<float>& getVelocityX() const override { return x; }
     const std::vector<float>& getVelocityY() const override { return y; }
     const std::vector<float>& getPressure() const override { return p; }
@@ -131,6 +128,9 @@ private:
     float neighborhoodX(int i, int j);
     float neighborhoodY(int i, int j);
     float sample(float i, float j, int type);
+
+    // image initialization helpers
+    void initializeFromImageData(const ImageData* imageData);
 
     // misc helpers
     bool shouldSkipInkCell(int i, int j, bool checkNoInk = true) const;

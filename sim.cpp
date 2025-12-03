@@ -52,9 +52,20 @@ FluidSimulator::FluidSimulator()
 FluidSimulator::~FluidSimulator() {}
 
 void FluidSimulator::init(
-    bool imageLoaded
+    const ImageData* imageData
 ) {
-    if (!imageLoaded) {
+    bool imageLoaded = (imageData != nullptr && imageData->pixels != nullptr);
+
+    if (imageLoaded) {
+        float imageAspectRatio = static_cast<float>(imageData->width) / imageData->height;
+        domainHeight = 1.0f;
+        domainWidth = imageAspectRatio;
+        domainSetByImage = true;
+
+        if (imageAspectRatio > 1.0f) {
+            resolution = static_cast<int>(resolution / imageAspectRatio);
+        }
+    } else {
         domainHeight = 1.0f;
         domainWidth = 1.5f;
     }
@@ -96,7 +107,6 @@ void FluidSimulator::init(
         r_ink_prev.resize(totalCells);
         g_ink_prev.resize(totalCells);
         b_ink_prev.resize(totalCells);
-    
         std::fill(r_ink.begin(), r_ink.end(), 0.0f);
         std::fill(g_ink.begin(), g_ink.end(), 0.0f);
         std::fill(b_ink.begin(), b_ink.end(), 0.0f);
@@ -104,6 +114,8 @@ void FluidSimulator::init(
         std::fill(r_ink_prev.begin(), r_ink_prev.end(), 0.0f);
         std::fill(g_ink_prev.begin(), g_ink_prev.end(), 0.0f);
         std::fill(b_ink_prev.begin(), b_ink_prev.end(), 0.0f);
+
+        initializeFromImageData(imageData);
     }
 
     // initialize circle
@@ -164,6 +176,7 @@ void FluidSimulator::setupEdges() {
             }
 
             // configurable wind tunnel
+            // TODO configure direction by angle between 2 points; this is janky
             if (windTunnelSide != -1) {
 
                 switch (windTunnelSide) {
@@ -203,44 +216,29 @@ void FluidSimulator::setupEdges() {
     pipeHeight = windTunnelEndCell - windTunnelStartCell;
 }
 
-void FluidSimulator::setResolutionFromImage(int imageWidth, int imageHeight) {
-    if (imageWidth <= 0 || imageHeight <= 0) return;
-
-    float imageAspectRatio = static_cast<float>(imageWidth) / imageHeight;
-    domainHeight = 1.0f;
-    domainWidth = imageAspectRatio;
-    domainSetByImage = true;
-
-    if (imageAspectRatio > 1.0f) {
-        resolution = static_cast<int>(resolution / imageAspectRatio);
-    }
-}
-
-void FluidSimulator::initializeInkFromImage(void* imageData, int imageWidth, int imageHeight, int bytesPerPixel,
-                                           int rShift, int gShift, int bShift) {
-    if (!imageData) return;
-    Uint8* pixels = static_cast<Uint8*>(imageData);
+void FluidSimulator::initializeFromImageData(const ImageData* imageData) {
+    if (!imageData || !imageData->pixels) return;
+    Uint8* pixels = static_cast<Uint8*>(imageData->pixels);
 
     float DARKEST_BLACK = 0.05f; // minimum ink color; if it's 0 ink persists because it fucks up some multiplication somewhere
-
     float START_WATER = 0.05f;
     for (int j = 0; j < gridY; j++) {
         for (int i = 0; i < gridX; i++) {
             int cellIndex = idx(i, j);
-            int imgX = (i * imageWidth) / gridX;
-            int imgY = imageHeight - 1 - (j * imageHeight) / gridY; // image upside down
+            int imgX = (i * imageData->width) / gridX;
+            int imgY = imageData->height - 1 - (j * imageData->height) / gridY; // image upside down
 
-            if (imgX >= 0 && imgX < imageWidth && imgY >= 0 && imgY < imageHeight) {
-                int pixelIndex = imgY * imageWidth + imgX;
+            if (imgX >= 0 && imgX < imageData->width && imgY >= 0 && imgY < imageData->height) {
+                int pixelIndex = imgY * imageData->width + imgX;
                 Uint8 r, g, b;
-                if (bytesPerPixel == 4) {
-                    r = pixels[pixelIndex * bytesPerPixel + rShift / 8];
-                    g = pixels[pixelIndex * bytesPerPixel + gShift / 8];
-                    b = pixels[pixelIndex * bytesPerPixel + bShift / 8];
+                if (imageData->bytesPerPixel == 4) {
+                    r = pixels[pixelIndex * imageData->bytesPerPixel + imageData->rShift / 8];
+                    g = pixels[pixelIndex * imageData->bytesPerPixel + imageData->gShift / 8];
+                    b = pixels[pixelIndex * imageData->bytesPerPixel + imageData->bShift / 8];
                 } else {
-                    r = pixels[pixelIndex * bytesPerPixel];
-                    g = pixels[pixelIndex * bytesPerPixel + 1];
-                    b = pixels[pixelIndex * bytesPerPixel + 2];
+                    r = pixels[pixelIndex * imageData->bytesPerPixel];
+                    g = pixels[pixelIndex * imageData->bytesPerPixel + 1];
+                    b = pixels[pixelIndex * imageData->bytesPerPixel + 2];
                 }
 
                 // normalize
@@ -252,7 +250,6 @@ void FluidSimulator::initializeInkFromImage(void* imageData, int imageWidth, int
                 r_ink_prev[cellIndex] = r_ink[cellIndex];
                 g_ink_prev[cellIndex] = g_ink[cellIndex];
                 b_ink_prev[cellIndex] = b_ink[cellIndex];
-
             }
         }
     }

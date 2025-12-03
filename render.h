@@ -16,11 +16,6 @@ public:
     void cleanup() override;
     void render(const ISimulator& simulator) override;
 
-    // ink diffusion
-    void initSimulatorInk(ISimulator& simulator);
-    bool loadInputImage(const std::string& imagePath);
-    void setResolutionFromImage(ISimulator& simulator);
-
 private:
     SDL_Window* window;
     SDL_Renderer* renderer;
@@ -44,10 +39,6 @@ private:
     float densityHistogramMin, densityHistogramMax;
     std::vector<int> velocityHistogramBins;
     float velocityHistogramMin, velocityHistogramMax;
-
-    // ink diffusion
-    SDL_Surface* inputImage;
-    bool imageLoaded;
 
     // draw utils
     void convertCoordinates(float simX, float simY, int& pixelX, int& pixelY);

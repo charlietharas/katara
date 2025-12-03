@@ -8,8 +8,8 @@ GPUFluidSimulator::~GPUFluidSimulator() {
     // destructor TODO
 }
 
-void GPUFluidSimulator::init(bool imageLoaded) {
-    cpuSimulator.init(imageLoaded);
+void GPUFluidSimulator::init(const ImageData* imageData) {
+    cpuSimulator.init(imageData);
 }
 
 void GPUFluidSimulator::update() {

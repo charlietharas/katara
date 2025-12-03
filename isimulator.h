@@ -3,12 +3,24 @@
 
 #include <vector>
 
+struct ImageData {
+    void* pixels;
+    int width;
+    int height;
+    int bytesPerPixel;
+    int rShift, gShift, bShift;
+
+    ImageData() : pixels(nullptr), width(0), height(0), bytesPerPixel(0), rShift(0), gShift(0), bShift(0) {}
+    ImageData(void* p, int w, int h, int bpp, int rS, int gS, int bS)
+        : pixels(p), width(w), height(h), bytesPerPixel(bpp), rShift(rS), gShift(gS), bShift(bS) {}
+};
+
 class ISimulator {
 public:
     virtual ~ISimulator() = default;
 
     // simulation methods
-    virtual void init(bool imageLoaded) = 0;
+    virtual void init(const ImageData* imageData = nullptr) = 0;
     virtual void update() = 0;
 
     // mouse interaction

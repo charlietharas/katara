@@ -4,6 +4,7 @@
 #include <iostream>
 #include <sdl2webgpu.h>
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_image.h>
 #include <string>
 #include <memory>
 #include "sim.h"
@@ -130,7 +131,7 @@ int main(int argc, char** argv) {
               << "  Simulation: " << (config.useGPUSimulation ? "GPU" : "CPU") << "\n"
               << "  Velocity vectors: " << (config.drawVelocities ? "Enabled" : "Disabled") << "\n"
               << "  Visualization target: " << targetName << "\n"
-              << "  Disable histograms: " << (config.disableHistograms ? "Disabled" : "Enabled") << "\n"
+              << "  Histograms: " << (config.disableHistograms ? "Disabled" : "Enabled") << "\n"
               << std::endl;
 
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -141,11 +142,15 @@ int main(int argc, char** argv) {
     int windowWidth = 1200; // defaults
     int windowHeight = 800;
 
+    // image loading
+    SDL_Surface* imageSurface = nullptr;
+    SDL_Surface* convertedSurface = nullptr;
+    ImageData* imageData = nullptr;
+
     if (!config.imagePath.empty() && config.drawTarget == 3) {
-        // get image dimensions
-        SDL_Surface* tempImage = IMG_Load(config.imagePath.c_str());
-        if (tempImage) {
-            float imageAspectRatio = static_cast<float>(tempImage->w) / tempImage->h;
+        imageSurface = IMG_Load(config.imagePath.c_str());
+        if (imageSurface) {
+            float imageAspectRatio = static_cast<float>(imageSurface->w) / imageSurface->h;
 
             if (imageAspectRatio > 1.0f) { // landscape
                 windowWidth = static_cast<int>(BASE_WINDOW_SIZE * 1.2f);
@@ -168,11 +173,33 @@ int main(int argc, char** argv) {
             std::cout << "Window size: " << windowWidth << " by " << windowHeight << std::endl;
             std::cout << "Aspect ratio: " << imageAspectRatio << std::endl;
 
-            SDL_FreeSurface(tempImage);
+            // 32-bit RGB
+            convertedSurface = SDL_ConvertSurfaceFormat(imageSurface, SDL_PIXELFORMAT_RGB888, 0);
+            if (!convertedSurface) {
+                std::cerr << "Error: Could not convert image surface: " << SDL_GetError() << std::endl;
+                SDL_FreeSurface(imageSurface);
+                SDL_Quit();
+                return 1;
+            }
+
+            imageData = new ImageData();
+            imageData->pixels = convertedSurface->pixels;
+            imageData->width = convertedSurface->w;
+            imageData->height = convertedSurface->h;
+            imageData->bytesPerPixel = convertedSurface->format->BytesPerPixel;
+            imageData->rShift = convertedSurface->format->Rshift;
+            imageData->gShift = convertedSurface->format->Gshift;
+            imageData->bShift = convertedSurface->format->Bshift;
         } else {
-            std::cerr << "Warning: Could not load image " << config.imagePath
-                      << " for window sizing: " << IMG_GetError() << std::endl;
+            std::cerr << "Could not load image " << config.imagePath
+                      << ": " << IMG_GetError() << std::endl;
+            SDL_Quit();
+            return 1;
         }
+    } else if (config.drawTarget == 3) {
+        std::cerr << "No input image path provided for ink mode" << std::endl;
+        SDL_Quit();
+        return 1;
     }
 
     SDL_Window* window = SDL_CreateWindow("katara",
@@ -183,6 +210,9 @@ int main(int argc, char** argv) {
                                           SDL_WINDOW_SHOWN);
     if (!window) {
         std::cerr << "Window creation error: " << SDL_GetError() << std::endl;
+        delete imageData;
+        if (convertedSurface) SDL_FreeSurface(convertedSurface);
+        if (imageSurface) SDL_FreeSurface(imageSurface);
         SDL_Quit();
         return 1;
     }
@@ -190,39 +220,17 @@ int main(int argc, char** argv) {
     auto renderer = createRenderer(window, config);
     auto simulator = createSimulator(config);
 
-    bool imageLoaded = false;
-    if (config.drawTarget == 3) {
-        Renderer* cpuRenderer = dynamic_cast<Renderer*>(renderer.get());
-        if (cpuRenderer) {
-            std::string imagePath = config.imagePath.empty() ? "" : config.imagePath;
-
-            if (!imagePath.empty()) {
-                if (cpuRenderer->loadInputImage(imagePath)) {
-                    cpuRenderer->setResolutionFromImage(*simulator);
-                    imageLoaded = true;
-                }
-            } else {
-                std::cerr << "No input image path provided" << std::endl;
-                exit(1);
-            }
-        }
-    }
-
     if (!renderer->init()) {
         std::cerr << "Renderer initialization error" << std::endl;
+        delete imageData;
+        if (convertedSurface) SDL_FreeSurface(convertedSurface);
+        if (imageSurface) SDL_FreeSurface(imageSurface);
         SDL_DestroyWindow(window);
         SDL_Quit();
         return 1;
     }
 
-    simulator->init(imageLoaded);
-
-    if (imageLoaded) {
-        Renderer* cpuRenderer = dynamic_cast<Renderer*>(renderer.get());
-        if (cpuRenderer) {
-            cpuRenderer->initSimulatorInk(*simulator);
-        }
-    }
+    simulator->init(imageData);
 
     bool running = true;
     SDL_Event event;
@@ -253,6 +261,15 @@ int main(int argc, char** argv) {
 
     renderer->cleanup();
     SDL_DestroyWindow(window);
+
+    delete imageData;
+    if (convertedSurface) {
+        SDL_FreeSurface(convertedSurface);
+    }
+    if (imageSurface) {
+        SDL_FreeSurface(imageSurface);
+    }
+
     SDL_Quit();
 
     return 0;
