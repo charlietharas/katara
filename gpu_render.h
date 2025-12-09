@@ -74,7 +74,6 @@ private:
     WGPUTexture redInkTexture;
     WGPUTexture greenInkTexture;
     WGPUTexture blueInkTexture;
-    WGPUTexture waterTexture;
     WGPUSampler sampler;
 
     // simulation data textures
@@ -85,7 +84,6 @@ private:
     WGPUTextureView redInkTextureView;
     WGPUTextureView greenInkTextureView;
     WGPUTextureView blueInkTextureView;
-    WGPUTextureView waterTextureView;
 
     // render state
     UniformData uniformData;

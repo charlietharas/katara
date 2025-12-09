@@ -26,7 +26,6 @@ WebGPURenderer::WebGPURenderer(SDL_Window* window, const Config& config)
       redInkTexture(nullptr),
       greenInkTexture(nullptr),
       blueInkTexture(nullptr),
-      waterTexture(nullptr),
       sampler(nullptr),
       pressureTextureView(nullptr),
       densityTextureView(nullptr),
@@ -35,7 +34,6 @@ WebGPURenderer::WebGPURenderer(SDL_Window* window, const Config& config)
       redInkTextureView(nullptr),
       greenInkTextureView(nullptr),
       blueInkTextureView(nullptr),
-      waterTextureView(nullptr),
       initialized(false),
       drawTarget(config.rendering.target),
       showVelocityVectors(config.rendering.showVelocityVectors),
@@ -140,10 +138,6 @@ void WebGPURenderer::releaseResources() {
         wgpuTextureViewRelease(blueInkTextureView);
         blueInkTextureView = nullptr;
     }
-    if (waterTextureView) {
-        wgpuTextureViewRelease(waterTextureView);
-        waterTextureView = nullptr;
-    }
     
     // release textures
     if (pressureTexture) {
@@ -173,10 +167,6 @@ void WebGPURenderer::releaseResources() {
     if (blueInkTexture) {
         wgpuTextureRelease(blueInkTexture);
         blueInkTexture = nullptr;
-    }
-    if (waterTexture) {
-        wgpuTextureRelease(waterTexture);
-        waterTexture = nullptr;
     }
     
     // other resources
@@ -535,19 +525,6 @@ bool WebGPURenderer::initRenderPipeline() {
             },
             .storageTexture = {}
         },
-        // water texture
-        {
-            .binding = 9,
-            .visibility = WGPUShaderStage_Fragment,
-            .buffer = {},
-            .sampler = {},
-            .texture = {
-                .sampleType = WGPUTextureSampleType_UnfilterableFloat,
-                .viewDimension = WGPUTextureViewDimension_2D,
-                .multisampled = false
-            },
-            .storageTexture = {}
-        }
     };
 
     WGPUBindGroupLayoutDescriptor bindGroupLayoutDesc = {};
@@ -724,10 +701,6 @@ void WebGPURenderer::updateSimulationTextures(const ISimulator& simulator) {
             wgpuTextureViewRelease(blueInkTextureView);
             blueInkTextureView = nullptr;
         }
-        if (waterTextureView) {
-            wgpuTextureViewRelease(waterTextureView);
-            waterTextureView = nullptr;
-        }
         if (pressureTexture) {
             wgpuTextureRelease(pressureTexture);
             pressureTexture = nullptr;
@@ -755,10 +728,6 @@ void WebGPURenderer::updateSimulationTextures(const ISimulator& simulator) {
         if (blueInkTexture) {
             wgpuTextureRelease(blueInkTexture);
             blueInkTexture = nullptr;
-        }
-        if (waterTexture) {
-            wgpuTextureRelease(waterTexture);
-            waterTexture = nullptr;
         }
 
         // release old bind group before creating new textures
@@ -801,11 +770,8 @@ void WebGPURenderer::updateSimulationTextures(const ISimulator& simulator) {
         textureDesc.label = "Blue Ink Texture";
         blueInkTexture = wgpuDeviceCreateTexture(device, &textureDesc);
 
-        textureDesc.label = "Water Texture";
-        waterTexture = wgpuDeviceCreateTexture(device, &textureDesc);
-
         if (!pressureTexture || !densityTexture || !velocityTexture || !solidTexture ||
-            !redInkTexture || !greenInkTexture || !blueInkTexture || !waterTexture) {
+            !redInkTexture || !greenInkTexture || !blueInkTexture) {
             std::cerr << "Failed to create simulation textures" << std::endl;
             return;
         }
@@ -833,10 +799,9 @@ void WebGPURenderer::updateSimulationTextures(const ISimulator& simulator) {
         redInkTextureView = wgpuTextureCreateView(redInkTexture, &viewDesc);
         greenInkTextureView = wgpuTextureCreateView(greenInkTexture, &viewDesc);
         blueInkTextureView = wgpuTextureCreateView(blueInkTexture, &viewDesc);
-        waterTextureView = wgpuTextureCreateView(waterTexture, &viewDesc);
 
         if (!pressureTextureView || !densityTextureView || !velocityTextureView || !solidTextureView ||
-            !redInkTextureView || !greenInkTextureView || !blueInkTextureView || !waterTextureView) {
+            !redInkTextureView || !greenInkTextureView || !blueInkTextureView) {
             std::cerr << "Failed to create texture views" << std::endl;
             return;
         }
@@ -880,10 +845,6 @@ void WebGPURenderer::updateSimulationTextures(const ISimulator& simulator) {
             {
                 .binding = 8,
                 .textureView = blueInkTextureView
-            },
-            {
-                .binding = 9,
-                .textureView = waterTextureView
             }
         };
 
@@ -1091,32 +1052,6 @@ void WebGPURenderer::updateSimulationTextures(const ISimulator& simulator) {
 
             wgpuQueueWriteTexture(queue, &blueInkCopy, blueInk.data(),
                                    blueInk.size() * sizeof(float), &blueInkLayout, &blueInkExtent);
-        }
-
-        // write water data to texture
-        const auto& water = simulator.getWaterContent();
-        if (!water.empty()) {
-            WGPUImageCopyTexture waterCopy = {
-                .texture = waterTexture,
-                .mipLevel = 0,
-                .origin = {0, 0, 0},
-                .aspect = WGPUTextureAspect_All
-            };
-
-            WGPUTextureDataLayout waterLayout = {
-                .offset = 0,
-                .bytesPerRow = static_cast<uint32_t>(gridX * sizeof(float)),
-                .rowsPerImage = static_cast<uint32_t>(gridY)
-            };
-
-            WGPUExtent3D waterExtent = {
-                .width = static_cast<uint32_t>(gridX),
-                .height = static_cast<uint32_t>(gridY),
-                .depthOrArrayLayers = 1
-            };
-
-            wgpuQueueWriteTexture(queue, &waterCopy, water.data(),
-                                   water.size() * sizeof(float), &waterLayout, &waterExtent);
         }
     }
 }

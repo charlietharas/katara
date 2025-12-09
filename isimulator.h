@@ -47,7 +47,6 @@ public:
     virtual const std::vector<float>& getRedInk() const { static std::vector<float> empty; return empty; }
     virtual const std::vector<float>& getGreenInk() const { static std::vector<float> empty; return empty; }
     virtual const std::vector<float>& getBlueInk() const { static std::vector<float> empty; return empty; }
-    virtual const std::vector<float>& getWaterContent() const { static std::vector<float> empty; return empty; }
 
     // misc
     virtual bool isInkInitialized() const { return false; }

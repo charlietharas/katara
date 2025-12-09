@@ -143,15 +143,16 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    if (config.pipeline == PipelineType::GPU) {
-        auto gpuSimulator = static_cast<GPUFluidSimulator*>(simulator.get());
-        auto gpuRenderer = static_cast<WebGPURenderer*>(renderer.get());
+    // TEMP disabled
+    // if (config.pipeline == PipelineType::GPU) {
+    //     auto gpuSimulator = static_cast<GPUFluidSimulator*>(simulator.get());
+    //     auto gpuRenderer = static_cast<WebGPURenderer*>(renderer.get());
 
-        if (!gpuSimulator->initWebGPU(gpuRenderer->getDevice(), gpuRenderer->getQueue())) {
-            std::cerr << "Error initializing WebGPU device" << std::endl;
-            exit(1);
-        }
-    }
+    //     if (!gpuSimulator->initWebGPU(gpuRenderer->getDevice(), gpuRenderer->getQueue())) {
+    //         std::cerr << "Error initializing WebGPU device" << std::endl;
+    //         exit(1);
+    //     }
+    // }
 
     simulator->init(config, imageData);
 

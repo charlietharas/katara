@@ -155,19 +155,14 @@ void Renderer::mapValueToVelocityColor(float value, float min, float max, Uint8&
     }
 }
 
-void Renderer::mapInkToColor(float r, float g, float b, float water, Uint8& outR, Uint8& outG, Uint8& outB) {
+void Renderer::mapInkToColor(float r, float g, float b, Uint8& outR, Uint8& outG, Uint8& outB) {
     r = std::max(0.0f, std::min(1.0f, r));
     g = std::max(0.0f, std::min(1.0f, g));
     b = std::max(0.0f, std::min(1.0f, b));
-    water = std::max(0.0f, std::min(1.0f, water));
 
-    float inkStrength = 1.0f - water;
-    inkStrength = std::max(0.5f, std::min(1.0f, inkStrength)); // clamp ink strength to prevent excessive darkening
-
-    // water dilution
-    outR = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, r * inkStrength * 255.0f)));
-    outG = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, g * inkStrength * 255.0f)));
-    outB = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, b * inkStrength * 255.0f)));
+    outR = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, r * 255.0f)));
+    outG = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, g * 255.0f)));
+    outB = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, b * 255.0f)));
 }
 
 void Renderer::setPixel(int x, int y, Uint8 r, Uint8 g, Uint8 b) {
@@ -198,12 +193,10 @@ void Renderer::drawFluidField(const ISimulator& simulator) {
     const std::vector<float>* r_ink_ptr = nullptr;
     const std::vector<float>* g_ink_ptr = nullptr;
     const std::vector<float>* b_ink_ptr = nullptr;
-    const std::vector<float>* water_ptr = nullptr;
     if (drawTarget == 3 && simulator.isInkInitialized()) {
         r_ink_ptr = &simulator.getRedInk();
         g_ink_ptr = &simulator.getGreenInk();
         b_ink_ptr = &simulator.getBlueInk();
-        water_ptr = &simulator.getWaterContent();
         inkInitialized = true;
     }
 
@@ -224,7 +217,7 @@ void Renderer::drawFluidField(const ISimulator& simulator) {
                 } else if (drawTarget == 3) {
                     // draw ink diffusion
                     if (inkInitialized && r_ink_ptr->size() > idx) {
-                        mapInkToColor((*r_ink_ptr)[idx], (*g_ink_ptr)[idx], (*b_ink_ptr)[idx], (*water_ptr)[idx], r, g, b);
+                        mapInkToColor((*r_ink_ptr)[idx], (*g_ink_ptr)[idx], (*b_ink_ptr)[idx], r, g, b);
                     } else {
                         // default to white
                         r = 255; g = 255; b = 255;

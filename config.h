@@ -63,10 +63,6 @@ struct RenderingConfig {
 };
 
 struct InkConfig {
-    float mixingRate = 0.001f;
-    float diffusionRate = 0.0001f;
-    float pressureStrength = 0.1f;
-    float temporalWeight = 0.95f;
     std::string imagePath = "";
 };
 

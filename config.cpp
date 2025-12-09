@@ -91,10 +91,6 @@ RenderingConfig ConfigLoader::loadRenderingConfig(const json& j) {
 
 InkConfig ConfigLoader::loadInkConfig(const json& j) {
     InkConfig config;
-    config.mixingRate = j.value("mixingRate", 0.001f);
-    config.diffusionRate = j.value("diffusionRate", 0.0001f);
-    config.pressureStrength = j.value("pressureStrength", 0.1f);
-    config.temporalWeight = j.value("temporalWeight", 0.95f);
     config.imagePath = j.value("imagePath", "");
     return config;
 }
