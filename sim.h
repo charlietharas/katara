@@ -51,7 +51,7 @@ private:
     float density;
     float pressureMultiplier;
     float overrelaxationCoefficient;
-    int gsIterations;
+    int projectionIters;
     bool doVorticity;
     float vorticity;
     float vorticityLen;
@@ -115,8 +115,7 @@ private:
     void applyVorticity();
     void smokeAdvect();
 
-    // ink diffusion methods
-    void inkUpdate();
+    // ink sim steps
     void inkAdvection();
     void inkDiffusion();
     void inkWaterMix();

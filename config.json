@@ -8,7 +8,7 @@
     "simulation": {
         "resolution": 150,
         "timestep": 0.016667,
-        "gravity": 0.0,
+        "gravity": -5,
         "fluidDensity": 1000.0,
         "projection": {
             "overrelaxationCoefficient": 1.9,
@@ -26,14 +26,14 @@
             "velocity": 1.5
         },
         "circle": {
-            "radius": 5,
+            "radius": 0,
             "momentumTransferCoeff": 0.25,
             "momentumTransferRadius": 1.0
         }
     },
     "rendering": {
         "target": 2,
-        "showVelocityVectors": false,
+        "showVelocityVectors": true,
         "disableHistograms": false,
         "velocityScale": 0.05
     },

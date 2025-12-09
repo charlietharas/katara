@@ -2,6 +2,8 @@
 #define CONFIG_H
 
 #include <string>
+#include <fstream>
+#include <sstream>
 #include "json.hpp"
 
 using json = nlohmann::json;
@@ -79,6 +81,7 @@ struct Config {
 class ConfigLoader {
 public:
     static Config loadConfig(const std::string& filename = "../config.json");
+    static std::string readFile(const char* filename);
 
 private:
     static PipelineType stringToPipelineType(const std::string& type);

@@ -400,22 +400,10 @@ WGPUShaderModule WebGPURenderer::loadShader(const char* source) {
     return wgpuDeviceCreateShaderModule(device, &shaderDesc);
 }
 
-std::string WebGPURenderer::readFile(const char* filename) {
-    std::string path = std::string("../") + filename; // NOTE assuming run from build/ or debug/ !
-    std::ifstream file(path);
-    if (!file.is_open()) {
-        std::cerr << "Failed to open file: " << path << std::endl;
-        return "";
-    }
-
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
-}
 
 bool WebGPURenderer::initRenderPipeline() {
-    std::string vertexCode = readFile("vertex.wgsl");
-    std::string fragmentCode = readFile("fragment.wgsl");
+    std::string vertexCode = ConfigLoader::readFile("vertex.wgsl");
+    std::string fragmentCode = ConfigLoader::readFile("fragment.wgsl");
 
     if (vertexCode.empty() || fragmentCode.empty()) {
         std::cerr << "Failed to load shader files" << std::endl;

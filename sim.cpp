@@ -13,7 +13,7 @@ FluidSimulator::FluidSimulator(const Config& config)
     gravity(config.simulation.gravity),
     density(config.simulation.fluidDensity),
     overrelaxationCoefficient(config.simulation.projection.overrelaxationCoefficient), // speeds up projection
-    gsIterations(config.simulation.projection.iterations), // projection solver
+    projectionIters(config.simulation.projection.iterations), // projection solver
     doVorticity(config.simulation.vorticity.enabled),
     vorticity(config.simulation.vorticity.strength),
     vorticityLen(config.simulation.vorticity.lengthScale),
@@ -255,6 +255,7 @@ void FluidSimulator::initializeFromImageData(const Config& config, const ImageDa
 }
 
 void FluidSimulator::update() {
+    // base steps
     integrate();
     project();
     extrapolate();
@@ -264,8 +265,16 @@ void FluidSimulator::update() {
     }
     smokeAdvect();
 
+    // ink steps
     if (inkInitialized) {
-        inkUpdate();
+        r_ink_prev = r_ink;
+        g_ink_prev = g_ink;
+        b_ink_prev = b_ink;
+    
+        inkAdvection();
+        inkDiffusion();
+        inkWaterMix();
+        inkTemporalBlend();
     }
 }
 
@@ -286,7 +295,7 @@ void FluidSimulator::project() {
     std::fill(p.begin(), p.end(), 0.0f);
 
     // Gauss-Seidel projection
-    for (int n = 0; n < gsIterations; n++) {
+    for (int n = 0; n < projectionIters; n++) {
         for (int i = 1; i < gridX - 1; i++) {
             for (int j = 1; j < gridY - 1; j++) {
                 if (s[idx(i, j)] == 0.0f) continue;
@@ -393,18 +402,6 @@ void FluidSimulator::smokeAdvect() {
     }
 
     d = newD;
-}
-
-// ink stuff
-void FluidSimulator::inkUpdate() {
-    r_ink_prev = r_ink;
-    g_ink_prev = g_ink;
-    b_ink_prev = b_ink;
-
-    inkAdvection();
-    inkDiffusion();
-    inkWaterMix();
-    inkTemporalBlend();
 }
 
 void FluidSimulator::inkAdvection() {

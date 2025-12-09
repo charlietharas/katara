@@ -46,6 +46,10 @@ public:
     void cleanup() override {}
     void render(const ISimulator& simulator) override;
 
+    WGPUDevice getDevice() const { return device; }
+    WGPUQueue getQueue() const { return queue; }
+    bool isInitialized() const { return initialized; }
+
 private:
     SDL_Window* window;
     int windowWidth, windowHeight;
@@ -119,7 +123,6 @@ private:
 
     // utilities
     WGPUShaderModule loadShader(const char* source);
-    std::string readFile(const char* filename);
     void releaseResources();
 };
 

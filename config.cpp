@@ -2,6 +2,7 @@
 #include "json.hpp"
 #include <fstream>
 #include <iostream>
+#include <sstream>
 
 using json = nlohmann::json;
 
@@ -128,4 +129,17 @@ CircleConfig ConfigLoader::loadCircleConfig(const json& j) {
     config.momentumTransferCoeff = j.value("momentumTransferCoeff", 0.25f);
     config.momentumTransferRadius = j.value("momentumTransferRadius", 1.0f);
     return config;
+}
+
+std::string ConfigLoader::readFile(const char* filename) {
+    std::string path = std::string("../") + filename; // NOTE assuming run from build/ or debug/ !
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        std::cerr << "Error: could not open file: " << path << std::endl;
+        return "";
+    }
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
 }
