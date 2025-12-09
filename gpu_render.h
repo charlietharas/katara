@@ -4,6 +4,7 @@
 #include <webgpu/webgpu.h>
 #include <SDL2/SDL.h>
 #include "irenderer.h"
+#include "config.h"
 #include <vector>
 #include <string>
 #include <fstream>
@@ -38,10 +39,10 @@ struct UniformData {
 
 class WebGPURenderer : public IRenderer {
 public:
-    WebGPURenderer(SDL_Window* window, bool drawVelocities = false, int drawTarget = 2, bool disableHistograms = false);
+    WebGPURenderer(SDL_Window* window, const Config& config);
     ~WebGPURenderer();
 
-    bool init() override;
+    bool init(const Config& config) override;
     void cleanup() override {}
     void render(const ISimulator& simulator) override;
 
@@ -85,7 +86,12 @@ private:
     // render state
     UniformData uniformData;
     bool initialized;
+
+    // cached config values
+    int drawTarget;
+    bool showVelocityVectors;
     bool disableHistograms;
+    float velocityScale;
     
     // histogram state
     int frameCount;

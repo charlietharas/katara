@@ -4,13 +4,8 @@
 #include <cmath>
 #include <iostream>
 
-Renderer::Renderer(
-    SDL_Window* window,
-    bool drawVelocities,
-    int drawTarget,
-    bool disableHistograms
-)
-    : 
+Renderer::Renderer(SDL_Window* window, const Config& config)
+    :
     window(window),
     renderer(nullptr),
     texture(nullptr),
@@ -18,9 +13,10 @@ Renderer::Renderer(
     frameCount(0),
 
     // draw params
-    drawTarget(drawTarget),
-    drawVelocities(drawVelocities),
-    disableHistograms(disableHistograms),
+    drawTarget(config.rendering.target),
+    drawVelocities(config.rendering.showVelocityVectors),
+    disableHistograms(config.rendering.disableHistograms),
+    velScale(config.rendering.velocityScale),
 
     // histograms
     densityHistogramBins(IRenderer::HISTOGRAM_BINS, 0),
@@ -46,7 +42,7 @@ Renderer::~Renderer() {
     delete[] pixels;
 }
 
-bool Renderer::init() {
+bool Renderer::init(const Config& config) {
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
     if (!renderer) {
         return false;
@@ -88,7 +84,7 @@ void Renderer::render(const ISimulator& simulator) {
     }
 
     // compute histograms every n frames
-    int histogramFrameInterval = 2;
+    int histogramFrameInterval = 1;
     if (!disableHistograms && frameCount++ % histogramFrameInterval == 0) {
         computeHistograms(simulator);
     }
@@ -256,6 +252,8 @@ void Renderer::drawFluidField(const ISimulator& simulator) {
                     }
                 }
             } else {
+                // TODO support generic motion dragging rather than explicit solid circle for boundary
+
                 // boundaries in grey
                 int x0, y0;
                 convertCoordinates(i * cellSize, (j + 1) * cellSize, x0, y0);

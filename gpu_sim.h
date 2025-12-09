@@ -3,15 +3,16 @@
 
 #include "isimulator.h"
 #include "sim.h"
+#include "config.h"
 
 // PLACEHOLDER: CURRENTLY WRAPS CPU SIMULATOR
 class GPUFluidSimulator : public ISimulator {
 public:
-    GPUFluidSimulator(int resolution = 150);
+    GPUFluidSimulator(const Config& config);
     ~GPUFluidSimulator() override;
 
     // simulation methods
-    void init(const ImageData* imageData = nullptr) override;
+    void init(const Config& config, const ImageData* imageData = nullptr) override;
     void update() override;
     // mouse interaction
     void onMouseDown(int gridX, int gridY) override;

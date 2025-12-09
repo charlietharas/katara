@@ -13,96 +13,20 @@
 #include "gpu_sim.h"
 #include "irenderer.h"
 #include "isimulator.h"
+#include "config.h"
 
-const int BASE_WINDOW_SIZE = 800; // smaller dimension
-
-struct SimConfig {
-    bool useGPURendering = true;
-    bool useGPUSimulation = false;
-    bool drawVelocities = false;
-    int drawTarget = 2; // 0=pressure, 1=smoke, 2=both, 3=ink
-    bool disableHistograms = false;
-    std::string imagePath; // input image for ink diffusion
-};
-
-SimConfig parseArgs(int argc, char** argv) {
-    SimConfig config;
-
-    for (int i = 1; i < argc; i++) {
-        std::string arg = argv[i];
-
-        if (arg.find("--render=") == 0) {
-            std::string value = arg.substr(9);
-            if (value == "gpu") {
-                config.useGPURendering = true;
-            } else if (value == "cpu") {
-                config.useGPURendering = false;
-            } else {
-                std::cerr << "Invalid renderer option: " << value << " (use 'gpu' or 'cpu')\n";
-                exit(1);
-            }
-        } else if (arg.find("--sim=") == 0) {
-            std::string value = arg.substr(6);
-            if (value == "gpu") {
-                config.useGPUSimulation = true;
-            } else if (value == "cpu") {
-                config.useGPUSimulation = false;
-            } else {
-                std::cerr << "Invalid simulator option: " << value << " (use 'gpu' or 'cpu')\n";
-                exit(1);
-            }
-        } else if (arg == "--vel") {
-            config.drawVelocities = true;
-        } else if (arg == "--nh") {
-            config.disableHistograms = true;
-        } else if (arg.find("--image=") == 0) {
-            config.imagePath = arg.substr(8);
-        } else if (arg.find("--target=") == 0) {
-            std::string value = arg.substr(9);
-            if (value == "pressure") {
-                config.drawTarget = 0;
-            } else if (value == "smoke") {
-                config.drawTarget = 1;
-            } else if (value == "both") {
-                config.drawTarget = 2;
-            } else if (value == "ink") {
-                config.drawTarget = 3;
-            } else {
-                std::cerr << "Invalid target option: " << value << " (use 'pressure', 'smoke', 'both', or 'ink')\n";
-                exit(1);
-            }
-        } else if (arg == "--help" || arg == "-h") {
-            std::cout << "Usage: " << argv[0] << " [options]\n"
-                      << "  --render=cpu|gpu                        Choose renderer\n"
-                      << "  --sim=cpu|gpu                           Choose simulator\n"
-                      << "  --vel                                   Show velocity vectors\n"
-                      << "  --target=pressure|smoke|both|ink        Choose visualization target\n"
-                      << "  --nh                                    Disable histograms\n"
-                      << "  --image=<path>                          Load image for ink diffusion (enables dynamic resizing)\n"
-                      << "  --help, -h                              Show this help dialog\n";
-            exit(0);
-        } else {
-            std::cerr << "Unknown option: " << arg << "\n"
-                      << "Use --help for usage information\n";
-            exit(1);
-        }
+std::unique_ptr<IRenderer> createRenderer(SDL_Window* window, const Config& config) {
+    if (config.rendering.type == "gpu") {
+        return std::make_unique<WebGPURenderer>(window, config);
     }
-
-    return config;
+    return std::make_unique<Renderer>(window, config);
 }
 
-std::unique_ptr<IRenderer> createRenderer(SDL_Window* window, const SimConfig& config) {
-    if (config.useGPURendering) {
-        return std::make_unique<WebGPURenderer>(window, config.drawVelocities, config.drawTarget, config.disableHistograms);
+std::unique_ptr<ISimulator> createSimulator(const Config& config) {
+    if (config.simulation.type == "gpu") {
+        return std::make_unique<GPUFluidSimulator>(config);
     }
-    return std::make_unique<Renderer>(window, config.drawVelocities, config.drawTarget, config.disableHistograms);
-}
-
-std::unique_ptr<ISimulator> createSimulator(const SimConfig& config, int resolution) {
-    if (config.useGPUSimulation) {
-        return std::make_unique<GPUFluidSimulator>(resolution);
-    }
-    return std::make_unique<FluidSimulator>(resolution);
+    return std::make_unique<FluidSimulator>(config);
 }
 
 std::pair<int, int> mouseToGridCoords(const SDL_Event& event, int windowWidth, int windowHeight, ISimulator* simulator) {
@@ -120,40 +44,29 @@ std::pair<int, int> mouseToGridCoords(const SDL_Event& event, int windowWidth, i
 }
 
 int main(int argc, char** argv) {
-    SimConfig config = parseArgs(argc, argv);
-
-    std::string targetName = config.drawTarget == 0 ? "pressure" :
-                             (config.drawTarget == 1 ? "smoke" :
-                             (config.drawTarget == 2 ? "both" : "ink"));
-
-    std::cout << "Configuration:\n"
-              << "  Rendering: " << (config.useGPURendering ? "GPU" : "CPU") << "\n"
-              << "  Simulation: " << (config.useGPUSimulation ? "GPU" : "CPU") << "\n"
-              << "  Velocity vectors: " << (config.drawVelocities ? "Enabled" : "Disabled") << "\n"
-              << "  Visualization target: " << targetName << "\n"
-              << "  Histograms: " << (config.disableHistograms ? "Disabled" : "Enabled") << "\n"
-              << std::endl;
+    // load config from json
+    Config config = ConfigLoader::loadConfig("../config.json");
 
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
         std::cerr << "SDL initialization error: " << SDL_GetError() << std::endl;
         return 1;
     }
 
-    int windowWidth = 1200; // defaults
-    int windowHeight = 800;
+    int windowWidth = config.window.defaultWidth;
+    int windowHeight = config.window.defaultHeight;
 
     // image loading
     SDL_Surface* imageSurface = nullptr;
     SDL_Surface* convertedSurface = nullptr;
     ImageData* imageData = nullptr;
 
-    if (!config.imagePath.empty() && config.drawTarget == 3) {
-        imageSurface = IMG_Load(config.imagePath.c_str());
+    if (!config.ink.imagePath.empty() && config.rendering.target == 3) {
+        imageSurface = IMG_Load(config.ink.imagePath.c_str());
         if (imageSurface) {
             float imageAspectRatio = static_cast<float>(imageSurface->w) / imageSurface->h;
 
             if (imageAspectRatio > 1.0f) { // landscape
-                windowWidth = static_cast<int>(BASE_WINDOW_SIZE * 1.2f);
+                windowWidth = static_cast<int>(config.window.baseSize * 1.2f);
                 windowHeight = static_cast<int>(windowWidth / imageAspectRatio);
 
                 if (windowHeight < 600) {
@@ -161,7 +74,7 @@ int main(int argc, char** argv) {
                     windowWidth = static_cast<int>(windowHeight * imageAspectRatio);
                 }
             } else { // portrait
-                windowHeight = static_cast<int>(BASE_WINDOW_SIZE * 1.2f);
+                windowHeight = static_cast<int>(config.window.baseSize * 1.2f);
                 windowWidth = static_cast<int>(windowHeight * imageAspectRatio);
 
                 if (windowWidth < 600) {
@@ -191,12 +104,12 @@ int main(int argc, char** argv) {
             imageData->gShift = convertedSurface->format->Gshift;
             imageData->bShift = convertedSurface->format->Bshift;
         } else {
-            std::cerr << "Could not load image " << config.imagePath
+            std::cerr << "Could not load image " << config.ink.imagePath
                       << ": " << IMG_GetError() << std::endl;
             SDL_Quit();
             return 1;
         }
-    } else if (config.drawTarget == 3) {
+    } else if (config.rendering.target == 3) {
         std::cerr << "No input image path provided for ink mode" << std::endl;
         SDL_Quit();
         return 1;
@@ -218,10 +131,9 @@ int main(int argc, char** argv) {
     }
 
     auto renderer = createRenderer(window, config);
-    int resolution = config.useGPURendering ? 150 : 100; // increase resolution when rendering with GPU
-    auto simulator = createSimulator(config, resolution);
+    auto simulator = createSimulator(config);
 
-    if (!renderer->init()) {
+    if (!renderer->init(config)) {
         std::cerr << "Renderer initialization error" << std::endl;
         delete imageData;
         if (convertedSurface) SDL_FreeSurface(convertedSurface);
@@ -231,7 +143,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    simulator->init(imageData);
+    simulator->init(config, imageData);
 
     bool running = true;
     SDL_Event event;

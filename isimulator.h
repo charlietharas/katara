@@ -2,6 +2,7 @@
 #define ISIMULATOR_H
 
 #include <vector>
+#include "config.h"
 
 struct ImageData {
     void* pixels;
@@ -20,7 +21,7 @@ public:
     virtual ~ISimulator() = default;
 
     // simulation methods
-    virtual void init(const ImageData* imageData = nullptr) = 0;
+    virtual void init(const Config& config, const ImageData* imageData = nullptr) = 0;
     virtual void update() = 0;
 
     // mouse interaction

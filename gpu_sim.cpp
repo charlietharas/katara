@@ -1,15 +1,14 @@
 #include "gpu_sim.h"
 
-GPUFluidSimulator::GPUFluidSimulator(int resolution) 
-    : cpuSimulator(resolution) {
+GPUFluidSimulator::GPUFluidSimulator(const Config& config)
+    : cpuSimulator(config) {
 }
 
 GPUFluidSimulator::~GPUFluidSimulator() {
-    // destructor TODO
 }
 
-void GPUFluidSimulator::init(const ImageData* imageData) {
-    cpuSimulator.init(imageData);
+void GPUFluidSimulator::init(const Config& config, const ImageData* imageData) {
+    cpuSimulator.init(config, imageData);
 }
 
 void GPUFluidSimulator::update() {

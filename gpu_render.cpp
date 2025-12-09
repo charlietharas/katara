@@ -6,12 +6,7 @@
 #include <algorithm>
 #include <cmath>
 
-WebGPURenderer::WebGPURenderer(
-    SDL_Window* window,
-    bool drawVelocities,
-    int drawTarget,
-    bool disableHistograms
-)
+WebGPURenderer::WebGPURenderer(SDL_Window* window, const Config& config)
     : window(window),
       windowWidth(0),
       windowHeight(0),
@@ -42,7 +37,10 @@ WebGPURenderer::WebGPURenderer(
       blueInkTextureView(nullptr),
       waterTextureView(nullptr),
       initialized(false),
-      disableHistograms(disableHistograms),
+      drawTarget(config.rendering.target),
+      showVelocityVectors(config.rendering.showVelocityVectors),
+      disableHistograms(config.rendering.disableHistograms),
+      velocityScale(config.rendering.velocityScale),
       frameCount(0),
       densityHistogramBins(IRenderer::HISTOGRAM_BINS, 0),
       densityHistogramMin(0.0f),
@@ -58,8 +56,8 @@ WebGPURenderer::WebGPURenderer(
 
     uniformData = {};
     uniformData.drawTarget = drawTarget;
-    uniformData.drawVelocities = drawVelocities ? 1 : 0;
-    uniformData.velScale = 0.05f;
+    uniformData.drawVelocities = showVelocityVectors ? 1 : 0;
+    uniformData.velScale = velocityScale;
     uniformData.windowWidth = static_cast<float>(windowWidth);
     uniformData.windowHeight = static_cast<float>(windowHeight);
     uniformData.disableHistograms = disableHistograms ? 1 : 0;
@@ -76,7 +74,7 @@ WebGPURenderer::~WebGPURenderer() {
 // BOILERPLATE
 // !!!
 
-bool WebGPURenderer::init() {
+bool WebGPURenderer::init(const Config& config) {
     if (!initWebGPU()) {
         std::cerr << "Failed to initialize WebGPU" << std::endl;
         return false;

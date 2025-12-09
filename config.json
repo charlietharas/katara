@@ -1,0 +1,49 @@
+{
+    "window": {
+        "baseSize": 800,
+        "defaultWidth": 1200,
+        "defaultHeight": 800
+    },
+    "simulation": {
+        "type": "cpu",
+        "resolution": 150,
+        "timestep": 0.016667,
+        "gravity": 0.0,
+        "fluidDensity": 1000.0,
+        "projection": {
+            "overrelaxationCoefficient": 1.9,
+            "iterations": 40
+        },
+        "vorticity": {
+            "enabled": true,
+            "strength": 10.0,
+            "lengthScale": 5.0
+        },
+        "windTunnel": {
+            "enabled": true,
+            "side": 0,
+            "startPosition": 0.45,
+            "endPosition": 0.55,
+            "velocity": 1.5
+        },
+        "circle": {
+            "radius": 5,
+            "momentumTransferCoeff": 0.25,
+            "momentumTransferRadius": 1.0
+        }
+    },
+    "rendering": {
+        "type": "gpu",
+        "target": 3,
+        "showVelocityVectors": false,
+        "disableHistograms": false,
+        "velocityScale": 0.05
+    },
+    "ink": {
+        "mixingRate": 0.001,
+        "diffusionRate": 0.0001,
+        "pressureStrength": 0.1,
+        "temporalWeight": 0.95,
+        "imagePath": "img1.png"
+    }
+}

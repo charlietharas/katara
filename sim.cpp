@@ -5,24 +5,24 @@
 #include <iostream>
 #include <SDL2/SDL.h>
 
-FluidSimulator::FluidSimulator(int resolution)
-    : 
+FluidSimulator::FluidSimulator(const Config& config)
+    :
     // sim params
-    resolution(resolution), // grid cells per world unit
-    timeStep(1.0f / 60.0f),
-    gravity(0.0f),
-    density(1000.0f),
-    overrelaxationCoefficient(1.9f), // speeds up projection
-    gsIterations(40), // projection solver
-    doVorticity(true),
-    vorticity(10.0f),
-    vorticityLen(5.0f),
+    resolution(config.simulation.resolution), // grid cells per world unit
+    timeStep(config.simulation.timestep),
+    gravity(config.simulation.gravity),
+    density(config.simulation.fluidDensity),
+    overrelaxationCoefficient(config.simulation.projection.overrelaxationCoefficient), // speeds up projection
+    gsIterations(config.simulation.projection.iterations), // projection solver
+    doVorticity(config.simulation.vorticity.enabled),
+    vorticity(config.simulation.vorticity.strength),
+    vorticityLen(config.simulation.vorticity.lengthScale),
 
     // wind tunnel state
-    windTunnelStart(0.45f),
-    windTunnelEnd(0.55f),
-    windTunnelSide(0), // 0=left, 1=top, 2=bottom, 3=right, -1=disabled
-    windTunnelVelocity(1.5f),
+    windTunnelStart(config.simulation.windTunnel.startPosition),
+    windTunnelEnd(config.simulation.windTunnel.endPosition),
+    windTunnelSide(config.simulation.windTunnel.side), // 0=left, 1=top, 2=bottom, 3=right, -1=disabled
+    windTunnelVelocity(config.simulation.windTunnel.velocity),
 
     // circle state
     circleX(0),
@@ -31,29 +31,27 @@ FluidSimulator::FluidSimulator(int resolution)
     prevCircleY(0),
     circleVelX(0.0f),
     circleVelY(0.0f),
-    circleRadius(0),
+    circleRadius(config.simulation.circle.radius),
 
     // mouse state
     isDragging(false),
 
     // circle momentum transfer
-    momentumTransferCoeff(0.25f),
-    momentumTransferRadius(1.0f),
+    momentumTransferCoeff(config.simulation.circle.momentumTransferCoeff),
+    momentumTransferRadius(config.simulation.circle.momentumTransferRadius),
 
     // ink diffusion
-    mixingRate(0.001f),
-    diffusionRate(0.0001f),
-    pressureStrength(0.1f),
-    temporalWeightCurrent(0.95f),
+    mixingRate(config.ink.mixingRate),
+    diffusionRate(config.ink.diffusionRate),
+    pressureStrength(config.ink.pressureStrength),
+    temporalWeight(config.ink.temporalWeight),
     inkInitialized(false)
 {
 }
 
 FluidSimulator::~FluidSimulator() {}
 
-void FluidSimulator::init(
-    const ImageData* imageData
-) {
+void FluidSimulator::init(const Config& config, const ImageData* imageData) {
     bool imageLoaded = (imageData != nullptr && imageData->pixels != nullptr);
 
     if (imageLoaded) {
@@ -115,11 +113,10 @@ void FluidSimulator::init(
         std::fill(g_ink_prev.begin(), g_ink_prev.end(), 0.0f);
         std::fill(b_ink_prev.begin(), b_ink_prev.end(), 0.0f);
 
-        initializeFromImageData(imageData);
+        initializeFromImageData(config, imageData);
     }
 
     // initialize circle
-    circleRadius = static_cast<int>(pipeHeight);
     circleX = gridX / 2;
     circleY = gridY / 2;
 
@@ -216,7 +213,7 @@ void FluidSimulator::setupEdges() {
     pipeHeight = windTunnelEndCell - windTunnelStartCell;
 }
 
-void FluidSimulator::initializeFromImageData(const ImageData* imageData) {
+void FluidSimulator::initializeFromImageData(const Config& config, const ImageData* imageData) {
     if (!imageData || !imageData->pixels) return;
     Uint8* pixels = static_cast<Uint8*>(imageData->pixels);
 
@@ -501,12 +498,11 @@ void FluidSimulator::inkTemporalBlend() {
             int idx_ij = idx(i, j);
 
             // temporal blending
-            float weight_current = temporalWeightCurrent;
-            float weight_prev = 1.0f - weight_current;
+            float weight_prev = 1.0f - temporalWeight;
 
-            r_ink[idx_ij] = weight_current * r_ink[idx_ij] + weight_prev * r_ink_prev[idx_ij];
-            g_ink[idx_ij] = weight_current * g_ink[idx_ij] + weight_prev * g_ink_prev[idx_ij];
-            b_ink[idx_ij] = weight_current * b_ink[idx_ij] + weight_prev * b_ink_prev[idx_ij];
+            r_ink[idx_ij] = temporalWeight * r_ink[idx_ij] + weight_prev * r_ink_prev[idx_ij];
+            g_ink[idx_ij] = temporalWeight * g_ink[idx_ij] + weight_prev * g_ink_prev[idx_ij];
+            b_ink[idx_ij] = temporalWeight * b_ink[idx_ij] + weight_prev * b_ink_prev[idx_ij];
         }
     }
 }

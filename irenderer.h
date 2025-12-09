@@ -11,7 +11,7 @@ public:
     virtual ~IRenderer() = default;
 
     // render methods
-    virtual bool init() = 0;
+    virtual bool init(const Config& config) = 0;
     virtual void cleanup() = 0;
     virtual void render(const ISimulator& simulator) = 0;
 

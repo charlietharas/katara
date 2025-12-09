@@ -6,13 +6,14 @@
 #include <vector>
 #include <string>
 #include "irenderer.h"
+#include "config.h"
 
 class Renderer : public IRenderer {
 public:
-    Renderer(SDL_Window* window, bool drawVelocities = false, int drawTarget = 2, bool disableHistograms = false);
+    Renderer(SDL_Window* window, const Config& config);
     ~Renderer();
 
-    bool init() override;
+    bool init(const Config& config) override;
     void cleanup() override;
     void render(const ISimulator& simulator) override;
 
@@ -30,7 +31,7 @@ private:
     int drawTarget; // 0=pressure, 1=smoke, 2=both
     bool drawVelocities;
     bool disableHistograms;
-    const float velScale = 0.05f;
+    float velScale;
 
     // histograms
     int frameCount;

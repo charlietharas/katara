@@ -3,13 +3,14 @@
 
 #include <vector>
 #include "isimulator.h"
+#include "config.h"
 
 class FluidSimulator : public ISimulator {
 public:
-    FluidSimulator(int resolution = 150);
+    FluidSimulator(const Config& config);
     ~FluidSimulator();
 
-    void init(const ImageData* imageData = nullptr) override;
+    void init(const Config& config, const ImageData* imageData = nullptr) override;
     void update() override;
 
     // mouse interaction methods
@@ -84,7 +85,7 @@ private:
     float mixingRate;
     float diffusionRate;
     float pressureStrength;
-    float temporalWeightCurrent;
+    float temporalWeight;
     bool inkInitialized;
 
     // configuration
@@ -130,7 +131,7 @@ private:
     float sample(float i, float j, int type);
 
     // image initialization helpers
-    void initializeFromImageData(const ImageData* imageData);
+    void initializeFromImageData(const Config& config, const ImageData* imageData);
 
     // misc helpers
     bool shouldSkipInkCell(int i, int j, bool checkNoInk = true) const;
