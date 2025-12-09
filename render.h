@@ -45,7 +45,7 @@ private:
     void mapValueToColor(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b);
     void mapValueToGreyscale(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b);
     void mapValueToVelocityColor(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b);
-    void mapInkToColor(float r, float g, float b, float water, Uint8& outR, Uint8& outG, Uint8& outB);
+    void mapInkToColor(float r, float g, float b, Uint8& outR, Uint8& outG, Uint8& outB);
     void drawFluidField(const ISimulator& simulator);
     void drawVelocityField(const ISimulator& simulator);
     void computeHistograms(const ISimulator& simulator);

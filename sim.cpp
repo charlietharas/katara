@@ -40,11 +40,7 @@ FluidSimulator::FluidSimulator(const Config& config)
     momentumTransferCoeff(config.simulation.circle.momentumTransferCoeff),
     momentumTransferRadius(config.simulation.circle.momentumTransferRadius),
 
-    // ink diffusion
-    mixingRate(config.ink.mixingRate),
-    diffusionRate(config.ink.diffusionRate),
-    pressureStrength(config.ink.pressureStrength),
-    temporalWeight(config.ink.temporalWeight),
+    // ink state
     inkInitialized(false)
 {
 }
@@ -89,6 +85,9 @@ void FluidSimulator::init(const Config& config, const ImageData* imageData) {
     newX.resize(totalCells);
     newY.resize(totalCells);
     newD.resize(totalCells);
+    new_r_ink.resize(totalCells);
+    new_g_ink.resize(totalCells);
+    new_b_ink.resize(totalCells);
 
     std::fill(s.begin(), s.end(), 1.0f);
     std::fill(d.begin(), d.end(), 1.0f);
@@ -101,17 +100,15 @@ void FluidSimulator::init(const Config& config, const ImageData* imageData) {
         r_ink.resize(totalCells);
         g_ink.resize(totalCells);
         b_ink.resize(totalCells);
-        water.resize(totalCells);
-        r_ink_prev.resize(totalCells);
-        g_ink_prev.resize(totalCells);
-        b_ink_prev.resize(totalCells);
+        new_r_ink.resize(totalCells);
+        new_g_ink.resize(totalCells);
+        new_b_ink.resize(totalCells);
         std::fill(r_ink.begin(), r_ink.end(), 0.0f);
         std::fill(g_ink.begin(), g_ink.end(), 0.0f);
         std::fill(b_ink.begin(), b_ink.end(), 0.0f);
-        std::fill(water.begin(), water.end(), 1.0f);
-        std::fill(r_ink_prev.begin(), r_ink_prev.end(), 0.0f);
-        std::fill(g_ink_prev.begin(), g_ink_prev.end(), 0.0f);
-        std::fill(b_ink_prev.begin(), b_ink_prev.end(), 0.0f);
+        std::fill(new_r_ink.begin(), new_r_ink.end(), 0.0f);
+        std::fill(new_g_ink.begin(), new_g_ink.end(), 0.0f);
+        std::fill(new_b_ink.begin(), new_b_ink.end(), 0.0f);
 
         initializeFromImageData(config, imageData);
     }
@@ -218,7 +215,6 @@ void FluidSimulator::initializeFromImageData(const Config& config, const ImageDa
     Uint8* pixels = static_cast<Uint8*>(imageData->pixels);
 
     float DARKEST_BLACK = 0.05f; // minimum ink color; if it's 0 ink persists because it fucks up some multiplication somewhere
-    float START_WATER = 0.05f;
     for (int j = 0; j < gridY; j++) {
         for (int i = 0; i < gridX; i++) {
             int cellIndex = idx(i, j);
@@ -242,11 +238,10 @@ void FluidSimulator::initializeFromImageData(const Config& config, const ImageDa
                 r_ink[cellIndex] = std::max(0.05f, std::min(1.0f, r / 255.0f));
                 g_ink[cellIndex] = std::max(0.05f, std::min(1.0f, g / 255.0f));
                 b_ink[cellIndex] = std::max(0.05f, std::min(1.0f, b / 255.0f));
-                water[cellIndex] = START_WATER;
 
-                r_ink_prev[cellIndex] = r_ink[cellIndex];
-                g_ink_prev[cellIndex] = g_ink[cellIndex];
-                b_ink_prev[cellIndex] = b_ink[cellIndex];
+                new_r_ink[cellIndex] = r_ink[cellIndex];
+                new_g_ink[cellIndex] = g_ink[cellIndex];
+                new_b_ink[cellIndex] = b_ink[cellIndex];
             }
         }
     }
@@ -261,11 +256,6 @@ void FluidSimulator::update() {
     advect();
     if (doVorticity) {
         applyVorticity();
-    }
-    smokeAdvect();
-
-    if (inkInitialized) {
-        inkUpdate();
     }
 }
 
@@ -326,6 +316,12 @@ void FluidSimulator::extrapolate() {
 void FluidSimulator::advect() {
     newX = x;
     newY = y;
+    newD = d;
+    if (inkInitialized) {
+        new_r_ink = r_ink;
+        new_g_ink = g_ink;
+        new_b_ink = b_ink;
+    }
 
     #pragma omp parallel for
     for (int i = 1; i < gridX; i++) {
@@ -348,12 +344,40 @@ void FluidSimulator::advect() {
                     y0 -= y[idx(i, j)] * timeStep;
                     newY[idx(i, j)] = sample(x0, y0, 1);
                 }
+
+                // smoke advection
+                float x0 = (x[idx(i, j)] + x[idx(i+1, j)]) / 2.0f;
+                float y0 = (y[idx(i, j)] + y[idx(i, j+1)]) / 2.0f;
+                float x1 = i * cellHeight + halfCellHeight - x0 * timeStep;
+                float y1 = j * cellHeight + halfCellHeight - y0 * timeStep;
+                newD[idx(i, j)] = sample(x1, y1, 2);
+
+                // ink advection
+                if (inkInitialized) {
+                    if (shouldSkipInkCell(i, j)) continue;
+
+                    float vel_x = (x[idx(i, j)] + x[idx(i+1, j)]) / 2.0f;
+                    float vel_y = (y[idx(i, j)] + y[idx(i, j+1)]) / 2.0f;
+        
+                    float x0 = i * cellHeight + halfCellHeight - vel_x * timeStep;
+                    float y0 = j * cellHeight + halfCellHeight - vel_y * timeStep;
+        
+                    new_r_ink[idx(i, j)] = sample(x0, y0, 3);
+                    new_g_ink[idx(i, j)] = sample(x0, y0, 4);
+                    new_b_ink[idx(i, j)] = sample(x0, y0, 5);
+                }
             }
         }
     }
 
     x = newX;
     y = newY;
+    d = newD;
+    if (inkInitialized) {
+        r_ink = new_r_ink;
+        g_ink = new_g_ink;
+        b_ink = new_b_ink;
+    }
 }
 
 void FluidSimulator::applyVorticity() {
@@ -372,137 +396,6 @@ void FluidSimulator::applyVorticity() {
                 x[idx(i, j)] += timeStep * c * dx * vorticity / len;
                 y[idx(i, j)] += timeStep * c * dy * vorticity / len;
             }
-        }
-    }
-}
-
-void FluidSimulator::smokeAdvect() {
-    newD = d;
-
-    #pragma omp parallel for
-    for (int i = 1; i < gridX-1; i++) {
-        for (int j = 1; j < gridY-1; j++) {
-            if (s[idx(i, j)] != 0.0f) {
-                float x0 = (x[idx(i, j)] + x[idx(i+1, j)]) / 2.0f;
-                float y0 = (y[idx(i, j)] + y[idx(i, j+1)]) / 2.0f;
-                float x1 = i * cellHeight + halfCellHeight - x0 * timeStep;
-                float y1 = j * cellHeight + halfCellHeight - y0 * timeStep;
-                newD[idx(i, j)] = sample(x1, y1, 2);
-            }
-        }
-    }
-
-    d = newD;
-}
-
-// ink stuff
-void FluidSimulator::inkUpdate() {
-    r_ink_prev = r_ink;
-    g_ink_prev = g_ink;
-    b_ink_prev = b_ink;
-
-    inkAdvection();
-    inkDiffusion();
-    inkWaterMix();
-    inkTemporalBlend();
-}
-
-void FluidSimulator::inkAdvection() {
-    std::vector<float> new_r_ink = r_ink;
-    std::vector<float> new_g_ink = g_ink;
-    std::vector<float> new_b_ink = b_ink;
-
-    #pragma omp parallel for
-    for (int i = 1; i < gridX-1; i++) {
-        for (int j = 1; j < gridY-1; j++) {
-            if (shouldSkipInkCell(i, j)) continue;
-
-            float vel_x = (x[idx(i, j)] + x[idx(i+1, j)]) / 2.0f;
-            float vel_y = (y[idx(i, j)] + y[idx(i, j+1)]) / 2.0f;
-
-            float x0 = i * cellHeight + halfCellHeight - vel_x * timeStep;
-            float y0 = j * cellHeight + halfCellHeight - vel_y * timeStep;
-
-            new_r_ink[idx(i, j)] = sample(x0, y0, 3);
-            new_g_ink[idx(i, j)] = sample(x0, y0, 4);
-            new_b_ink[idx(i, j)] = sample(x0, y0, 5);
-        }
-    }
-
-    r_ink = new_r_ink;
-    g_ink = new_g_ink;
-    b_ink = new_b_ink;
-}
-
-void FluidSimulator::inkDiffusion() {
-    std::vector<float> new_r_ink = r_ink;
-    std::vector<float> new_g_ink = g_ink;
-    std::vector<float> new_b_ink = b_ink;
-
-    #pragma omp parallel for
-    for (int i = 1; i < gridX-1; i++) {
-        for (int j = 1; j < gridY-1; j++) {
-            if (shouldSkipInkCell(i, j)) continue;
-
-            int idx_ij = idx(i, j);
-
-            float laplacian_r = (r_ink[idx(i+1, j
-            )] + r_ink[idx(i-1, j)] +
-                                r_ink[idx(i, j+1)] + r_ink[idx(i, j-1)] - 4.0f * r_ink[idx_ij]);
-            float laplacian_g = (g_ink[idx(i+1, j)] + g_ink[idx(i-1, j)] +
-                                g_ink[idx(i, j+1)] + g_ink[idx(i, j-1)] - 4.0f * g_ink[idx_ij]);
-            float laplacian_b = (b_ink[idx(i+1, j)] + b_ink[idx(i-1, j)] +
-                                b_ink[idx(i, j+1)] + b_ink[idx(i, j-1)] - 4.0f * b_ink[idx_ij]);
-
-            new_r_ink[idx_ij] += diffusionRate * laplacian_r * timeStep;
-            new_g_ink[idx_ij] += diffusionRate * laplacian_g * timeStep;
-            new_b_ink[idx_ij] += diffusionRate * laplacian_b * timeStep;
-        }
-    }
-
-    r_ink = new_r_ink;
-    g_ink = new_g_ink;
-    b_ink = new_b_ink;
-}
-
-void FluidSimulator::inkWaterMix() {
-    float WATER_CAP = 0.2f;
-    float MIXING_FACTOR = 0.1f;
-    float REDUCTION_FACTOR = 0.05f;
-
-    #pragma omp parallel for
-    for (int i = 0; i < gridX; i++) {
-        for (int j = 0; j < gridY; j++) {
-            if (shouldSkipInkCell(i, j)) continue;
-
-            int idx_ij = idx(i, j);
-
-            float mixing = mixingRate * timeStep * MIXING_FACTOR;
-            water[idx_ij] += (1.0f - water[idx_ij]) * mixing;
-            water[idx_ij] = std::max(0.0f, std::min(WATER_CAP, water[idx_ij]));
-
-            float ink_factor = 1.0f - water[idx_ij] * REDUCTION_FACTOR;
-            r_ink[idx_ij] *= ink_factor;
-            g_ink[idx_ij] *= ink_factor;
-            b_ink[idx_ij] *= ink_factor;
-        }
-    }
-}
-
-void FluidSimulator::inkTemporalBlend() {
-    #pragma omp parallel for
-    for (int i = 0; i < gridX; i++) {
-        for (int j = 0; j < gridY; j++) {
-            if (shouldSkipInkCell(i, j, false)) continue;
-
-            int idx_ij = idx(i, j);
-
-            // temporal blending
-            float weight_prev = 1.0f - temporalWeight;
-
-            r_ink[idx_ij] = temporalWeight * r_ink[idx_ij] + weight_prev * r_ink_prev[idx_ij];
-            g_ink[idx_ij] = temporalWeight * g_ink[idx_ij] + weight_prev * g_ink_prev[idx_ij];
-            b_ink[idx_ij] = temporalWeight * b_ink[idx_ij] + weight_prev * b_ink_prev[idx_ij];
         }
     }
 }

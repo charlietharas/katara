@@ -31,7 +31,6 @@ struct UniformData {
 @group(0) @binding(6) var redInkTexture: texture_2d<f32>;
 @group(0) @binding(7) var greenInkTexture: texture_2d<f32>;
 @group(0) @binding(8) var blueInkTexture: texture_2d<f32>;
-@group(0) @binding(9) var waterTexture: texture_2d<f32>;
 
 // color helpers
 fn mapValueToColor(value: f32, min: f32, max: f32) -> vec3<f32> {
@@ -76,17 +75,12 @@ fn mapValueToVelocityColor(value: f32, min: f32, max: f32) -> vec3<f32> {
     }
 }
 
-fn mapInkToColor(r: f32, g: f32, b: f32, water: f32) -> vec3<f32> {
+fn mapInkToColor(r: f32, g: f32, b: f32) -> vec3<f32> {
     var r_clamped = clamp(r, 0.0, 1.0);
     var g_clamped = clamp(g, 0.0, 1.0);
     var b_clamped = clamp(b, 0.0, 1.0);
-    var water_clamped = clamp(water, 0.0, 1.0);
-
-    // water dilution
-    var inkStrength = 1.0 - water_clamped;
-    inkStrength = clamp(inkStrength, 0.5, 1.0); // clamp ink strength to prevent excessive darkening
-
-    return vec3<f32>(r_clamped * inkStrength, g_clamped * inkStrength, b_clamped * inkStrength);
+    
+    return vec3<f32>(r_clamped, g_clamped, b_clamped);
 }
 
 fn worldToScreen(worldPos: vec2<f32>) -> vec2<f32> {
@@ -120,7 +114,6 @@ fn sampleFluidField(coord: vec2<f32>) -> vec4<f32> {
     var redInk = textureLoad(redInkTexture, vec2<i32>(texX, texY), 0);
     var greenInk = textureLoad(greenInkTexture, vec2<i32>(texX, texY), 0);
     var blueInk = textureLoad(blueInkTexture, vec2<i32>(texX, texY), 0);
-    var water = textureLoad(waterTexture, vec2<i32>(texX, texY), 0);
 
     var color = vec3<f32>(0.0, 0.0, 0.0);
 
@@ -134,7 +127,7 @@ fn sampleFluidField(coord: vec2<f32>) -> vec4<f32> {
             color = mapValueToGreyscale(density.r, 0.0, 1.0);
         } else if (uniforms.drawTarget == 3) {
             // draw ink diffusion
-            color = mapInkToColor(redInk.r, greenInk.r, blueInk.r, water.r);
+            color = mapInkToColor(redInk.r, greenInk.r, blueInk.r);
         } else {
             // draw pretty pressure + smoke
             color = mapValueToColor(pressure.r, uniforms.pressureMin, uniforms.pressureMax);

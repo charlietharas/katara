@@ -1,5 +1,5 @@
 {
-    "pipeline": "device",
+    "pipeline": "hybrid",
     "window": {
         "baseSize": 800,
         "defaultWidth": 1200,
@@ -32,16 +32,12 @@
         }
     },
     "rendering": {
-        "target": 2,
+        "target": 3,
         "showVelocityVectors": false,
-        "disableHistograms": false,
-        "velocityScale": 0.05
+        "velocityScale": 0.05,
+        "disableHistograms": false
     },
     "ink": {
-        "mixingRate": 0.001,
-        "diffusionRate": 0.0001,
-        "pressureStrength": 0.1,
-        "temporalWeight": 0.95,
         "imagePath": "img1.png"
     }
 }

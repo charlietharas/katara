@@ -24,7 +24,6 @@ public:
     float getCellSize() const override { return cellHeight; }
     float getDomainWidth() const override { return domainWidth; }
     float getDomainHeight() const override { return domainHeight; }
-
   
     const std::vector<float>& getVelocityX() const override { return x; }
     const std::vector<float>& getVelocityY() const override { return y; }
@@ -34,7 +33,6 @@ public:
     const std::vector<float>& getRedInk() const override { return r_ink; }
     const std::vector<float>& getGreenInk() const override { return g_ink; }
     const std::vector<float>& getBlueInk() const override { return b_ink; }
-    const std::vector<float>& getWaterContent() const override { return water; }
     bool isInkInitialized() const override { return inkInitialized; }
 
 private:
@@ -77,15 +75,10 @@ private:
 
     // advection util arrays
     std::vector<float> newX, newY, newD;
+    std::vector<float> new_r_ink, new_g_ink, new_b_ink;
 
     // ink diffusion
     std::vector<float> r_ink, g_ink, b_ink;
-    std::vector<float> water;
-    std::vector<float> r_ink_prev, g_ink_prev, b_ink_prev;
-    float mixingRate;
-    float diffusionRate;
-    float pressureStrength;
-    float temporalWeight;
     bool inkInitialized;
 
     // configuration
@@ -113,14 +106,6 @@ private:
     void extrapolate();
     void advect();
     void applyVorticity();
-    void smokeAdvect();
-
-    // ink diffusion methods
-    void inkUpdate();
-    void inkAdvection();
-    void inkDiffusion();
-    void inkWaterMix();
-    void inkTemporalBlend();
 
     // grid utils
     float div(int i, int j);

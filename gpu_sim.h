@@ -40,7 +40,6 @@ public:
     const std::vector<float>& getRedInk() const override { return cpuSimulator.getRedInk(); }
     const std::vector<float>& getGreenInk() const override { return cpuSimulator.getGreenInk(); }
     const std::vector<float>& getBlueInk() const override { return cpuSimulator.getBlueInk(); }
-    const std::vector<float>& getWaterContent() const override { return cpuSimulator.getWaterContent(); }
     bool isInkInitialized() const override { return cpuSimulator.isInkInitialized(); }
 private:
     FluidSimulator cpuSimulator;
