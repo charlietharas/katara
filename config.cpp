@@ -18,23 +18,34 @@ Config ConfigLoader::loadConfig(const std::string& filename) {
 
     Config config;
 
+    if (j.contains("pipeline")) {
+        config.pipeline = stringToPipelineType(j["pipeline"]);
+    }   
     if (j.contains("window")) {
         config.window = loadWindowConfig(j["window"]);
     }
-
     if (j.contains("simulation")) {
         config.simulation = loadSimulationConfig(j["simulation"]);
     }
-
     if (j.contains("rendering")) {
         config.rendering = loadRenderingConfig(j["rendering"]);
     }
-
     if (j.contains("ink")) {
         config.ink = loadInkConfig(j["ink"]);
     }
 
     return config;
+}
+
+PipelineType ConfigLoader::stringToPipelineType(const std::string& type) {
+    if (type == "host") {
+        return PipelineType::CPU;
+    } else if (type == "device") {
+        return PipelineType::GPU;
+    } else if (type == "hybrid") {
+        return PipelineType::HYBRID;
+    }
+    return PipelineType::CPU;
 }
 
 WindowConfig ConfigLoader::loadWindowConfig(const json& j) {
@@ -47,7 +58,6 @@ WindowConfig ConfigLoader::loadWindowConfig(const json& j) {
 
 SimulationConfig ConfigLoader::loadSimulationConfig(const json& j) {
     SimulationConfig config;
-    config.type = j.value("type", "cpu");
     config.resolution = j.value("resolution", 100);
     config.timestep = j.value("timestep", 1.0f / 60.0f);
     config.gravity = j.value("gravity", 0.0f);
@@ -56,15 +66,12 @@ SimulationConfig ConfigLoader::loadSimulationConfig(const json& j) {
     if (j.contains("projection")) {
         config.projection = loadProjectionConfig(j["projection"]);
     }
-
     if (j.contains("vorticity")) {
         config.vorticity = loadVorticityConfig(j["vorticity"]);
     }
-
     if (j.contains("windTunnel")) {
         config.windTunnel = loadWindTunnelConfig(j["windTunnel"]);
     }
-
     if (j.contains("circle")) {
         config.circle = loadCircleConfig(j["circle"]);
     }
@@ -74,7 +81,6 @@ SimulationConfig ConfigLoader::loadSimulationConfig(const json& j) {
 
 RenderingConfig ConfigLoader::loadRenderingConfig(const json& j) {
     RenderingConfig config;
-    config.type = j.value("type", "gpu");
     config.target = j.value("target", 2);
     config.showVelocityVectors = j.value("showVelocityVectors", false);
     config.disableHistograms = j.value("disableHistograms", false);

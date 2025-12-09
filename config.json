@@ -1,11 +1,11 @@
 {
+    "pipeline": "device",
     "window": {
         "baseSize": 800,
         "defaultWidth": 1200,
         "defaultHeight": 800
     },
     "simulation": {
-        "type": "cpu",
         "resolution": 150,
         "timestep": 0.016667,
         "gravity": 0.0,
@@ -26,13 +26,12 @@
             "velocity": 1.5
         },
         "circle": {
-            "radius": 0,
+            "radius": 5,
             "momentumTransferCoeff": 0.25,
             "momentumTransferRadius": 1.0
         }
     },
     "rendering": {
-        "type": "gpu",
         "target": 2,
         "showVelocityVectors": false,
         "disableHistograms": false,

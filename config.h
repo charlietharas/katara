@@ -36,8 +36,13 @@ struct CircleConfig {
     float momentumTransferRadius = 1.0f;
 };
 
+enum class PipelineType {
+    CPU,
+    GPU,
+    HYBRID
+};
+
 struct SimulationConfig {
-    std::string type = "cpu"; // "cpu" or "gpu"
     int resolution = 100;
     float timestep = 1.0f / 60.0f;
     float gravity = 0.0f;
@@ -49,7 +54,6 @@ struct SimulationConfig {
 };
 
 struct RenderingConfig {
-    std::string type = "gpu"; // "cpu" or "gpu"
     int target = 2; // 0=pressure, 1=smoke, 2=both, 3=ink
     bool showVelocityVectors = false;
     bool disableHistograms = false;
@@ -65,6 +69,7 @@ struct InkConfig {
 };
 
 struct Config {
+    PipelineType pipeline = PipelineType::CPU;
     WindowConfig window;
     SimulationConfig simulation;
     RenderingConfig rendering;
@@ -76,6 +81,7 @@ public:
     static Config loadConfig(const std::string& filename = "../config.json");
 
 private:
+    static PipelineType stringToPipelineType(const std::string& type);
     static WindowConfig loadWindowConfig(const json& j);
     static SimulationConfig loadSimulationConfig(const json& j);
     static RenderingConfig loadRenderingConfig(const json& j);

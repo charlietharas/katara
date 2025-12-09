@@ -1,7 +1,5 @@
 # Katara
 
-## Usage
-
 ## Build Instructions (Linux)
 Dependencies:
 
@@ -22,3 +20,21 @@ To run:
 ```
 ./katara
 ```
+
+## Usage
+Edit `config.json` to change simulation behavior. Command line arguments are not supported.
+
+**TODO config description**
+
+## Project Structure
+`main.cpp` and `config.cpp` manage program initialization and main loop. Simulation parameters are loaded from `config.json`.
+
+Simulation has two components, which are fully implemented on both the CPU and GPU (via WebGPU). Use the configuration file to switch between host/device rendering and simulation (pipeline="host","device","hybrid"; GPU simulation with CPU rendering is unsupported).
+
+**Renderer** (abstract interface defined in `irenderer.h`)
+- CPU version in `render.cpp`
+- GPU version in `gpu_render.cpp`; shaders in `fragment.wgsl` and `vertex.wgsl`
+
+**Simulator** (abstract interface defined in `isimulator.h`)
+- CPU version in `sim.cpp`
+- GPU version in `gpu_sim.cpp`

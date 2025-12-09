@@ -16,14 +16,14 @@
 #include "config.h"
 
 std::unique_ptr<IRenderer> createRenderer(SDL_Window* window, const Config& config) {
-    if (config.rendering.type == "gpu") {
-        return std::make_unique<WebGPURenderer>(window, config);
+    if (config.pipeline == PipelineType::CPU) {
+        return std::make_unique<Renderer>(window, config);
     }
-    return std::make_unique<Renderer>(window, config);
+    return std::make_unique<WebGPURenderer>(window, config);
 }
 
 std::unique_ptr<ISimulator> createSimulator(const Config& config) {
-    if (config.simulation.type == "gpu") {
+    if (config.pipeline == PipelineType::GPU) {
         return std::make_unique<GPUFluidSimulator>(config);
     }
     return std::make_unique<FluidSimulator>(config);
@@ -44,7 +44,7 @@ std::pair<int, int> mouseToGridCoords(const SDL_Event& event, int windowWidth, i
 }
 
 int main(int argc, char** argv) {
-    // load config from json
+    // TODO support command line arguments for config file path
     Config config = ConfigLoader::loadConfig("../config.json");
 
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -141,6 +141,16 @@ int main(int argc, char** argv) {
         SDL_DestroyWindow(window);
         SDL_Quit();
         return 1;
+    }
+
+    if (config.pipeline == PipelineType::GPU) {
+        auto gpuSimulator = static_cast<GPUFluidSimulator*>(simulator.get());
+        auto gpuRenderer = static_cast<WebGPURenderer*>(renderer.get());
+
+        if (!gpuSimulator->initWebGPU(gpuRenderer->getDevice(), gpuRenderer->getQueue())) {
+            std::cerr << "Error initializing WebGPU device" << std::endl;
+            exit(1);
+        }
     }
 
     simulator->init(config, imageData);
