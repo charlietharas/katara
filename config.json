@@ -1,5 +1,5 @@
 {
-    "pipeline": "hybrid",
+    "pipeline": "device",
     "window": {
         "baseSize": 800,
         "defaultWidth": 1200,
@@ -8,7 +8,7 @@
     "simulation": {
         "resolution": 150,
         "timestep": 0.016667,
-        "gravity": -5,
+        "gravity": -2,
         "fluidDensity": 1000.0,
         "projection": {
             "overrelaxationCoefficient": 1.9,
@@ -26,15 +26,15 @@
             "velocity": 1.5
         },
         "circle": {
-            "radius": 0,
+            "radius": 5,
             "momentumTransferCoeff": 0.25,
             "momentumTransferRadius": 1.0
         }
     },
     "rendering": {
-        "target": 3,
-        "showVelocityVectors": false,
-        "velocityScale": 0.05,
+        "target": 2,
+        "showVelocityVectors": true,
+        "velocityScale": 0.1,
         "disableHistograms": false
     },
     "ink": {

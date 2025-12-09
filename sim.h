@@ -119,7 +119,7 @@ private:
     void initializeFromImageData(const Config& config, const ImageData* imageData);
 
     // misc helpers
-    bool shouldSkipInkCell(int i, int j, bool checkNoInk = true) const;
+    bool shouldSkipInkCell(int i, int j) const;
     int idx(int i, int j) const { return j * gridX + i; }
 };
 

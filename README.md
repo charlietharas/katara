@@ -45,7 +45,7 @@ Parameters will either change fluid behavior, simulation components (e.g. fluid 
 |                | startPosition             | Beginning of fluid inlet along side in normalized world coords (0-1)                                                               |
 |                | endPosition               | End of fluid inlet along side in normalized world coords (0-1)                                                                     |
 |                | velocity                  | Velocity of fluid coming in from the inlet                                                                              |
-| sim.circle     | radius                    | Radius of interactive circle obstacle; 0 to disable                                                                     |
+| sim.circle     | radius                    | Radius of interactive circle obstacle (grid units); 0 to disable                                                                     |
 |                | momentumTransferCoeff     | Strength with which circle imparts velocity on nearby fluid when moved                                                  |
 |                | momentumTransferRadius    | Distance around the circle center around which velocity is imparted (with quadratic falloff)                              |
 | rendering      | target                    | `0`=colored density grid, `1`=greyscale smoke grid, `2`=combined smoke/density grid, `3`=ink mode (requires `imagePath` set)             |
@@ -64,4 +64,4 @@ Simulation has two components, which are fully implemented on both the CPU and G
 
 **Simulator** (abstract interface defined in `isimulator.h`)
 - CPU version in `sim.cpp`
-- GPU version in `gpu_sim.cpp`; compute shaders in `compute.wgsl`
+- GPU version in `gpu_sim.cpp`; each step of the main simulation loop has its own compute shader file `compute_<stage>.wgsl`
