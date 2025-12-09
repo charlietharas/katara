@@ -251,7 +251,9 @@ void FluidSimulator::initializeFromImageData(const Config& config, const ImageDa
 
 void FluidSimulator::update() {
     // base steps
-    integrate();
+    if (gravity != 0.0f) { 
+        integrate();
+    }
     project();
     extrapolate();
     advect();
@@ -261,8 +263,6 @@ void FluidSimulator::update() {
 }
 
 void FluidSimulator::integrate() {
-    if (gravity == 0.0f) return;
-
     for (int i = 1; i < gridX; i++) {
         for (int j = 1; j < gridY; j++) {
             if (s[idx(i, j)] != 0.0f && s[idx(i, j-1)] != 0.0f) {
@@ -672,7 +672,7 @@ void FluidSimulator::onMouseUp() {
     isDragging = false;
 }
 
-bool FluidSimulator::shouldSkipInkCell(int i, int j, bool checkNoInk) const {
+bool FluidSimulator::shouldSkipInkCell(int i, int j) const {
     // skip solid cells
     if (s[idx(i, j)] == 0.0f) return true;
 
@@ -683,11 +683,9 @@ bool FluidSimulator::shouldSkipInkCell(int i, int j, bool checkNoInk) const {
     }
 
     // skip cells with no ink
-    if (checkNoInk) {
-        int idx_ij = idx(i, j);
-        if (r_ink[idx_ij] == 0.0f && g_ink[idx_ij] == 0.0f && b_ink[idx_ij] == 0.0f) {
-            return true;
-        }
+    int idx_ij = idx(i, j);
+    if (r_ink[idx_ij] == 0.0f && g_ink[idx_ij] == 0.0f && b_ink[idx_ij] == 0.0f) {
+        return true;
     }
 
     return false;

@@ -1,5 +1,5 @@
 {
-    "pipeline": "hybrid",
+    "pipeline": "device",
     "window": {
         "baseSize": 800,
         "defaultWidth": 1200,
@@ -32,8 +32,8 @@
         }
     },
     "rendering": {
-        "target": 3,
-        "showVelocityVectors": false,
+        "target": 2,
+        "showVelocityVectors": true,
         "velocityScale": 0.05,
         "disableHistograms": false
     },

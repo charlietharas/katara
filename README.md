@@ -64,4 +64,4 @@ Simulation has two components, which are fully implemented on both the CPU and G
 
 **Simulator** (abstract interface defined in `isimulator.h`)
 - CPU version in `sim.cpp`
-- GPU version in `gpu_sim.cpp`; compute shaders in `compute.wgsl`
+- GPU version in `gpu_sim.cpp`; each step of the main simulation loop has its own compute shader file `compute_<stage>.wgsl`
