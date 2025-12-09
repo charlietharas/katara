@@ -24,8 +24,7 @@ struct VorticityConfig {
 };
 
 struct WindTunnelConfig {
-    bool enabled = true;
-    int side = 0; // 0=left, 1=top, 2=bottom, 3=right
+    int side = 0; // -1=disabled, 0=left, 1=top, 2=bottom, 3=right
     float startPosition = 0.45f;
     float endPosition = 0.55f;
     float velocity = 1.5f;

@@ -20,21 +20,20 @@
             "lengthScale": 5.0
         },
         "windTunnel": {
-            "enabled": true,
             "side": 0,
             "startPosition": 0.45,
             "endPosition": 0.55,
             "velocity": 1.5
         },
         "circle": {
-            "radius": 5,
+            "radius": 0,
             "momentumTransferCoeff": 0.25,
             "momentumTransferRadius": 1.0
         }
     },
     "rendering": {
         "type": "gpu",
-        "target": 3,
+        "target": 2,
         "showVelocityVectors": false,
         "disableHistograms": false,
         "velocityScale": 0.05

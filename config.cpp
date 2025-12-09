@@ -109,7 +109,6 @@ VorticityConfig ConfigLoader::loadVorticityConfig(const json& j) {
 
 WindTunnelConfig ConfigLoader::loadWindTunnelConfig(const json& j) {
     WindTunnelConfig config;
-    config.enabled = j.value("enabled", true);
     config.side = j.value("side", 0);
     config.startPosition = j.value("startPosition", 0.45f);
     config.endPosition = j.value("endPosition", 0.55f);
