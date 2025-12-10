@@ -1,5 +1,5 @@
 {
-    "pipeline": "hybrid",
+    "pipeline": "host",
     "window": {
         "baseSize": 800,
         "defaultWidth": 1200,
@@ -32,12 +32,19 @@
         }
     },
     "rendering": {
-        "target": 3,
+        "target": 4,
         "showVelocityVectors": false,
         "velocityScale": 0.05,
         "disableHistograms": false
     },
     "ink": {
         "imagePath": "img1.png"
+    },
+    "camera": {
+        "enabled": true,
+        "deviceID": 33,
+        "width": 1280,
+        "height": 720,
+        "framerate": 30.0
     }
 }

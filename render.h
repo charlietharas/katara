@@ -7,6 +7,7 @@
 #include <string>
 #include "irenderer.h"
 #include "config.h"
+#include "camera.h"
 
 class Renderer : public IRenderer {
 public:
@@ -40,6 +41,8 @@ private:
     std::vector<int> velocityHistogramBins;
     float velocityHistogramMin, velocityHistogramMax;
 
+    CameraManager* cameraManager; // testing
+
     // draw utils
     void convertCoordinates(float simX, float simY, int& pixelX, int& pixelY);
     void mapValueToColor(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b);
@@ -50,6 +53,7 @@ private:
     void drawVelocityField(const ISimulator& simulator);
     void computeHistograms(const ISimulator& simulator);
     void drawHistograms();
+    void drawCameraFrame(); // testing
     void setPixel(int x, int y, Uint8 r, Uint8 g, Uint8 b);
 
 };

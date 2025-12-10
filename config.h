@@ -64,12 +64,21 @@ struct InkConfig {
     std::string imagePath = "";
 };
 
+struct CameraConfig {
+    bool enabled = false;
+    int deviceID = 0;
+    int width = 1280;
+    int height = 720;
+    float framerate = 30.0f;
+};
+
 struct Config {
     PipelineType pipeline = PipelineType::CPU;
     WindowConfig window;
     SimulationConfig simulation;
     RenderingConfig rendering;
     InkConfig ink;
+    CameraConfig camera; // testing
 };
 
 class ConfigLoader {
@@ -82,6 +91,7 @@ private:
     static SimulationConfig loadSimulationConfig(const json& j);
     static RenderingConfig loadRenderingConfig(const json& j);
     static InkConfig loadInkConfig(const json& j);
+    static CameraConfig loadCameraConfig(const json& j);
     static ProjectionConfig loadProjectionConfig(const json& j);
     static VorticityConfig loadVorticityConfig(const json& j);
     static WindTunnelConfig loadWindTunnelConfig(const json& j);

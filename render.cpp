@@ -24,7 +24,9 @@ Renderer::Renderer(SDL_Window* window, const Config& config)
     densityHistogramMax(0.0f),
     velocityHistogramBins(IRenderer::HISTOGRAM_BINS, 0),
     velocityHistogramMin(0.0f),
-    velocityHistogramMax(0.0f)
+    velocityHistogramMax(0.0f),
+
+    cameraManager(nullptr)
 {
     SDL_GetWindowSize(window, &windowWidth, &windowHeight);
 
@@ -40,6 +42,9 @@ Renderer::Renderer(SDL_Window* window, const Config& config)
 Renderer::~Renderer() {
     cleanup();
     delete[] pixels;
+    if (cameraManager) {
+        delete cameraManager;
+    }
 }
 
 bool Renderer::init(const Config& config) {
@@ -52,6 +57,14 @@ bool Renderer::init(const Config& config) {
                                SDL_TEXTUREACCESS_STREAMING, windowWidth, windowHeight);
     if (!texture) {
         return false;
+    }
+
+    if (drawTarget == 4) {
+        cameraManager = new CameraManager();
+        if (!cameraManager->init(config.camera)) {
+            delete cameraManager;
+            cameraManager = nullptr;
+        }
     }
 
     return true;
@@ -78,20 +91,24 @@ void Renderer::render(const ISimulator& simulator) {
     // clear bg
     std::fill(pixels, pixels + windowWidth * windowHeight, 0xFF000000);
 
-    drawFluidField(simulator);
-    if (drawVelocities) {
-        drawVelocityField(simulator);
-    }
+    if (drawTarget == 4 && cameraManager) {
+        drawCameraFrame(); // testing
+    } else {
+        drawFluidField(simulator);
+        if (drawVelocities) {
+            drawVelocityField(simulator);
+        }
 
-    // compute histograms every n frames
-    int histogramFrameInterval = 1;
-    if (!disableHistograms && frameCount++ % histogramFrameInterval == 0) {
-        computeHistograms(simulator);
-    }
+        // compute histograms every n frames
+        int histogramFrameInterval = 1;
+        if (!disableHistograms && frameCount++ % histogramFrameInterval == 0) {
+            computeHistograms(simulator);
+        }
 
-    // draw histograms every frame
-    if (!disableHistograms) {
-        drawHistograms();
+        // draw histograms every frame
+        if (!disableHistograms) {
+            drawHistograms();
+        }
     }
 
     SDL_UpdateTexture(texture, nullptr, pixels, windowWidth * sizeof(Uint32));
@@ -454,3 +471,10 @@ void Renderer::drawHistograms() {
     }
 }
 
+
+
+void Renderer::drawCameraFrame() {
+    if (!cameraManager) { return; }
+
+    cameraManager->captureFrame(pixels, windowWidth, windowHeight);
+}

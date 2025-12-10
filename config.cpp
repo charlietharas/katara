@@ -33,6 +33,9 @@ Config ConfigLoader::loadConfig(const std::string& filename) {
     if (j.contains("ink")) {
         config.ink = loadInkConfig(j["ink"]);
     }
+    if (j.contains("camera")) {
+        config.camera = loadCameraConfig(j["camera"]);
+    }
 
     return config;
 }
@@ -91,6 +94,16 @@ RenderingConfig ConfigLoader::loadRenderingConfig(const json& j) {
 InkConfig ConfigLoader::loadInkConfig(const json& j) {
     InkConfig config;
     config.imagePath = j.value("imagePath", "");
+    return config;
+}
+
+CameraConfig ConfigLoader::loadCameraConfig(const json& j) {
+    CameraConfig config;
+    config.enabled = j.value("enabled", false);
+    config.deviceID = j.value("deviceID", 0);
+    config.width = j.value("width", 1280);
+    config.height = j.value("height", 720);
+    config.framerate = j.value("framerate", 30.0f);
     return config;
 }
 
