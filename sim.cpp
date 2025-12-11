@@ -323,6 +323,7 @@ void FluidSimulator::advect() {
         new_g_ink = g_ink;
         new_b_ink = b_ink;
     }
+    int cy = gridY / 2;
 
     #pragma omp parallel for
     for (int i = 1; i < gridX; i++) {
@@ -354,9 +355,7 @@ void FluidSimulator::advect() {
                 newD[idx(i, j)] = sample(x1, y1, 2);
 
                 // ink advection
-                if (inkInitialized) {
-                    if (shouldSkipInkCell(i, j)) continue;
-
+                if (inkInitialized && s[idx(i, j)] != 0.0f) {
                     float vel_x = (x[idx(i, j)] + x[idx(i+1, j)]) / 2.0f;
                     float vel_y = (y[idx(i, j)] + y[idx(i, j+1)]) / 2.0f;
         
@@ -670,23 +669,4 @@ void FluidSimulator::onMouseDown(int gridX, int gridY) {
 
 void FluidSimulator::onMouseUp() {
     isDragging = false;
-}
-
-bool FluidSimulator::shouldSkipInkCell(int i, int j) const {
-    // skip solid cells
-    if (s[idx(i, j)] == 0.0f) return true;
-
-    // skip wind tunnels
-    int cy = gridY / 2;
-    if (i == 1 && j >= cy - pipeHeight / 2 && j < cy + pipeHeight / 2) {
-        return true;
-    }
-
-    // skip cells with no ink
-    int idx_ij = idx(i, j);
-    if (r_ink[idx_ij] == 0.0f && g_ink[idx_ij] == 0.0f && b_ink[idx_ij] == 0.0f) {
-        return true;
-    }
-
-    return false;
 }
