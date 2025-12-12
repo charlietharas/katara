@@ -6,9 +6,9 @@
         "defaultHeight": 800
     },
     "simulation": {
-        "resolution": 150,
-        "timestep": 0.016667,
-        "gravity": -2,
+        "resolution": 300,
+        "timestep": 0.01667,
+        "gravity": 0,
         "fluidDensity": 1000.0,
         "projection": {
             "overrelaxationCoefficient": 1.9,

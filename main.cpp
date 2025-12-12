@@ -44,8 +44,13 @@ std::pair<int, int> mouseToGridCoords(const SDL_Event& event, int windowWidth, i
 }
 
 int main(int argc, char** argv) {
-    // TODO support command line arguments for config file path
-    Config config = ConfigLoader::loadConfig("../config.json");
+    std::string configPath = "../config.json";
+    
+    if (argc > 1) {
+        configPath = argv[1];
+    }
+    
+    Config config = ConfigLoader::loadConfig(configPath);
 
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
         std::cerr << "SDL initialization error: " << SDL_GetError() << std::endl;
