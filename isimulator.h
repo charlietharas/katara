@@ -29,6 +29,11 @@ public:
     virtual void onMouseDrag(int gridX, int gridY) = 0;
     virtual void onMouseUp() = 0;
 
+    // circle state access
+    virtual int getCircleX() const = 0;
+    virtual int getCircleY() const = 0;
+    virtual int getCircleRadius() const = 0;
+
     // grid dimensions
     virtual int getGridX() const = 0;
     virtual int getGridY() const = 0;
@@ -50,6 +55,7 @@ public:
 
     // misc
     virtual bool isInkInitialized() const { return false; }
+    virtual bool isUsingGPU() const { return false; }
     virtual bool isInsideCircle(int i, int j) = 0;
 };
 

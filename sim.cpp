@@ -72,7 +72,9 @@ void FluidSimulator::init(const Config& config, const ImageData* imageData) {
     yHeight = cellHeight * gridY;
 
     pipeHeight = static_cast<int>(0.1f * gridY);
-    pressureMultiplier = density * cellHeight / timeStep;
+    pressureMultiplier = 1.0f;
+    // cut pressure multiplier to match pressure scaling with GPU version
+    // pressureMultiplier = density * cellHeight / timeStep;
 
     int totalCells = gridX * gridY;
 
@@ -170,7 +172,6 @@ void FluidSimulator::setupEdges() {
             }
 
             // configurable wind tunnel
-            // TODO configure direction by angle between 2 points; this is janky
             if (windTunnelSide != -1) {
 
                 switch (windTunnelSide) {
@@ -296,7 +297,7 @@ void FluidSimulator::project() {
                 x[idx(i, j)] -= adjustedDivergence * sx1;
                 y[idx(i, j+1)] += adjustedDivergence * sy0;
                 y[idx(i, j)] -= adjustedDivergence * sy1;
-                p[idx(i, j)] += adjustedDivergence * pressureMultiplier;
+                p[idx(i, j)] += adjustedDivergence;
             }
         }
     }

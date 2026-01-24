@@ -245,8 +245,6 @@ void Renderer::drawFluidField(const ISimulator& simulator) {
                     }
                 }
             } else {
-                // TODO support generic motion dragging rather than explicit solid circle for boundary
-
                 // boundaries in grey
                 int x0, y0;
                 convertCoordinates(i * cellSize, (j + 1) * cellSize, x0, y0);

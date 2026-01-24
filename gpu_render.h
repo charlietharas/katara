@@ -61,9 +61,18 @@ private:
     WGPUDevice device;
     WGPUQueue queue;
     WGPUTextureFormat surfaceFormat;
+    // for cpu sim
     WGPURenderPipeline renderPipeline;
     WGPUBindGroup uniformBindGroup;
     WGPUBindGroupLayout bindGroupLayout;
+    // for gpu sim
+    WGPURenderPipeline renderPipelineGPU;
+    WGPUBindGroup uniformBindGroupGPU;
+    WGPUBindGroupLayout bindGroupLayoutGPU;
+    // for pressure min/max compute
+    WGPUComputePipeline computePipelineMinMax;
+    WGPUBindGroup bindGroupMinMax;
+    WGPUBindGroupLayout bindGroupLayoutMinMax;
   
     // buffers and textures
     WGPUBuffer uniformBuffer;
@@ -78,23 +87,42 @@ private:
 
     // simulation data textures
     WGPUTextureView pressureTextureView;
+    WGPUTextureView pressureTextureStorageView;
     WGPUTextureView densityTextureView;
     WGPUTextureView velocityTextureView;
     WGPUTextureView solidTextureView;
+    WGPUTextureView solidTextureStorageView;
     WGPUTextureView redInkTextureView;
     WGPUTextureView greenInkTextureView;
     WGPUTextureView blueInkTextureView;
 
+    // unified min/max buffers (pressure + velocity, 4 floats total)
+    WGPUBuffer minMaxBuffer;
+    WGPUBuffer minMaxStagingBuffer;
+
+    // histogram bin buffer
+    WGPUBuffer histogramBinBuffer;            // 128 ints: 64 density + 64 velocity bins
+    WGPUBuffer histogramStagingBuffer;        // Staging for histogram bin readback
+
+    // histogram compute pipeline (for bin counting only)
+    WGPUComputePipeline computePipelineHistogramBins;
+    WGPUBindGroupLayout bindGroupLayoutHistogramBins;
+    WGPUBindGroup bindGroupHistogramBins;
+
+    // small uniform buffer for passing min/max to histogram bin shader
+    WGPUBuffer minMaxUniformBuffer;
+
     // render state
     UniformData uniformData;
     bool initialized;
+    bool usingGPUTextures;
 
     // cached config values
     int drawTarget;
     bool showVelocityVectors;
     bool disableHistograms;
     float velocityScale;
-    
+
     // histogram state
     int frameCount;
     std::vector<int> densityHistogramBins;
@@ -103,6 +131,17 @@ private:
     std::vector<int> velocityHistogramBins;
     float velocityHistogramMin, velocityHistogramMax;
     int velocityHistogramMaxCount;
+
+    // unified min/max readback state
+    float pendingPressureMinMax[2];  // pressMin, pressMax
+    float pendingVelocityMinMax[2];  // velMin, velMax
+    bool minMaxReadPending;
+    bool minMaxMapInFlight;
+
+    // histogram readback state
+    int pendingHistogramBins[128];            // 64 density + 64 velocity bins
+    bool histogramBinsReadPending;
+    bool histogramMapInFlight;
 
     // initialization methods
     bool initWebGPU();
@@ -116,6 +155,7 @@ private:
     void updateUniformData(const ISimulator& simulator);
     void updateSimulationTextures(const ISimulator& simulator);
     void computeHistograms(const ISimulator& simulator);
+    void dispatchHistogramBinCounting();
     void createRenderPass();
     void drawFrame();
 

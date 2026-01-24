@@ -35,6 +35,11 @@ public:
     const std::vector<float>& getBlueInk() const override { return b_ink; }
     bool isInkInitialized() const override { return inkInitialized; }
 
+    // circle state access
+    int getCircleX() const override { return circleX; }
+    int getCircleY() const override { return circleY; }
+    int getCircleRadius() const override { return circleRadius; }
+
 private:
     // grid params
     int resolution;
