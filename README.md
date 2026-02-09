@@ -1,5 +1,7 @@
 # Katara
 
+Modular fluid simulation. Inspired by a [lovely video](https://www.youtube.com/watch?v=iKAVRgIrUOU) by 10 Minute Physics.
+
 ## Build Instructions (Linux)
 Dependencies:
 
