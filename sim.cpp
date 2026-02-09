@@ -5,77 +5,53 @@
 #include <iostream>
 #include <SDL2/SDL.h>
 
-FluidSimulator::FluidSimulator(const Config& config)
-    :
-    // sim params
-    resolution(config.simulation.resolution), // grid cells per world unit
-    timeStep(config.simulation.timestep),
-    gravity(config.simulation.gravity),
-    density(config.simulation.fluidDensity),
-    overrelaxationCoefficient(config.simulation.projection.overrelaxationCoefficient), // speeds up projection
-    gsIterations(config.simulation.projection.iterations), // projection solver
-    doVorticity(config.simulation.vorticity.enabled),
-    vorticity(config.simulation.vorticity.strength),
-    vorticityLen(config.simulation.vorticity.lengthScale),
-
-    // wind tunnel state
-    windTunnelStart(config.simulation.windTunnel.startPosition),
-    windTunnelEnd(config.simulation.windTunnel.endPosition),
-    windTunnelSide(config.simulation.windTunnel.side), // 0=left, 1=top, 2=bottom, 3=right, -1=disabled
-    windTunnelVelocity(config.simulation.windTunnel.velocity),
-
-    // circle state
-    circleX(0),
-    circleY(0),
-    prevCircleX(0),
-    prevCircleY(0),
-    circleVelX(0.0f),
-    circleVelY(0.0f),
-    circleRadius(config.simulation.circle.radius),
-
-    // mouse state
-    isDragging(false),
-
-    // circle momentum transfer
-    momentumTransferCoeff(config.simulation.circle.momentumTransferCoeff),
-    momentumTransferRadius(config.simulation.circle.momentumTransferRadius),
-
-    // ink state
-    inkInitialized(false)
+Simulator::Simulator(const Config& config)
+    : resolution(config.simulation.resolution),
+      timestep(config.simulation.timestep),
+      density(config.simulation.fluidDensity),
+      overrelaxationCoefficient(config.simulation.projection.overrelaxationCoefficient),
+      projectionIters(config.simulation.projection.iterations),
+      doVorticity(config.simulation.vorticity.enabled),
+      vorticity(config.simulation.vorticity.strength),
+      vorticityLen(config.simulation.vorticity.lengthScale),
+      momentumTransferStrength(config.simulation.circle.momentumTransferStrength),
+      momentumTransferRadius(config.simulation.circle.momentumTransferRadius)
 {
+    windTunnelSide = config.simulation.windTunnel.side;
+    windTunnelSpeed = config.simulation.windTunnel.velocity;
+    gravity = config.simulation.gravity;
 }
 
-FluidSimulator::~FluidSimulator() {}
+Simulator::~Simulator() {}
 
-void FluidSimulator::init(const Config& config, const ImageData* imageData) {
-    bool imageLoaded = (imageData != nullptr && imageData->pixels != nullptr);
 
-    if (imageLoaded) {
-        float imageAspectRatio = static_cast<float>(imageData->width) / imageData->height;
-        domainHeight = 1.0f;
-        domainWidth = imageAspectRatio;
-        domainSetByImage = true;
+// MAIN SIM LOOP
+bool Simulator::init(const Config& config, const ImageData* imageData, float aspectRatio) {
+    this->config = &config;
+    bool imageLoaded = imageData != nullptr && imageData->pixels != nullptr;
 
-        if (imageAspectRatio > 1.0f) {
-            resolution = static_cast<int>(resolution / imageAspectRatio);
-        }
-    } else {
-        domainHeight = 1.0f;
-        domainWidth = 1.5f;
+    // set domain dimensions based on aspect ratio
+    // whichever dimension is smaller is set to 1.0f
+    if (aspectRatio >= 1.0f) { // landscape
+        domainHeight = 1.0f; // smaller
+        domainWidth = aspectRatio;
+    } else { // portrait
+        domainHeight = 1.0f / aspectRatio;
+        domainWidth = 1.0f; // smaller
     }
-    cellHeight = domainHeight / resolution;
-    halfCellHeight = cellHeight / 2.0f;
 
-    gridX = static_cast<int>(domainWidth / cellHeight);
-    gridY = static_cast<int>(domainHeight / cellHeight);
-    xHeight = cellHeight * gridX;
-    yHeight = cellHeight * gridY;
+    cellSize = (aspectRatio >= 1.0f ? domainHeight : domainWidth) / resolution;
+    halfCellSize = cellSize / 2.0f;
 
-    pipeHeight = static_cast<int>(0.1f * gridY);
-    pressureMultiplier = density * cellHeight / timeStep;
-
+    gridX = static_cast<int>(domainWidth / cellSize);
+    gridY = static_cast<int>(domainHeight / cellSize);
     int totalCells = gridX * gridY;
+    xHeight = cellSize * gridX;
+    yHeight = cellSize * gridY;
 
+    // convert circle radius from world units to grid units
+    circleRadius = static_cast<int>(config.simulation.circle.radius / cellSize);
+    
     // simulator fields
     x.resize(totalCells);
     y.resize(totalCells);
@@ -85,39 +61,65 @@ void FluidSimulator::init(const Config& config, const ImageData* imageData) {
     newX.resize(totalCells);
     newY.resize(totalCells);
     newD.resize(totalCells);
-    new_r_ink.resize(totalCells);
-    new_g_ink.resize(totalCells);
-    new_b_ink.resize(totalCells);
-
+    std::fill(x.begin(), x.end(), 0.0f);
+    std::fill(y.begin(), y.end(), 0.0f);
     std::fill(s.begin(), s.end(), 1.0f);
     std::fill(d.begin(), d.end(), 1.0f);
     std::fill(p.begin(), p.end(), 0.0f);
-    std::fill(x.begin(), x.end(), 0.0f);
-    std::fill(y.begin(), y.end(), 0.0f);
 
     // ink diffusion fields
     if (imageLoaded) {
-        r_ink.resize(totalCells);
-        g_ink.resize(totalCells);
-        b_ink.resize(totalCells);
-        new_r_ink.resize(totalCells);
-        new_g_ink.resize(totalCells);
-        new_b_ink.resize(totalCells);
-        std::fill(r_ink.begin(), r_ink.end(), 0.0f);
-        std::fill(g_ink.begin(), g_ink.end(), 0.0f);
-        std::fill(b_ink.begin(), b_ink.end(), 0.0f);
-        std::fill(new_r_ink.begin(), new_r_ink.end(), 0.0f);
-        std::fill(new_g_ink.begin(), new_g_ink.end(), 0.0f);
-        std::fill(new_b_ink.begin(), new_b_ink.end(), 0.0f);
+        inkRed.resize(totalCells);
+        inkGreen.resize(totalCells);
+        inkBlue.resize(totalCells);
+        newInkRed.resize(totalCells);
+        newInkGreen.resize(totalCells);
+        newInkBlue.resize(totalCells);
+        std::fill(inkRed.begin(), inkRed.end(), 0.0f);
+        std::fill(inkGreen.begin(), inkGreen.end(), 0.0f);
+        std::fill(inkBlue.begin(), inkBlue.end(), 0.0f);
 
         initializeFromImageData(config, imageData);
     }
 
-    // initialize circle
+    // setup circle
     circleX = gridX / 2;
     circleY = gridY / 2;
+    for (int i = circleX - circleRadius; i < circleX + circleRadius; i++) {
+        for (int j = circleY - circleRadius; j < circleY + circleRadius; j++) {
+            if (i >= 0 && i < gridX && j >= 0 && j < gridY) {
+                float dx = (i + 0.5f) - circleX;
+                float dy = (j + 0.5f) - circleY;
+                if (sqrt(dx * dx + dy * dy) <= circleRadius) {
+                    s[idx(i, j)] = 0.0f;
+                }
+            }
+        }
+    }
+    
+    // setup edges
+    int cx = gridX / 2;
+    int cy = gridY / 2;
+    int edgesMask = config.simulation.edges;
+    bool leftEdge = edgesMask & 8;
+    bool topEdge = edgesMask & 4;
+    bool bottomEdge = edgesMask & 2;
+    bool rightEdge = edgesMask & 1;
+    for (int i = 0; i < gridX; i++) {
+        for (int j = 0; j < gridY; j++) {
+            if ((i == 0 && leftEdge) ||
+                (i == gridX - 1 && rightEdge) ||
+                (j == 0 && bottomEdge) ||
+                (j == gridY - 1 && topEdge)) {
+                s[idx(i, j)] = 0.0f;
+            }
+        }
+    }
 
-    // pre-calculate wind tunnel grid coordinates
+    // setup wind tunnel
+    // calculate wind tunnel grid coordinates
+    float windTunnelStart = config.simulation.windTunnel.startPosition;
+    float windTunnelEnd = config.simulation.windTunnel.endPosition;
     switch (windTunnelSide) {
         case 0: // left
         case 3: // right
@@ -137,84 +139,45 @@ void FluidSimulator::init(const Config& config, const ImageData* imageData) {
             windTunnelStartCell = static_cast<int>(0.45f * gridY);
             windTunnelEndCell = static_cast<int>(0.55f * gridY);
     }
-
-    // setup obstacles
-    setupCircle();
-    setupEdges();
-}
-
-
-void FluidSimulator::setupCircle() {
-    for (int i = circleX - circleRadius; i < circleX + circleRadius; i++) {
-        for (int j = circleY - circleRadius; j < circleY + circleRadius; j++) {
-            if (i >= 0 && i < gridX && j >= 0 && j < gridY) {
-                float dx = (i + 0.5f) - circleX;
-                float dy = (j + 0.5f) - circleY;
-                if (sqrt(dx * dx + dy * dy) <= circleRadius) {
-                    s[idx(i, j)] = 0.0f;
-                }
-            }
-        }
-    }
-}
-
-void FluidSimulator::setupEdges() {
-    int cx = gridX / 2;
-    int cy = gridY / 2;
-
-    for (int i = 0; i < gridX; i++) {
-        for (int j = 0; j < gridY; j++) {
-            // edge boundaries
-            if (j == 0 || j == gridY-1 || i == 0 || i == gridX - 1) {
-                s[idx(i, j)] = 0.0f;
-            }
-
-            // configurable wind tunnel
-            // TODO configure direction by angle between 2 points; this is janky
-            if (windTunnelSide != -1) {
-
-                switch (windTunnelSide) {
-                    case 0: // left
-                        if (i == 1 && j >= windTunnelStartCell && j < windTunnelEndCell) {
-                            x[idx(i, j)] = windTunnelVelocity;
-                        }
-                        if (i == 0 && j >= windTunnelStartCell && j < windTunnelEndCell) {
-                            d[idx(i, j)] = 0.0f;
-                        }
-                        break;
-                    case 1: // top
-                        if (j == gridY-1 && i >= windTunnelStartCell && i < windTunnelEndCell) {
-                            y[idx(i, j)] = -windTunnelVelocity;
-                            d[idx(i, j)] = 0.0f;
-                        }
-                        break;
-                    case 2: // bottom
-                        if (j == 1 && i >= windTunnelStartCell && i < windTunnelEndCell) {
-                            y[idx(i, j)] = windTunnelVelocity;
-                        }
-                        if (j == 0 && i >= windTunnelStartCell && i < windTunnelEndCell) {
-                            d[idx(i, j)] = 0.0f;
-                        }
-                        break;
-                    case 3: // right
-                        if (i == gridX-1 && j >= windTunnelStartCell && j < windTunnelEndCell) {
-                            x[idx(i, j)] = -windTunnelVelocity;
-                            d[idx(i, j)] = 0.0f;
-                        }
-                        break;
-                }
-            }
-        }
-    }
-
+    
     pipeHeight = windTunnelEndCell - windTunnelStartCell;
+    if (windTunnelSide != -1) {
+        switch (windTunnelSide) {
+            case 0: // left
+                for (int j = windTunnelStartCell; j < windTunnelEndCell; j++) {
+                    x[idx(1, j)] = windTunnelSpeed;
+                    d[idx(0, j)] = 0.0f;
+                }
+                break;
+            case 1: // top
+                for (int i = windTunnelStartCell; i < windTunnelEndCell; i++) {
+                    y[idx(i, gridY-2)] = -windTunnelSpeed;
+                    d[idx(i, gridY-1)] = 0.0f;
+                }
+                break;
+            case 2: // bottom
+                for (int i = windTunnelStartCell; i < windTunnelEndCell; i++) {
+                    y[idx(i, 1)] = windTunnelSpeed;
+                    d[idx(i, 0)] = 0.0f;
+                }
+                break;
+            case 3: // right
+                for (int j = windTunnelStartCell; j < windTunnelEndCell; j++) {
+                    x[idx(gridX-1, j)] = -windTunnelSpeed;
+                    d[idx(gridX-1, j)] = 0.0f;
+                }
+                break;
+        }
+    }
+
+    return true;
 }
 
-void FluidSimulator::initializeFromImageData(const Config& config, const ImageData* imageData) {
+void Simulator::initializeFromImageData(const Config& config, const ImageData* imageData) {
     if (!imageData || !imageData->pixels) return;
     Uint8* pixels = static_cast<Uint8*>(imageData->pixels);
 
-    float DARKEST_BLACK = 0.05f; // minimum ink color; if it's 0 ink persists because it fucks up some multiplication somewhere
+    float DARKEST_BLACK = 0.02f; // minimum ink color; if it's 0 ink persists because it fucks up some multiplication somewhere
     for (int j = 0; j < gridY; j++) {
         for (int i = 0; i < gridX; i++) {
             int cellIndex = idx(i, j);
@@ -235,13 +198,9 @@ void FluidSimulator::initializeFromImageData(const Config& config, const ImageDa
                 }
 
                 // normalize
-                r_ink[cellIndex] = std::max(0.05f, std::min(1.0f, r / 255.0f));
-                g_ink[cellIndex] = std::max(0.05f, std::min(1.0f, g / 255.0f));
-                b_ink[cellIndex] = std::max(0.05f, std::min(1.0f, b / 255.0f));
-
-                new_r_ink[cellIndex] = r_ink[cellIndex];
-                new_g_ink[cellIndex] = g_ink[cellIndex];
-                new_b_ink[cellIndex] = b_ink[cellIndex];
+                inkRed[cellIndex] = std::max(DARKEST_BLACK, std::min(1.0f, r / 255.0f));
+                inkGreen[cellIndex] = std::max(DARKEST_BLACK, std::min(1.0f, g / 255.0f));
+                inkBlue[cellIndex] = std::max(DARKEST_BLACK, std::min(1.0f, b / 255.0f));
             }
         }
     }
@@ -249,8 +208,11 @@ void FluidSimulator::initializeFromImageData(const Config& config, const ImageDa
     inkInitialized = true;
 }
 
-void FluidSimulator::update() {
-    integrate();
+void Simulator::update() {
+    // base steps
+    if (gravity != 0.0f) { 
+        integrate();
+    }
     project();
     extrapolate();
     advect();
@@ -259,24 +221,22 @@ void FluidSimulator::update() {
     }
 }
 
-void FluidSimulator::integrate() {
-    if (gravity == 0.0f) return;
-
+void Simulator::integrate() {
     for (int i = 1; i < gridX; i++) {
         for (int j = 1; j < gridY; j++) {
             if (s[idx(i, j)] != 0.0f && s[idx(i, j-1)] != 0.0f) {
-                y[idx(i, j)] += gravity * timeStep;
+                y[idx(i, j)] += gravity * timestep;
             }
         }
     }
 }
 
-void FluidSimulator::project() {
+void Simulator::project() {
     // reset pressure field
     std::fill(p.begin(), p.end(), 0.0f);
 
     // Gauss-Seidel projection
-    for (int n = 0; n < gsIterations; n++) {
+    for (int n = 0; n < projectionIters; n++) {
         for (int i = 1; i < gridX - 1; i++) {
             for (int j = 1; j < gridY - 1; j++) {
                 if (s[idx(i, j)] == 0.0f) continue;
@@ -295,13 +255,13 @@ void FluidSimulator::project() {
                 x[idx(i, j)] -= adjustedDivergence * sx1;
                 y[idx(i, j+1)] += adjustedDivergence * sy0;
                 y[idx(i, j)] -= adjustedDivergence * sy1;
-                p[idx(i, j)] += adjustedDivergence * pressureMultiplier;
+                p[idx(i, j)] += adjustedDivergence;
             }
         }
     }
 }
 
-void FluidSimulator::extrapolate() {
+void Simulator::extrapolate() {
     // set boundary tiles to copy neighbors
     for (int i = 0; i < gridX; i++) {
         x[idx(i, 0)] = x[idx(i, 1)];
@@ -313,15 +273,16 @@ void FluidSimulator::extrapolate() {
     }
 }
 
-void FluidSimulator::advect() {
+void Simulator::advect() {
     newX = x;
     newY = y;
     newD = d;
     if (inkInitialized) {
-        new_r_ink = r_ink;
-        new_g_ink = g_ink;
-        new_b_ink = b_ink;
+        newInkRed = inkRed;
+        newInkGreen = inkGreen;
+        newInkBlue = inkBlue;
     }
+    int cy = gridY / 2;
 
     #pragma omp parallel for
     for (int i = 1; i < gridX; i++) {
@@ -329,42 +290,40 @@ void FluidSimulator::advect() {
             if (s[idx(i, j)] != 0.0f) {
                 // x vel advection
                 if (s[idx(i-1, j)] != 0.0f && j < gridY-1) {
-                    float x0 = i * cellHeight;
-                    float y0 = j * cellHeight + halfCellHeight;
-                    x0 -= x[idx(i, j)] * timeStep;
-                    y0 -= neighborhoodY(i, j) * timeStep;
+                    float x0 = i * cellSize;
+                    float y0 = j * cellSize + halfCellSize;
+                    x0 -= x[idx(i, j)] * timestep;
+                    y0 -= neighborhoodY(i, j) * timestep;
                     newX[idx(i, j)] = sample(x0, y0, 0);
                 }
 
                 // y vel advection
                 if (s[idx(i, j-1)] != 0.0f && i < gridX-1) {
-                    float x0 = i * cellHeight + halfCellHeight;
-                    float y0 = j * cellHeight;
-                    x0 -= neighborhoodX(i, j) * timeStep;
-                    y0 -= y[idx(i, j)] * timeStep;
+                    float x0 = i * cellSize + halfCellSize;
+                    float y0 = j * cellSize;
+                    x0 -= neighborhoodX(i, j) * timestep;
+                    y0 -= y[idx(i, j)] * timestep;
                     newY[idx(i, j)] = sample(x0, y0, 1);
                 }
 
                 // smoke advection
                 float x0 = (x[idx(i, j)] + x[idx(i+1, j)]) / 2.0f;
                 float y0 = (y[idx(i, j)] + y[idx(i, j+1)]) / 2.0f;
-                float x1 = i * cellHeight + halfCellHeight - x0 * timeStep;
-                float y1 = j * cellHeight + halfCellHeight - y0 * timeStep;
+                float x1 = i * cellSize + halfCellSize - x0 * timestep;
+                float y1 = j * cellSize + halfCellSize - y0 * timestep;
                 newD[idx(i, j)] = sample(x1, y1, 2);
 
                 // ink advection
-                if (inkInitialized) {
-                    if (shouldSkipInkCell(i, j)) continue;
-
+                if (inkInitialized && s[idx(i, j)] != 0.0f) {
                     float vel_x = (x[idx(i, j)] + x[idx(i+1, j)]) / 2.0f;
                     float vel_y = (y[idx(i, j)] + y[idx(i, j+1)]) / 2.0f;
         
-                    float x0 = i * cellHeight + halfCellHeight - vel_x * timeStep;
-                    float y0 = j * cellHeight + halfCellHeight - vel_y * timeStep;
+                    float x0 = i * cellSize + halfCellSize - vel_x * timestep;
+                    float y0 = j * cellSize + halfCellSize - vel_y * timestep;
         
-                    new_r_ink[idx(i, j)] = sample(x0, y0, 3);
-                    new_g_ink[idx(i, j)] = sample(x0, y0, 4);
-                    new_b_ink[idx(i, j)] = sample(x0, y0, 5);
+                    newInkRed[idx(i, j)] = sample(x0, y0, 3);
+                    newInkGreen[idx(i, j)] = sample(x0, y0, 4);
+                    newInkBlue[idx(i, j)] = sample(x0, y0, 5);
                 }
             }
         }
@@ -374,13 +333,13 @@ void FluidSimulator::advect() {
     y = newY;
     d = newD;
     if (inkInitialized) {
-        r_ink = new_r_ink;
-        g_ink = new_g_ink;
-        b_ink = new_b_ink;
+        inkRed = newInkRed;
+        inkGreen = newInkGreen;
+        inkBlue = newInkBlue;
     }
 }
 
-void FluidSimulator::applyVorticity() {
+void Simulator::applyVorticity() {
     #pragma omp parallel for
     for (int i = 2; i < gridX - 2; i++) {
         for (int j = 2; j < gridY - 2; j++) {
@@ -393,37 +352,37 @@ void FluidSimulator::applyVorticity() {
                 float len = sqrt(dx * dx + dy * dy) + vorticityLen;
                 float c = curl(i, j);
 
-                x[idx(i, j)] += timeStep * c * dx * vorticity / len;
-                y[idx(i, j)] += timeStep * c * dy * vorticity / len;
+                x[idx(i, j)] += timestep * c * dx * vorticity / len;
+                y[idx(i, j)] += timestep * c * dy * vorticity / len;
             }
         }
     }
 }
 
-// helpers
-float FluidSimulator::div(int i, int j) {
+// FIELD HELPERS
+float Simulator::div(int i, int j) {
     return x[idx(i+1, j)] - x[idx(i, j)] + y[idx(i, j+1)] - y[idx(i, j)];
 }
 
-float FluidSimulator::curl(int i, int j) {
+float Simulator::curl(int i, int j) {
     return x[idx(i, j+1)] - x[idx(i, j-1)] + y[idx(i-1, j)] - y[idx(i+1, j)];
 }
 
-float FluidSimulator::clamp(float n, float min, float max) {
+float Simulator::clamp(float n, float min, float max) {
     return std::min(max, std::max(min, n));
 }
 
-float FluidSimulator::neighborhoodX(int i, int j) {
+float Simulator::neighborhoodX(int i, int j) {
     return (x[idx(i, j-1)] + x[idx(i, j)] + x[idx(i+1, j-1)] + x[idx(i+1, j)]) / 4.0f;
 }
 
-float FluidSimulator::neighborhoodY(int i, int j) {
+float Simulator::neighborhoodY(int i, int j) {
     return (y[idx(i-1, j)] + y[idx(i, j)] + y[idx(i-1, j+1)] + y[idx(i, j+1)]) / 4.0f;
 }
 
-float FluidSimulator::sample(float i, float j, int type) {
-    i = clamp(i, cellHeight, xHeight);
-    j = clamp(j, cellHeight, yHeight);
+float Simulator::sample(float i, float j, int type) {
+    i = clamp(i, cellSize, xHeight);
+    j = clamp(j, cellSize, yHeight);
 
     float xOffset = 0.0f;
     float yOffset = 0.0f;
@@ -432,44 +391,44 @@ float FluidSimulator::sample(float i, float j, int type) {
     switch (type) {
         case 0:
             field = &x;
-            yOffset = halfCellHeight;
+            yOffset = halfCellSize;
             break;
         case 1:
             field = &y;
-            xOffset = halfCellHeight;
+            xOffset = halfCellSize;
             break;
         case 2:
             field = &d;
-            xOffset = halfCellHeight;
-            yOffset = halfCellHeight;
+            xOffset = halfCellSize;
+            yOffset = halfCellSize;
             break;
         case 3:
-            field = &r_ink;
-            xOffset = halfCellHeight;
-            yOffset = halfCellHeight;
+            field = &inkRed;
+            xOffset = halfCellSize;
+            yOffset = halfCellSize;
             break;
         case 4:
-            field = &g_ink;
-            xOffset = halfCellHeight;
-            yOffset = halfCellHeight;
+            field = &inkGreen;
+            xOffset = halfCellSize;
+            yOffset = halfCellSize;
             break;
         case 5:
-            field = &b_ink;
-            xOffset = halfCellHeight;
-            yOffset = halfCellHeight;
+            field = &inkBlue;
+            xOffset = halfCellSize;
+            yOffset = halfCellSize;
             break;
         default:
             return 0.0f;
     }
 
-    int x0 = std::min(static_cast<int>(floor((i-xOffset) / cellHeight)), gridX-1);
+    int x0 = std::min(static_cast<int>(floor((i-xOffset) / cellSize)), gridX-1);
     int x1 = std::min(x0+1, gridX-1);
 
-    int y0 = std::min(static_cast<int>(floor((j-yOffset) / cellHeight)), gridY-1);
+    int y0 = std::min(static_cast<int>(floor((j-yOffset) / cellSize)), gridY-1);
     int y1 = std::min(y0+1, gridY-1);
 
-    float tx = ((i-xOffset) - x0*cellHeight) / cellHeight;
-    float ty = ((j-yOffset) - y0*cellHeight) / cellHeight;
+    float tx = ((i-xOffset) - x0*cellSize) / cellSize;
+    float ty = ((j-yOffset) - y0*cellSize) / cellSize;
 
     float sx = 1.0f - tx;
     float sy = 1.0f - ty;
@@ -482,18 +441,14 @@ float FluidSimulator::sample(float i, float j, int type) {
     return v;
 }
 
-bool FluidSimulator::isInsideCircle(int i, int j) {
-    float dx = (i + 0.5f) - circleX;
-    float dy = (j + 0.5f) - circleY;
-    return sqrt(dx * dx + dy * dy) <= circleRadius;
-}
 
-void FluidSimulator::moveCircle(int newGridX, int newGridY) {
+// CIRCLE HELPERS
+void Simulator::moveCircle(int newGridX, int newGridY) {
     prevCircleX = circleX;
     prevCircleY = circleY;
 
-    float instantVelX = (newGridX - circleX) / timeStep;
-    float instantVelY = (newGridY - circleY) / timeStep;
+    float instantVelX = (newGridX - circleX) / timestep;
+    float instantVelY = (newGridY - circleY) / timestep;
 
     // smoother circle velocity to reduce velocity jitter
     // (doesn't work that well D: )
@@ -507,14 +462,13 @@ void FluidSimulator::moveCircle(int newGridX, int newGridY) {
     updateCircle(prevCircleX, prevCircleY, circleX, circleY);
 }
 
-void FluidSimulator::updateCircle(int prevX, int prevY, int newX, int newY) {
+void Simulator::updateCircle(int prevX, int prevY, int newX, int newY) {
     updateCircleAreas(prevX, prevY, newX, newY);
     circleMomentumTransfer();
-    setupEdges();
     enforceBoundaryConditions();
 }
 
-void FluidSimulator::enforceBoundaryConditions() {
+void Simulator::enforceBoundaryConditions() {
     // clear velocity in all solid cells and their neighboring velocity components
     for (int i = 0; i < gridX; i++) {
         for (int j = 0; j < gridY; j++) {
@@ -523,7 +477,9 @@ void FluidSimulator::enforceBoundaryConditions() {
                 x[idx(i, j)] = 0.0f;
                 y[idx(i, j)] = 0.0f;
 
-                // clear velocity components that would move fluid into the solid
+                // this is weird and hacky on both the cpu and gpu versions
+                // here we clear only the bottom and right cells 
+                // but only if this cell is solid
                 if (i < gridX-1) x[idx(i+1, j)] = 0.0f;
                 if (j < gridY-1) y[idx(i, j+1)] = 0.0f;
             }
@@ -532,33 +488,40 @@ void FluidSimulator::enforceBoundaryConditions() {
 
     // preserve wind tunnel velocity
     if (windTunnelSide != -1) {
-
         switch (windTunnelSide) {
             case 0: // left
                 for (int j = windTunnelStartCell; j < windTunnelEndCell; j++) {
                     if (j >= 0 && j < gridY) {
-                        x[idx(1, j)] = windTunnelVelocity;
+                        x[idx(1, j)] = windTunnelSpeed;
+                        x[idx(0, j)] = windTunnelSpeed;
+                        d[idx(0, j)] = 0.0f;
                     }
                 }
                 break;
             case 1: // top
                 for (int i = windTunnelStartCell; i < windTunnelEndCell; i++) {
                     if (i >= 0 && i < gridX) {
-                        y[idx(i, gridY-1)] = -windTunnelVelocity;
+                        y[idx(i, gridY-2)] = -windTunnelSpeed;
+                        y[idx(i, gridY-1)] = -windTunnelSpeed;
+                        d[idx(i, gridY-1)] = 0.0f;
                     }
                 }
                 break;
             case 2: // bottom
                 for (int i = windTunnelStartCell; i < windTunnelEndCell; i++) {
                     if (i >= 0 && i < gridX) {
-                        y[idx(i, 1)] = windTunnelVelocity;
+                        y[idx(i, 1)] = windTunnelSpeed;
+                        y[idx(i, 0)] = windTunnelSpeed;
+                        d[idx(i, 0)] = 0.0f;
                     }
                 }
                 break;
             case 3: // right
                 for (int j = windTunnelStartCell; j < windTunnelEndCell; j++) {
                     if (j >= 0 && j < gridY) {
-                        x[idx(gridX-1, j)] = -windTunnelVelocity;
+                        x[idx(gridX-2, j)] = -windTunnelSpeed;
+                        x[idx(gridX-1, j)] = -windTunnelSpeed;
+                        d[idx(gridX-1, j)] = 0.0f;
                     }
                 }
                 break;
@@ -566,8 +529,7 @@ void FluidSimulator::enforceBoundaryConditions() {
     }
 }
 
-
-void FluidSimulator::circleMomentumTransfer() {
+void Simulator::circleMomentumTransfer() {
     if (fabs(circleVelX) < 0.001f && fabs(circleVelY) < 0.001f) {
         return;
     }
@@ -596,13 +558,13 @@ void FluidSimulator::circleMomentumTransfer() {
 
                     float densityFactor = d[idx(i, j)]; // weight velocity imparted by local density
 
-                    float momentumX = circleVelX * momentumTransferCoeff * falloff * densityFactor;
-                    float momentumY = circleVelY * momentumTransferCoeff * falloff * densityFactor;
+                    float momentumX = circleVelX * momentumTransferStrength * falloff * densityFactor;
+                    float momentumY = circleVelY * momentumTransferStrength * falloff * densityFactor;
 
                     x[idx(i, j)] += momentumX;
                     y[idx(i, j)] += momentumY;
 
-                    // clamp velocities to prevent instability
+                    // NOTE: max velocity clamping for force imparted by the circle, for stability
                     float maxVel = 8.0f;
                     x[idx(i, j)] = std::max(-maxVel, std::min(maxVel, x[idx(i, j)]));
                     y[idx(i, j)] = std::max(-maxVel, std::min(maxVel, y[idx(i, j)]));
@@ -612,7 +574,7 @@ void FluidSimulator::circleMomentumTransfer() {
     }
 }
 
-void FluidSimulator::updateCircleAreas(int prevX, int prevY, int newX, int newY) {
+void Simulator::updateCircleAreas(int prevX, int prevY, int newX, int newY) {
     // bounding box surrounding new and old circles
     int minI = std::min(prevX - circleRadius, newX - circleRadius);
     int maxI = std::max(prevX + circleRadius, newX + circleRadius);
@@ -621,7 +583,7 @@ void FluidSimulator::updateCircleAreas(int prevX, int prevY, int newX, int newY)
 
     for (int i = minI; i <= maxI; i++) {
         for (int j = minJ; j <= maxJ; j++) {
-            if (i >= 0 && i < gridX && j >= 0 && j < gridY) {
+            if (i > 0 && i < gridX-1 && j > 0 && j < gridY-1) {
                 float dx = (i + 0.5f);
                 float dy = (j + 0.5f);
 
@@ -648,46 +610,4 @@ void FluidSimulator::updateCircleAreas(int prevX, int prevY, int newX, int newY)
             }
         }
     }
-}
-
-
-void FluidSimulator::onMouseDrag(int gridX, int gridY) {
-    if (isDragging) {
-        // clamp circle to bounds
-        int newX = std::max(circleRadius, std::min(gridX, this->gridX - circleRadius - 1));
-        int newY = std::max(circleRadius, std::min(gridY, this->gridY - circleRadius - 1));
-
-        if (newX != circleX || newY != circleY) {
-            moveCircle(newX, newY);
-        }
-    }
-}
-
-void FluidSimulator::onMouseDown(int gridX, int gridY) {
-    isDragging = true;
-}
-
-void FluidSimulator::onMouseUp() {
-    isDragging = false;
-}
-
-bool FluidSimulator::shouldSkipInkCell(int i, int j, bool checkNoInk) const {
-    // skip solid cells
-    if (s[idx(i, j)] == 0.0f) return true;
-
-    // skip wind tunnels
-    int cy = gridY / 2;
-    if (i == 1 && j >= cy - pipeHeight / 2 && j < cy + pipeHeight / 2) {
-        return true;
-    }
-
-    // skip cells with no ink
-    if (checkNoInk) {
-        int idx_ij = idx(i, j);
-        if (r_ink[idx_ij] == 0.0f && g_ink[idx_ij] == 0.0f && b_ink[idx_ij] == 0.0f) {
-            return true;
-        }
-    }
-
-    return false;
 }

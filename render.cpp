@@ -7,9 +7,6 @@
 Renderer::Renderer(SDL_Window* window, const Config& config)
     :
     window(window),
-    renderer(nullptr),
-    texture(nullptr),
-    pixels(nullptr),
     frameCount(0),
 
     // draw params
@@ -38,10 +35,19 @@ Renderer::Renderer(SDL_Window* window, const Config& config)
 }
 
 Renderer::~Renderer() {
-    cleanup();
+    if (texture) {
+        SDL_DestroyTexture(texture);
+        texture = nullptr;
+    }
+    if (renderer) {
+        SDL_DestroyRenderer(renderer);
+        renderer = nullptr;
+    }
     delete[] pixels;
 }
 
+
+// MAIN RENDER LOOP
 bool Renderer::init(const Config& config) {
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
     if (!renderer) {
@@ -57,20 +63,9 @@ bool Renderer::init(const Config& config) {
     return true;
 }
 
-void Renderer::cleanup() {
-    if (texture) {
-        SDL_DestroyTexture(texture);
-        texture = nullptr;
-    }
-    if (renderer) {
-        SDL_DestroyRenderer(renderer);
-        renderer = nullptr;
-    }
-}
-
 void Renderer::render(const ISimulator& simulator) {
-    simWidth = simulator.getDomainWidth();
-    simHeight = simulator.getDomainHeight();
+    simWidth = simulator.domainWidth;
+    simHeight = simulator.domainHeight;
     float scaleX = windowWidth / simWidth;
     float scaleY = windowHeight / simHeight;
     canvasScale = std::min(scaleX, scaleY);
@@ -102,6 +97,8 @@ void Renderer::render(const ISimulator& simulator) {
     SDL_RenderPresent(renderer);
 }
 
+
+// RENDER HELPERS
 void Renderer::convertCoordinates(float simX, float simY, int& pixelX, int& pixelY) {
     pixelX = static_cast<int>(simX * canvasScale);
     pixelY = windowHeight - static_cast<int>(simY * canvasScale);
@@ -176,9 +173,9 @@ void Renderer::drawFluidField(const ISimulator& simulator) {
     const auto& density = simulator.getDensity();
     const auto& solid = simulator.getSolid();
 
-    float cellSize = simulator.getCellSize();
-    int gridX = simulator.getGridX();
-    int gridY = simulator.getGridY();
+    float cellSize = simulator.cellSize;
+    int gridX = simulator.gridX;
+    int gridY = simulator.gridY;
 
     // pressure range
     float minP = pressure[0];
@@ -190,13 +187,13 @@ void Renderer::drawFluidField(const ISimulator& simulator) {
 
     // get ink references if needed
     bool inkInitialized = false;
-    const std::vector<float>* r_ink_ptr = nullptr;
-    const std::vector<float>* g_ink_ptr = nullptr;
-    const std::vector<float>* b_ink_ptr = nullptr;
-    if (drawTarget == 3 && simulator.isInkInitialized()) {
-        r_ink_ptr = &simulator.getRedInk();
-        g_ink_ptr = &simulator.getGreenInk();
-        b_ink_ptr = &simulator.getBlueInk();
+    const std::vector<float>* inkRed_ptr = nullptr;
+    const std::vector<float>* inkGreen_ptr = nullptr;
+    const std::vector<float>* inkBlue_ptr = nullptr;
+    if (drawTarget == 3 && simulator.inkInitialized) {
+        inkRed_ptr = &simulator.getRedInk();
+        inkGreen_ptr = &simulator.getGreenInk();
+        inkBlue_ptr = &simulator.getBlueInk();
         inkInitialized = true;
     }
 
@@ -216,8 +213,8 @@ void Renderer::drawFluidField(const ISimulator& simulator) {
                     mapValueToGreyscale(density[idx], 0.0f, 1.0f, r, g, b);
                 } else if (drawTarget == 3) {
                     // draw ink diffusion
-                    if (inkInitialized && r_ink_ptr->size() > idx) {
-                        mapInkToColor((*r_ink_ptr)[idx], (*g_ink_ptr)[idx], (*b_ink_ptr)[idx], r, g, b);
+                    if (inkInitialized && inkRed_ptr->size() > idx) {
+                        mapInkToColor((*inkRed_ptr)[idx], (*inkGreen_ptr)[idx], (*inkBlue_ptr)[idx], r, g, b);
                     } else {
                         // default to white
                         r = 255; g = 255; b = 255;
@@ -245,8 +242,6 @@ void Renderer::drawFluidField(const ISimulator& simulator) {
                     }
                 }
             } else {
-                // TODO support generic motion dragging rather than explicit solid circle for boundary
-
                 // boundaries in grey
                 int x0, y0;
                 convertCoordinates(i * cellSize, (j + 1) * cellSize, x0, y0);
@@ -269,9 +264,9 @@ void Renderer::drawVelocityField(const ISimulator& simulator) {
     const auto& velocityY = simulator.getVelocityY();
     const auto& solid = simulator.getSolid();
 
-    float cellSize = simulator.getCellSize();
-    int gridX = simulator.getGridX();
-    int gridY = simulator.getGridY();
+    float cellSize = simulator.cellSize;
+    int gridX = simulator.gridX;
+    int gridY = simulator.gridY;
 
     float VELOCITY_VECTOR_LENGTH = 0.3f;
 
@@ -326,6 +321,8 @@ void Renderer::drawVelocityField(const ISimulator& simulator) {
     }
 }
 
+
+// HISTOGRAM HELPERS
 void Renderer::computeHistograms(const ISimulator& simulator) {
     IRenderer::HistogramData data;
     data.densityHistogramBins = densityHistogramBins;

@@ -12,9 +12,10 @@ public:
 
     // render methods
     virtual bool init(const Config& config) = 0;
-    virtual void cleanup() = 0;
     virtual void render(const ISimulator& simulator) = 0;
 
+    
+    // HISTOGRAM HELPERS
     // histogram computation reused between both renderers
     static constexpr int HISTOGRAM_BINS = 64;
     
@@ -32,8 +33,8 @@ public:
         const auto& solid = simulator.getSolid();
         const auto& velocityX = simulator.getVelocityX();
         const auto& velocityY = simulator.getVelocityY();
-        int gridX = simulator.getGridX();
-        int gridY = simulator.getGridY();
+        int gridX = simulator.gridX;
+        int gridY = simulator.gridY;
 
         // density histogram (using pressure)
         bool first = true;

@@ -14,21 +14,20 @@ public:
     ~Renderer();
 
     bool init(const Config& config) override;
-    void cleanup() override;
     void render(const ISimulator& simulator) override;
 
 private:
     SDL_Window* window;
-    SDL_Renderer* renderer;
-    SDL_Texture* texture;
-    Uint32* pixels;
+    SDL_Renderer* renderer = nullptr;
+    SDL_Texture* texture = nullptr;
+    Uint32* pixels = nullptr;
 
     int windowWidth, windowHeight;
     float canvasScale;
     float simWidth, simHeight;
 
     // draw params
-    int drawTarget; // 0=pressure, 1=smoke, 2=both
+    int drawTarget; // 0=pressure, 1=smoke, 2=both, 3=ink
     bool drawVelocities;
     bool disableHistograms;
     float velScale;
@@ -51,7 +50,6 @@ private:
     void computeHistograms(const ISimulator& simulator);
     void drawHistograms();
     void setPixel(int x, int y, Uint8 r, Uint8 g, Uint8 b);
-
 };
 
 #endif

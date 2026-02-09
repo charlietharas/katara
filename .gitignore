@@ -1,3 +1,17 @@
 build/
 debug/
 *.png
+*.pyc
+# claude code artifacts
+.claude/
+.bash_profile
+.bashrc
+.gitconfig
+.gitmodules
+.idea
+.mcp.json
+.profile
+.ripgreprc
+.vscode
+.zprofile
+.zshrc

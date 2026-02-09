@@ -2,6 +2,8 @@
 #define CONFIG_H
 
 #include <string>
+#include <fstream>
+#include <sstream>
 #include "json.hpp"
 
 using json = nlohmann::json;
@@ -31,15 +33,15 @@ struct WindTunnelConfig {
 };
 
 struct CircleConfig {
-    int radius = 10;
-    float momentumTransferCoeff = 0.25f;
+    float radius = 0.1f;
+    float momentumTransferStrength = 0.25f;
     float momentumTransferRadius = 1.0f;
 };
 
 enum class PipelineType {
-    CPU,
-    GPU,
-    HYBRID
+    CPU, // "host"
+    GPU, // "device"
+    HYBRID // "hybrid"
 };
 
 struct SimulationConfig {
@@ -47,6 +49,7 @@ struct SimulationConfig {
     float timestep = 1.0f / 60.0f;
     float gravity = 0.0f;
     float fluidDensity = 1000.0f;
+    int edges = 15; // 4-bit mask: left(8), top(4), bottom(2), right(1)
     ProjectionConfig projection;
     VorticityConfig vorticity;
     WindTunnelConfig windTunnel;
@@ -75,6 +78,7 @@ struct Config {
 class ConfigLoader {
 public:
     static Config loadConfig(const std::string& filename = "../config.json");
+    static std::string readFile(const char* filename);
 
 private:
     static PipelineType stringToPipelineType(const std::string& type);

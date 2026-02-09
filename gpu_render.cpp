@@ -1,54 +1,279 @@
+#include "wgpu_boilerplate.h"
 #include "gpu_render.h"
+#include "gpu_sim.h"
 #include <sdl2webgpu.h>
 #include <iostream>
 #include <fstream>
 #include <sstream>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <cstdint>
+#include <limits>
 
-WebGPURenderer::WebGPURenderer(SDL_Window* window, const Config& config)
+// CONSTRUCTOR :250
+
+// UPDATE RENDER PASS UNIFORM
+void GPURenderer::updateUniformBufferRender(const ISimulator& simulator) {
+    uniformData.gridX = simulator.gridX;
+    uniformData.gridY = simulator.gridY;
+    uniformData.cellSize = simulator.cellSize;
+    uniformData.simWidth = uniformData.gridX * uniformData.cellSize;
+    uniformData.simHeight = uniformData.gridY * uniformData.cellSize;
+
+    // pressure range
+    if (usingGPUTextures) {
+        if (densityHistogramMin >= densityHistogramMax) {
+            // initialize with reasonable values to prevent glitch from snowballing
+            uniformData.pressureMin = -1.0f;
+            uniformData.pressureMax = 1.0f;
+        } else {
+            // grab from GPU (already computed)
+            uniformData.pressureMin = densityHistogramMin;
+            uniformData.pressureMax = densityHistogramMax;
+        }
+    } else {
+        // calculate from CPU pressure data
+        const auto& pressure = simulator.getPressure();
+        if (!pressure.empty()) {
+            uniformData.pressureMin = *std::min_element(pressure.begin(), pressure.end());
+            uniformData.pressureMax = *std::max_element(pressure.begin(), pressure.end());
+            std::cout << "CPU pressure min/max: min=" << uniformData.pressureMin
+                      << ", max=" << uniformData.pressureMax << std::endl;
+        }
+    }
+
+    uniformData.densityHistogramMin = densityHistogramMin;
+    uniformData.densityHistogramMax = densityHistogramMax;
+    uniformData.velocityHistogramMin = velocityHistogramMin;
+    uniformData.velocityHistogramMax = velocityHistogramMax;
+    uniformData.densityHistogramMaxCount = densityHistogramMaxCount;
+    uniformData.velocityHistogramMaxCount = velocityHistogramMaxCount;
+    for (int i = 0; i < 16; i++) {
+        uniformData.densityHistogramBins[i].x = densityHistogramBins[i * 4 + 0];
+        uniformData.densityHistogramBins[i].y = densityHistogramBins[i * 4 + 1];
+        uniformData.densityHistogramBins[i].z = densityHistogramBins[i * 4 + 2];
+        uniformData.densityHistogramBins[i].w = densityHistogramBins[i * 4 + 3];
+        uniformData.velocityHistogramBins[i].x = velocityHistogramBins[i * 4 + 0];
+        uniformData.velocityHistogramBins[i].y = velocityHistogramBins[i * 4 + 1];
+        uniformData.velocityHistogramBins[i].z = velocityHistogramBins[i * 4 + 2];
+        uniformData.velocityHistogramBins[i].w = velocityHistogramBins[i * 4 + 3];
+    }
+
+    // update uniform buffer
+    wgpuQueueWriteBuffer(queue, uniformBuffer, 0, &uniformData, sizeof(UniformData));
+}
+
+// BOILERPLATE INSTANTIATION HELPERS
+bool GPURenderer::createTexture(const TextureDesc& desc, WGPUTexture& texture, WGPUTextureView& view) {
+    texture = createTextureView(uniformData.gridX > 0 ? uniformData.gridX : 1,
+                                uniformData.gridY > 0 ? uniformData.gridY : 1,
+                                desc.format, desc.usage, view);
+    return texture != nullptr;
+}
+
+void GPURenderer::copyTextureHostToDevice(WGPUTexture texture, const float* data, size_t dataSize, int gridX, int gridY, int channelCount) {
+    WGPUImageCopyTexture copyTexture = {
+        .texture = texture,
+        .mipLevel = 0,
+        .origin = {0, 0, 0},
+        .aspect = WGPUTextureAspect_All
+    };
+
+    WGPUTextureDataLayout dataLayout = {
+        .offset = 0,
+        .bytesPerRow = static_cast<uint32_t>(gridX * channelCount * sizeof(float)),
+        .rowsPerImage = static_cast<uint32_t>(gridY)
+    };
+
+    WGPUExtent3D extent = {
+        .width = static_cast<uint32_t>(gridX),
+        .height = static_cast<uint32_t>(gridY),
+        .depthOrArrayLayers = 1
+    };
+
+    wgpuQueueWriteTexture(queue, &copyTexture, data, dataSize * sizeof(float), &dataLayout, &extent);
+}
+
+WGPUSurfaceConfiguration GPURenderer::createSurfaceConfiguration() {
+    WGPUSurfaceConfiguration config = {};
+    config.nextInChain = nullptr;
+    config.device = device;
+    config.format = surfaceFormat;
+    config.usage = WGPUTextureUsage_RenderAttachment;
+    config.width = windowWidth;
+    config.height = windowHeight;
+    config.presentMode = WGPUPresentMode_Fifo;
+    config.alphaMode = WGPUCompositeAlphaMode_Opaque;
+    return config;
+}
+
+// RENDER PIPELINE CREATION HELPERS
+WGPUBindGroupLayout GPURenderer::createRenderBindGroupLayout(int textureCount, WGPUShaderStage visibility, size_t uniformSize) {
+    std::vector<WGPUBindGroupLayoutEntry> entries;
+    
+    // uniform buffer
+    auto uniformEntry = createUniformBufferLayoutEntry(0, uniformSize);
+    uniformEntry.visibility = visibility;
+    entries.push_back(uniformEntry);
+    
+    // sampler
+    entries.push_back(createSamplerLayoutEntry(1, visibility));
+    
+    // textures
+    for (int i = 2; i < 2 + textureCount; i++) {
+        entries.push_back(createSampleTextureLayoutEntry(i, visibility));
+    }
+    
+    return createBindGroupLayout(entries.size(), entries.data());
+}
+
+WGPUBindGroupLayoutEntry GPURenderer::createSamplerLayoutEntry(int binding, WGPUShaderStage visibility) {
+    WGPUBindGroupLayoutEntry entry = {};
+    entry.binding = binding;
+    entry.visibility = visibility;
+    entry.sampler.type = WGPUSamplerBindingType_NonFiltering;
+    return entry;
+}
+
+WGPUBindGroupEntry GPURenderer::createSamplerBindGroupEntry(int binding, WGPUSampler sampler) {
+    WGPUBindGroupEntry entry = {};
+    entry.binding = binding;
+    entry.sampler = sampler;
+    return entry;
+}
+
+WGPURenderPassColorAttachment GPURenderer::createRenderPassColorAttachment(WGPUTextureView view, WGPULoadOp loadOp, WGPUStoreOp storeOp, WGPUColor clearValue) {
+    WGPURenderPassColorAttachment attachment = {};
+    attachment.view = view;
+    attachment.resolveTarget = nullptr;
+    attachment.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+    attachment.loadOp = loadOp;
+    attachment.storeOp = storeOp;
+    attachment.clearValue = clearValue;
+    return attachment;
+}
+
+WGPURenderPassDescriptor GPURenderer::createRenderPassDescriptor(WGPURenderPassColorAttachment* colorAttachment) {
+    WGPURenderPassDescriptor renderPassDesc = {};
+    renderPassDesc.nextInChain = nullptr;
+    renderPassDesc.colorAttachmentCount = 1;
+    renderPassDesc.colorAttachments = colorAttachment;
+    renderPassDesc.depthStencilAttachment = nullptr;
+    return renderPassDesc;
+}
+
+WGPUTextureViewDescriptor GPURenderer::createTextureViewDescriptor(WGPUTextureFormat format) {
+    WGPUTextureViewDescriptor viewDesc = {};
+    viewDesc.nextInChain = nullptr;
+    viewDesc.format = format;
+    viewDesc.dimension = WGPUTextureViewDimension_2D;
+    viewDesc.baseMipLevel = 0;
+    viewDesc.mipLevelCount = 1;
+    viewDesc.baseArrayLayer = 0;
+    viewDesc.arrayLayerCount = 1;
+    return viewDesc;
+}
+
+GPURenderer::RenderPipelineResult GPURenderer::createRenderPipelineWithLayout(
+    const char* vertexShaderFile,
+    const char* fragmentShaderFile,
+    const char* fragmentEntry,
+    WGPUTextureFormat surfaceFormat,
+    int textureCount,
+    WGPUShaderStage visibility,
+    size_t uniformSize) {
+    
+    RenderPipelineResult result;
+
+    // load shaders
+    WGPUShaderModule vertexShader = createShaderModule(vertexShaderFile);
+    if (!vertexShader) return result;
+    
+    WGPUShaderModule fragmentShader = createShaderModule(fragmentShaderFile);
+    if (!fragmentShader) {
+        wgpuShaderModuleRelease(vertexShader);
+        return result;
+    }
+
+    result.bindGroupLayout = createRenderBindGroupLayout(textureCount, visibility, uniformSize);
+    if (!result.bindGroupLayout) {
+        wgpuShaderModuleRelease(vertexShader);
+        wgpuShaderModuleRelease(fragmentShader);
+        return result;
+    }
+
+    WGPUPipelineLayout pipelineLayout = createPipelineLayout(&result.bindGroupLayout, 1);
+    if (!pipelineLayout) {
+        wgpuBindGroupLayoutRelease(result.bindGroupLayout);
+        wgpuShaderModuleRelease(vertexShader);
+        wgpuShaderModuleRelease(fragmentShader);
+        result.bindGroupLayout = nullptr;
+        return result;
+    }
+
+    WGPURenderPipelineDescriptor pipelineDesc = {};
+    pipelineDesc.nextInChain = nullptr;
+    pipelineDesc.layout = pipelineLayout;
+    
+    // vertex state
+    pipelineDesc.vertex.module = vertexShader;
+    pipelineDesc.vertex.entryPoint = "vs_main";
+    pipelineDesc.vertex.constantCount = 0;
+    pipelineDesc.vertex.constants = nullptr;
+    pipelineDesc.vertex.bufferCount = 0;
+    pipelineDesc.vertex.buffers = nullptr;
+    
+    // primitive state
+    pipelineDesc.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+    pipelineDesc.primitive.stripIndexFormat = WGPUIndexFormat_Undefined;
+    pipelineDesc.primitive.frontFace = WGPUFrontFace_CCW;
+    pipelineDesc.primitive.cullMode = WGPUCullMode_None;
+    
+    // multisample state
+    pipelineDesc.multisample.count = 1;
+    pipelineDesc.multisample.mask = ~0u;
+    pipelineDesc.multisample.alphaToCoverageEnabled = false;
+    
+    // fragment state
+    WGPUColorTargetState colorTarget = {};
+    colorTarget.format = surfaceFormat;
+    colorTarget.blend = nullptr;
+    colorTarget.writeMask = WGPUColorWriteMask_All;
+    
+    WGPUFragmentState fragmentState = {};
+    fragmentState.module = fragmentShader;
+    fragmentState.entryPoint = fragmentEntry;
+    fragmentState.constantCount = 0;
+    fragmentState.constants = nullptr;
+    fragmentState.targetCount = 1;
+    fragmentState.targets = &colorTarget;
+    
+    pipelineDesc.fragment = &fragmentState;
+    pipelineDesc.depthStencil = nullptr;
+
+    // create pipeline
+    result.pipeline = wgpuDeviceCreateRenderPipeline(device, &pipelineDesc);
+
+    // clean up temporary objects
+    wgpuPipelineLayoutRelease(pipelineLayout);
+    wgpuShaderModuleRelease(vertexShader);
+    wgpuShaderModuleRelease(fragmentShader);
+
+    if (!result.pipeline) {
+        wgpuBindGroupLayoutRelease(result.bindGroupLayout);
+        result.bindGroupLayout = nullptr;
+    }
+
+    return result;
+}
+
+GPURenderer::GPURenderer(SDL_Window* window, const Config& config)
     : window(window),
-      windowWidth(0),
-      windowHeight(0),
-      instance(nullptr),
-      surface(nullptr),
-      adapter(nullptr),
-      device(nullptr),
-      queue(nullptr),
-      renderPipeline(nullptr),
-      uniformBindGroup(nullptr),
-      bindGroupLayout(nullptr),
-      uniformBuffer(nullptr),
-      pressureTexture(nullptr),
-      densityTexture(nullptr),
-      velocityTexture(nullptr),
-      solidTexture(nullptr),
-      redInkTexture(nullptr),
-      greenInkTexture(nullptr),
-      blueInkTexture(nullptr),
-      sampler(nullptr),
-      pressureTextureView(nullptr),
-      densityTextureView(nullptr),
-      velocityTextureView(nullptr),
-      solidTextureView(nullptr),
-      redInkTextureView(nullptr),
-      greenInkTextureView(nullptr),
-      blueInkTextureView(nullptr),
-      initialized(false),
       drawTarget(config.rendering.target),
       showVelocityVectors(config.rendering.showVelocityVectors),
       disableHistograms(config.rendering.disableHistograms),
-      velocityScale(config.rendering.velocityScale),
-      frameCount(0),
-      densityHistogramBins(IRenderer::HISTOGRAM_BINS, 0),
-      densityHistogramMin(0.0f),
-      densityHistogramMax(0.0f),
-      densityHistogramMaxCount(0),
-      velocityHistogramBins(IRenderer::HISTOGRAM_BINS, 0),
-      velocityHistogramMin(0.0f),
-      velocityHistogramMax(0.0f),
-      velocityHistogramMaxCount(0)
-{
+      velocityScale(config.rendering.velocityScale) {
 
     SDL_GetWindowSize(window, &windowWidth, &windowHeight);
 
@@ -61,178 +286,357 @@ WebGPURenderer::WebGPURenderer(SDL_Window* window, const Config& config)
     uniformData.disableHistograms = disableHistograms ? 1 : 0;
 }
 
-WebGPURenderer::~WebGPURenderer() {
+GPURenderer::~GPURenderer() {
     if (!initialized) return;
 
-    releaseResources();
+    if (device) wgpuDeviceTick(device);
+
+    // textures
+    RELEASE_TEXTURE_WITH_STORAGE(pressure)
+    RELEASE_TEXTURE_WITH_STORAGE(solid)
+    RELEASE_TEXTURE(density)
+    RELEASE_TEXTURE(velocity)
+    RELEASE_TEXTURE(blueInk)
+    RELEASE_TEXTURE(greenInk)
+    RELEASE_TEXTURE(redInk)
+
+    // all the other stuff
+    RELEASE_RENDER_PIPELINE(renderPipeline)
+    RELEASE_RENDER_PIPELINE(renderPipelineGPU)
+    RELEASE_BIND_GROUP(uniformBindGroup)
+    RELEASE_BIND_GROUP(uniformBindGroupGPU)
+    RELEASE_BIND_GROUP_LAYOUT(bindGroupLayout)
+    RELEASE_BIND_GROUP_LAYOUT(bindGroupLayoutGPU)
+    RELEASE_BUFFER(uniformBuffer)
+    RELEASE_SAMPLER(sampler)
+
+    // release device resources
+    releaseResource(device, wgpuDeviceRelease);
+    releaseResource(adapter, wgpuAdapterRelease);
+    releaseResource(surface, wgpuSurfaceRelease);
+    releaseResource(instance, wgpuInstanceRelease);
     initialized = false;
 }
 
-// HOLY
-// BOILERPLATE
-// !!!
+// MAIN RENDER LOOP
+bool GPURenderer::init(const Config& config) {
+    RETURN_FALSE_IF_FAIL(initDevice())
+    
+    surfaceFormat = WGPUTextureFormat_BGRA8Unorm;
+    auto surfaceConfig = createSurfaceConfiguration();
+    wgpuSurfaceConfigure(surface, &surfaceConfig);
+    
+    uniformBuffer = createBuffer(sizeof(UniformData), WGPUBufferUsage_CopyDst | WGPUBufferUsage_Uniform);
+    RETURN_FALSE_IF_FAIL(uniformBuffer);
 
-bool WebGPURenderer::init(const Config& config) {
-    if (!initWebGPU()) {
-        std::cerr << "Failed to initialize WebGPU" << std::endl;
-        return false;
-    }
+    sampler = createSampler(WGPUFilterMode_Nearest);
+    RETURN_FALSE_IF_FAIL(sampler);
 
-    if (!initDevice()) {
-        std::cerr << "Failed to initialize device" << std::endl;
-        return false;
-    }
-
-    if (!initSurface()) {
-        std::cerr << "Failed to initialize surface" << std::endl;
-        return false;
-    }
-
-    if (!initBuffers()) {
-        std::cerr << "Failed to initialize buffers" << std::endl;
-        return false;
-    }
-
-    if (!initTextures()) {
-        std::cerr << "Failed to initialize textures" << std::endl;
-        return false;
-    }
-
-    if (!initRenderPipeline()) {
-        std::cerr << "Failed to initialize render pipeline" << std::endl;
-        return false;
-    }
+    RETURN_FALSE_IF_FAIL(initRenderPipeline())
 
     initialized = true;
     return true;
 }
 
+void GPURenderer::render(const ISimulator& simulator) {
+    if (!initialized) return;
+    usingGPUTextures = simulator.isUsingGPU();
 
-void WebGPURenderer::releaseResources() {
-    // release views (before textures)
-    if (pressureTextureView) {
-        wgpuTextureViewRelease(pressureTextureView);
-        pressureTextureView = nullptr;
+    // compute histograms every n frames
+    if (!disableHistograms && frameCount++ % HISTOGRAM_FRAME_INTERVAL == 0) {
+        computeHistograms(simulator);
     }
-    if (densityTextureView) {
-        wgpuTextureViewRelease(densityTextureView);
-        densityTextureView = nullptr;
+
+    updateUniformBufferRender(simulator);
+    updateTextures(simulator);
+
+    WGPUSurfaceTexture surfaceTexture;
+    wgpuSurfaceGetCurrentTexture(surface, &surfaceTexture);
+    WGPUTextureView nextTexture = wgpuTextureCreateView(surfaceTexture.texture, nullptr);
+
+    // command encoder
+    WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(device, nullptr);
+
+    // render pass
+    auto colorAttachment = createRenderPassColorAttachment(
+        nextTexture,
+        WGPULoadOp_Clear,
+        WGPUStoreOp_Store,
+        {0.0f, 0.0f, 0.0f, 1.0f}
+    );
+    auto renderPassDesc = createRenderPassDescriptor(&colorAttachment);
+
+    WGPURenderPassEncoder renderPassEncoder = wgpuCommandEncoderBeginRenderPass(encoder, &renderPassDesc);
+    if (!renderPassEncoder) {
+        wgpuTextureViewRelease(nextTexture);
+        wgpuCommandEncoderRelease(encoder);
+        return;
     }
-    if (velocityTextureView) {
-        wgpuTextureViewRelease(velocityTextureView);
-        velocityTextureView = nullptr;
+
+    // set pipeline and bind groups based on mode
+    if (usingGPUTextures) {
+        wgpuRenderPassEncoderSetPipeline(renderPassEncoder, renderPipelineGPU);
+        wgpuRenderPassEncoderSetBindGroup(renderPassEncoder, 0, uniformBindGroupGPU, 0, nullptr);
+    } else {
+        wgpuRenderPassEncoderSetPipeline(renderPassEncoder, renderPipeline);
+        wgpuRenderPassEncoderSetBindGroup(renderPassEncoder, 0, uniformBindGroup, 0, nullptr);
     }
-    if (solidTextureView) {
-        wgpuTextureViewRelease(solidTextureView);
-        solidTextureView = nullptr;
+
+    // draw fullscreen quad
+    wgpuRenderPassEncoderDraw(renderPassEncoder, 6, 1, 0, 0);
+
+    // END render pass
+    wgpuRenderPassEncoderEnd(renderPassEncoder);
+    wgpuRenderPassEncoderRelease(renderPassEncoder);
+
+    // submit commands
+    WGPUCommandBufferDescriptor cmdBufferDesc = WGPUCommandBufferDescriptor{};
+    WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, &cmdBufferDesc);
+    wgpuQueueSubmit(queue, 1, &commands);
+
+    // draw
+    wgpuSurfacePresent(surface);
+
+    // release surface texture
+    if (surfaceTexture.texture) {
+        wgpuTextureRelease(surfaceTexture.texture);
     }
-    if (redInkTextureView) {
-        wgpuTextureViewRelease(redInkTextureView);
-        redInkTextureView = nullptr;
+
+    // clean up
+    wgpuCommandBufferRelease(commands);
+    wgpuCommandEncoderRelease(encoder);
+    wgpuTextureViewRelease(nextTexture);
+    wgpuInstanceProcessEvents(instance);
+}
+
+void GPURenderer::updateTextures(const ISimulator& simulator) {
+    int gridX = simulator.gridX;
+    int gridY = simulator.gridY;
+
+    // GPU MODE
+    if (usingGPUTextures) {
+        const auto& gpuSim = static_cast<const GPUSimulator&>(simulator);
+
+        if (!pressureTextureView || uniformData.gridX != gridX || uniformData.gridY != gridY) {
+            RELEASE_TEXTURE_VIEW(pressure);
+            releaseResource(pressureTextureStorageView, wgpuTextureViewRelease);
+            RELEASE_TEXTURE_VIEW(density);
+            RELEASE_TEXTURE_VIEW(velocity);
+            RELEASE_TEXTURE_VIEW(solid);
+            releaseResource(solidTextureStorageView, wgpuTextureViewRelease);
+            RELEASE_TEXTURE_VIEW(redInk);
+
+            auto viewDescR32 = createTextureViewDescriptor(WGPUTextureFormat_R32Float);
+            pressureTextureView = wgpuTextureCreateView(gpuSim.getPressureTexture(), &viewDescR32);
+            pressureTextureStorageView = wgpuTextureCreateView(gpuSim.getPressureTexture(), &viewDescR32);
+            densityTextureView = wgpuTextureCreateView(gpuSim.getDensityTexture(), &viewDescR32);
+            solidTextureView = wgpuTextureCreateView(gpuSim.getSolidTexture(), &viewDescR32);
+            solidTextureStorageView = wgpuTextureCreateView(gpuSim.getSolidTexture(), &viewDescR32);
+
+            auto viewDescRG32 = createTextureViewDescriptor(WGPUTextureFormat_RG32Float);
+            velocityTextureView = wgpuTextureCreateView(gpuSim.getVelocityTexture(), &viewDescRG32);
+
+            auto viewDescRGBA32 = createTextureViewDescriptor(WGPUTextureFormat_RGBA32Float);
+            // reusing redInkTextureView for the combined ink texture
+            redInkTextureView = wgpuTextureCreateView(gpuSim.getInkTexture(), &viewDescRGBA32);
+        }
+
+        // recreate gpu bind group when texture views are updated
+        if (uniformBindGroupGPU) {
+            wgpuBindGroupRelease(uniformBindGroupGPU);
+            uniformBindGroupGPU = nullptr;
+        }
+
+        // GPU bind group (to support different ink texture format)
+        std::vector<WGPUBindGroupEntry> bindGroupEntries;
+        bindGroupEntries.push_back(createUniformBufferBindGroupEntry(0, uniformBuffer, sizeof(UniformData)));
+        bindGroupEntries.push_back(createSamplerBindGroupEntry(1, sampler));
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(2, pressureTextureView));
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(3, densityTextureView));
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(4, velocityTextureView));
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(5, solidTextureView));
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(6, redInkTextureView)); // misleading; RGBA ink texture
+
+        uniformBindGroupGPU = createBindGroup(bindGroupEntries.size(), bindGroupEntries.data(), bindGroupLayoutGPU);
+        uniformData.gridX = gridX;
+        uniformData.gridY = gridY;
+
+        return;
     }
-    if (greenInkTextureView) {
-        wgpuTextureViewRelease(greenInkTextureView);
-        greenInkTextureView = nullptr;
+
+    // CPU MODE
+    // create textures initially or on resize
+    if (!pressureTexture || uniformData.gridX != gridX || uniformData.gridY != gridY) {
+        // release old textures (views first, then textures)
+        RELEASE_TEXTURE_VIEW(pressure);
+        releaseResource(pressureTextureStorageView, wgpuTextureViewRelease);
+        RELEASE_TEXTURE_VIEW(density);
+        RELEASE_TEXTURE_VIEW(velocity);
+        RELEASE_TEXTURE_VIEW(solid);
+        RELEASE_TEXTURE_VIEW(redInk);
+        RELEASE_TEXTURE_VIEW(greenInk);
+        RELEASE_TEXTURE_VIEW(blueInk);
+        
+        releaseResource(pressureTexture, wgpuTextureRelease);
+        releaseResource(densityTexture, wgpuTextureRelease);
+        releaseResource(velocityTexture, wgpuTextureRelease);
+        releaseResource(solidTexture, wgpuTextureRelease);
+        releaseResource(redInkTexture, wgpuTextureRelease);
+        releaseResource(greenInkTexture, wgpuTextureRelease);
+        releaseResource(blueInkTexture, wgpuTextureRelease);
+
+        // release old bind group before creating new textures
+        RELEASE_BIND_GROUP(uniformBindGroup);
+
+        // create new textures (CPU mode - simple textures)
+        pressureTexture = createTextureView(gridX, gridY, WGPUTextureFormat_R32Float, TEXTURE_BINDING_FLAGS, pressureTextureView);
+        densityTexture = createTextureView(gridX, gridY, WGPUTextureFormat_R32Float, TEXTURE_BINDING_FLAGS, densityTextureView);
+        velocityTexture = createTextureView(gridX, gridY, WGPUTextureFormat_RG32Float, TEXTURE_BINDING_FLAGS, velocityTextureView);
+        solidTexture = createTextureView(gridX, gridY, WGPUTextureFormat_R32Float, TEXTURE_BINDING_FLAGS, solidTextureView);
+        redInkTexture = createTextureView(gridX, gridY, WGPUTextureFormat_R32Float, TEXTURE_BINDING_FLAGS, redInkTextureView);
+        greenInkTexture = createTextureView(gridX, gridY, WGPUTextureFormat_R32Float, TEXTURE_BINDING_FLAGS, greenInkTextureView);
+        blueInkTexture = createTextureView(gridX, gridY, WGPUTextureFormat_R32Float, TEXTURE_BINDING_FLAGS, blueInkTextureView);
+
+        // create bind groups
+        std::vector<WGPUBindGroupEntry> bindGroupEntries;
+        bindGroupEntries.push_back(createUniformBufferBindGroupEntry(0, uniformBuffer, sizeof(UniformData)));
+        bindGroupEntries.push_back(createSamplerBindGroupEntry(1, sampler));
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(2, pressureTextureView));
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(3, densityTextureView));
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(4, velocityTextureView));
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(5, solidTextureView));
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(6, redInkTextureView));
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(7, greenInkTextureView));
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(8, blueInkTextureView));
+
+        uniformBindGroup = createBindGroup(bindGroupEntries.size(), bindGroupEntries.data(), bindGroupLayout);
     }
-    if (blueInkTextureView) {
-        wgpuTextureViewRelease(blueInkTextureView);
-        blueInkTextureView = nullptr;
-    }
-    
-    // release textures
-    if (pressureTexture) {
-        wgpuTextureRelease(pressureTexture);
-        pressureTexture = nullptr;
-    }
-    if (densityTexture) {
-        wgpuTextureRelease(densityTexture);
-        densityTexture = nullptr;
-    }
-    if (velocityTexture) {
-        wgpuTextureRelease(velocityTexture);
-        velocityTexture = nullptr;
-    }
-    if (solidTexture) {
-        wgpuTextureRelease(solidTexture);
-        solidTexture = nullptr;
-    }
-    if (redInkTexture) {
-        wgpuTextureRelease(redInkTexture);
-        redInkTexture = nullptr;
-    }
-    if (greenInkTexture) {
-        wgpuTextureRelease(greenInkTexture);
-        greenInkTexture = nullptr;
-    }
-    if (blueInkTexture) {
-        wgpuTextureRelease(blueInkTexture);
-        blueInkTexture = nullptr;
-    }
-    
-    // other resources
-    if (renderPipeline) {
-        wgpuRenderPipelineRelease(renderPipeline);
-        renderPipeline = nullptr;
-    }
-    if (uniformBindGroup) {
-        wgpuBindGroupRelease(uniformBindGroup);
-        uniformBindGroup = nullptr;
-    }
-    if (bindGroupLayout) {
-        wgpuBindGroupLayoutRelease(bindGroupLayout);
-        bindGroupLayout = nullptr;
-    }
-    if (sampler) {
-        wgpuSamplerRelease(sampler);
-        sampler = nullptr;
-    }
-    if (uniformBuffer) {
-        wgpuBufferRelease(uniformBuffer);
-        uniformBuffer = nullptr;
-    }
-    if (queue) {
-        wgpuQueueRelease(queue);
-        queue = nullptr;
-    }
-    if (device) {
-        wgpuDeviceRelease(device);
-        device = nullptr;
-    }
-    if (adapter) {
-        wgpuAdapterRelease(adapter);
-        adapter = nullptr;
-    }
-    if (surface) {
-        wgpuSurfaceRelease(surface);
-        surface = nullptr;
-    }
-    if (instance) {
-        wgpuInstanceRelease(instance);
-        instance = nullptr;
+
+    // update texture data
+    const auto& pressure = simulator.getPressure();
+    const auto& density = simulator.getDensity();
+    const auto& velocityX = simulator.getVelocityX();
+    const auto& velocityY = simulator.getVelocityY();
+    const auto& solid = simulator.getSolid();
+
+    if (!pressure.empty()) {
+        copyTextureHostToDevice(pressureTexture, pressure.data(), pressure.size(), gridX, gridY);
+
+        if (!density.empty()) {
+            copyTextureHostToDevice(densityTexture, density.data(), density.size(), gridX, gridY);
+        }
+
+        // write velocity data to texture (interleaved RG format)
+        std::vector<float> velocityData;
+        velocityData.reserve(pressure.size() * 2);
+        for (size_t i = 0; i < pressure.size(); ++i) {
+            velocityData.push_back(velocityX[i]);
+            velocityData.push_back(velocityY[i]);
+        }
+
+        if (!velocityData.empty()) {
+            copyTextureHostToDevice(velocityTexture, velocityData.data(), velocityData.size(), gridX, gridY, 2);
+        }
+
+        if (!solid.empty()) {
+            copyTextureHostToDevice(solidTexture, solid.data(), solid.size(), gridX, gridY);
+        }
+
+        // write ink data to textures
+        const auto& redInk = simulator.getRedInk();
+        const auto& greenInk = simulator.getGreenInk();
+        const auto& blueInk = simulator.getBlueInk();
+
+        if (simulator.inkInitialized) {
+            if (!redInk.empty()) {
+                copyTextureHostToDevice(redInkTexture, redInk.data(), redInk.size(), gridX, gridY);
+            }
+
+            if (!greenInk.empty()) {
+                copyTextureHostToDevice(greenInkTexture, greenInk.data(), greenInk.size(), gridX, gridY);
+            }
+
+            if (!blueInk.empty()) {
+                copyTextureHostToDevice(blueInkTexture, blueInk.data(), blueInk.size(), gridX, gridY);
+            }
+        }
     }
 }
 
-bool WebGPURenderer::initWebGPU() {
+// HISTOGRAM HELPER
+void GPURenderer::computeHistograms(const ISimulator& simulator) {
+    if (usingGPUTextures) {
+        // grab data from GPU simulator
+        const auto& gpuSim = static_cast<const GPUSimulator&>(simulator);
+
+        int readySlot = -1;
+        const float* pressureMinMax = nullptr;
+        const float* velocityMinMax = nullptr;
+        const int* histogramBins = nullptr;
+
+        if (gpuSim.getHistogramData(readySlot, pressureMinMax, velocityMinMax, histogramBins)) {
+            if (pressureMinMax[0] < pressureMinMax[1]) {
+                densityHistogramMin = pressureMinMax[0];
+                densityHistogramMax = pressureMinMax[1];
+            }
+            if (velocityMinMax[0] < velocityMinMax[1]) {
+                velocityHistogramMin = velocityMinMax[0];
+                velocityHistogramMax = velocityMinMax[1];
+            }
+
+            // copy bins from GPU
+            for (int i = 0; i < 64; i++) {
+                densityHistogramBins[i] = histogramBins[i];
+                velocityHistogramBins[i] = histogramBins[64 + i];
+            }
+
+            // compute max counts
+            densityHistogramMaxCount = 0;
+            velocityHistogramMaxCount = 0;
+            for (int i = 0; i < IRenderer::HISTOGRAM_BINS; i++) {
+                densityHistogramMaxCount = std::max(densityHistogramMaxCount, densityHistogramBins[i]);
+                velocityHistogramMaxCount = std::max(velocityHistogramMaxCount, velocityHistogramBins[i]);
+            }
+
+            gpuSim.advanceHistogramReadIndex();
+        }
+    } else {
+        // CPU mode calculator implemented in irenderer since it is reused between CPU/HYBRID modes
+        IRenderer::HistogramData data;
+        data.densityHistogramBins = densityHistogramBins;
+        data.velocityHistogramBins = velocityHistogramBins;
+
+        IRenderer::computeHistograms(simulator, data);
+
+        densityHistogramMin = data.densityHistogramMin;
+        densityHistogramMax = data.densityHistogramMax;
+        velocityHistogramMin = data.velocityHistogramMin;
+        velocityHistogramMax = data.velocityHistogramMax;
+        densityHistogramBins = data.densityHistogramBins;
+        velocityHistogramBins = data.velocityHistogramBins;
+
+        // compute max counts
+        densityHistogramMaxCount = 0;
+        velocityHistogramMaxCount = 0;
+        for (int i = 0; i < IRenderer::HISTOGRAM_BINS; i++) {
+            densityHistogramMaxCount = std::max(densityHistogramMaxCount, densityHistogramBins[i]);
+            velocityHistogramMaxCount = std::max(velocityHistogramMaxCount, velocityHistogramBins[i]);
+        }
+    }
+}
+
+// GPU INITIALIZATION _BOILERPLATE_
+bool GPURenderer::initDevice() {
     WGPUInstanceDescriptor instanceDesc = {};
     instanceDesc.nextInChain = nullptr;
 
     instance = wgpuCreateInstance(&instanceDesc);
-    if (!instance) {
-        std::cerr << "Failed to create WebGPU instance" << std::endl;
-        return false;
-    }
+    RETURN_FALSE_IF_FAIL(instance);
 
     // get surface from SDL window
     surface = SDL_GetWGPUSurface(instance, window);
-    if (!surface) {
-        std::cerr << "Failed to get surface from SDL window" << std::endl;
-        return false;
-    }
+    RETURN_FALSE_IF_FAIL(surface);
 
-    return true;
-}
-
-bool WebGPURenderer::initDevice() {
     struct UserData {
         WGPUAdapter adapter = nullptr;
         bool requestEnded = false;
@@ -245,7 +649,7 @@ bool WebGPURenderer::initDevice() {
         if (status == WGPURequestAdapterStatus_Success) {
             userData->adapter = adapter;
         } else {
-            std::cerr << "Could not get WebGPU adapter: " << message << std::endl;
+            std::cerr << "ERR getting WebGPU adapter: " << message << std::endl;
         }
         userData->requestEnded = true;
     };
@@ -259,10 +663,11 @@ bool WebGPURenderer::initDevice() {
 
     while (!userData.requestEnded) {
         // wait for adapter request to complete
+        // this is bad :)
     }
 
     if (!userData.adapter) {
-        std::cerr << "Failed to get adapter" << std::endl;
+        std::cerr << "ERR getting WebGPU adapter" << std::endl;
         return false;
     }
 
@@ -280,23 +685,23 @@ bool WebGPURenderer::initDevice() {
         if (status == WGPURequestDeviceStatus_Success) {
             deviceData->device = device;
         } else {
-            std::cerr << "Could not get WebGPU device: " << message << std::endl;
+            std::cerr << "ERR getting WebGPU device: " << message << std::endl;
         }
         deviceData->requestEnded = true;
     };
 
     WGPUDeviceDescriptor deviceDesc = {};
     deviceDesc.nextInChain = nullptr;
-    deviceDesc.label = "Katara-Device";
 
     wgpuAdapterRequestDevice(adapter, &deviceDesc, onDeviceRequestEnded, &deviceData);
 
     while (!deviceData.requestEnded) {
         // wait for device request to complete
+        // still bad :(
     }
 
     if (!deviceData.device) {
-        std::cerr << "Failed to get device" << std::endl;
+        std::cerr << "ERR getting WebGPU device" << std::endl;
         return false;
     }
 
@@ -306,868 +711,40 @@ bool WebGPURenderer::initDevice() {
     // error callback required
     wgpuDeviceSetUncapturedErrorCallback(device,
         [](WGPUErrorType type, const char* message, void* userdata) {
-            std::cerr << "WebGPU error: " << type << " - " << (message ? message : "[NO MESSAGE]") << std::endl;
+            std::cerr << "WebGPU ERR: " << type << " - " << (message ? message : "[NO MESSAGE]") << std::endl;
         }, nullptr);
 
     return true;
 }
 
-bool WebGPURenderer::initSurface() {
-    // get the preferred format from surface
-    surfaceFormat = WGPUTextureFormat_BGRA8Unorm; // fallback
+bool GPURenderer::initRenderPipeline() {
+    auto cpuResult = createRenderPipelineWithLayout(
+        "vertex.wgsl",
+        "fragment.wgsl",
+        "fs_main",
+        surfaceFormat,
+        7,
+        WGPUShaderStage_Fragment,
+        sizeof(UniformData)
+    );
+    RETURN_FALSE_IF_FAIL(cpuResult.pipeline);
 
-    // configure surface
-    WGPUSurfaceConfiguration surfaceConfig = {};
-    surfaceConfig.nextInChain = nullptr;
-    surfaceConfig.device = device;
-    surfaceConfig.format = surfaceFormat;
-    surfaceConfig.usage = WGPUTextureUsage_RenderAttachment;
-    surfaceConfig.width = windowWidth;
-    surfaceConfig.height = windowHeight;
-    surfaceConfig.presentMode = WGPUPresentMode_Fifo;
-    surfaceConfig.alphaMode = WGPUCompositeAlphaMode_Opaque;
+    renderPipeline = cpuResult.pipeline;
+    bindGroupLayout = cpuResult.bindGroupLayout;
 
-    wgpuSurfaceConfigure(surface, &surfaceConfig);
+    auto gpuResult = createRenderPipelineWithLayout(
+        "vertex.wgsl",
+        "fragment_gpu.wgsl",
+        "fs_main",
+        surfaceFormat,
+        5,
+        WGPUShaderStage_Fragment,
+        sizeof(UniformData)
+    );
+    RETURN_FALSE_IF_FAIL(gpuResult.pipeline);
 
-    return true;
-}
-
-bool WebGPURenderer::initBuffers() {
-    // uniform buffer
-    WGPUBufferDescriptor uniformBufferDesc = {};
-    uniformBufferDesc.nextInChain = nullptr;
-    uniformBufferDesc.label = "Uniform Buffer";
-    uniformBufferDesc.size = sizeof(UniformData);
-    uniformBufferDesc.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Uniform;
-    uniformBufferDesc.mappedAtCreation = false;
-
-    uniformBuffer = wgpuDeviceCreateBuffer(device, &uniformBufferDesc);
-    if (!uniformBuffer) {
-        std::cerr << "Failed to create uniform buffer" << std::endl;
-        return false;
-    }
+    renderPipelineGPU = gpuResult.pipeline;
+    bindGroupLayoutGPU = gpuResult.bindGroupLayout;
 
     return true;
-}
-
-bool WebGPURenderer::initTextures() {
-    // sampler
-    WGPUSamplerDescriptor samplerDesc = {};
-    samplerDesc.nextInChain = nullptr;
-    samplerDesc.label = "Fluid Sampler";
-    samplerDesc.addressModeU = WGPUAddressMode_ClampToEdge;
-    samplerDesc.addressModeV = WGPUAddressMode_ClampToEdge;
-    samplerDesc.addressModeW = WGPUAddressMode_ClampToEdge;
-    samplerDesc.magFilter = WGPUFilterMode_Nearest;
-    samplerDesc.minFilter = WGPUFilterMode_Nearest;
-    samplerDesc.mipmapFilter = WGPUMipmapFilterMode_Nearest;
-    samplerDesc.lodMinClamp = 0.0f;
-    samplerDesc.lodMaxClamp = 32.0f;
-    samplerDesc.maxAnisotropy = 1;
-
-    sampler = wgpuDeviceCreateSampler(device, &samplerDesc);
-    if (!sampler) {
-        std::cerr << "Failed to create sampler" << std::endl;
-        return false;
-    }
-
-    // actual textures created in updateSimulationTextures
-    // (need to know grid dimensions)
-
-    return true;
-}
-
-WGPUShaderModule WebGPURenderer::loadShader(const char* source) {
-    WGPUShaderModuleWGSLDescriptor shaderCodeDesc = {};
-    shaderCodeDesc.chain.next = nullptr;
-    shaderCodeDesc.chain.sType = WGPUSType_ShaderModuleWGSLDescriptor;
-    shaderCodeDesc.code = source;
-
-    WGPUShaderModuleDescriptor shaderDesc = {};
-    shaderDesc.nextInChain = &shaderCodeDesc.chain;
-    shaderDesc.label = "Fluid Shader";
-
-    return wgpuDeviceCreateShaderModule(device, &shaderDesc);
-}
-
-std::string WebGPURenderer::readFile(const char* filename) {
-    std::string path = std::string("../") + filename; // NOTE assuming run from build/ or debug/ !
-    std::ifstream file(path);
-    if (!file.is_open()) {
-        std::cerr << "Failed to open file: " << path << std::endl;
-        return "";
-    }
-
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
-}
-
-bool WebGPURenderer::initRenderPipeline() {
-    std::string vertexCode = readFile("vertex.wgsl");
-    std::string fragmentCode = readFile("fragment.wgsl");
-
-    if (vertexCode.empty() || fragmentCode.empty()) {
-        std::cerr << "Failed to load shader files" << std::endl;
-        return false;
-    }
-
-    WGPUShaderModule vertexShader = loadShader(vertexCode.c_str());
-    WGPUShaderModule fragmentShader = loadShader(fragmentCode.c_str());
-
-    if (!vertexShader || !fragmentShader) {
-        std::cerr << "Failed to load shaders" << std::endl;
-        return false;
-    }
-
-    // bind group layout
-    std::vector<WGPUBindGroupLayoutEntry> layoutEntries = {
-        // uniform buffer
-        {
-            .binding = 0,
-            .visibility = WGPUShaderStage_Fragment,
-            .buffer = {
-                .type = WGPUBufferBindingType_Uniform,
-                .hasDynamicOffset = false,
-                .minBindingSize = sizeof(UniformData)
-            },
-            .sampler = {},
-            .texture = {},
-            .storageTexture = {}
-        },
-        // sampler
-        {
-            .binding = 1,
-            .visibility = WGPUShaderStage_Fragment,
-            .buffer = {},
-            .sampler = {
-                .type = WGPUSamplerBindingType_NonFiltering
-            },
-            .texture = {},
-            .storageTexture = {}
-        },
-        // pressure texture
-        {
-            .binding = 2,
-            .visibility = WGPUShaderStage_Fragment,
-            .buffer = {},
-            .sampler = {},
-            .texture = {
-                .sampleType = WGPUTextureSampleType_UnfilterableFloat,
-                .viewDimension = WGPUTextureViewDimension_2D,
-                .multisampled = false
-            },
-            .storageTexture = {}
-        },
-        // density texture
-        {
-            .binding = 3,
-            .visibility = WGPUShaderStage_Fragment,
-            .buffer = {},
-            .sampler = {},
-            .texture = {
-                .sampleType = WGPUTextureSampleType_UnfilterableFloat,
-                .viewDimension = WGPUTextureViewDimension_2D,
-                .multisampled = false
-            },
-            .storageTexture = {}
-        },
-        // velocity texture
-        {
-            .binding = 4,
-            .visibility = WGPUShaderStage_Fragment,
-            .buffer = {},
-            .sampler = {},
-            .texture = {
-                .sampleType = WGPUTextureSampleType_UnfilterableFloat,
-                .viewDimension = WGPUTextureViewDimension_2D,
-                .multisampled = false
-            },
-            .storageTexture = {}
-        },
-        // solid texture (obstacles)
-        {
-            .binding = 5,
-            .visibility = WGPUShaderStage_Fragment,
-            .buffer = {},
-            .sampler = {},
-            .texture = {
-                .sampleType = WGPUTextureSampleType_UnfilterableFloat,
-                .viewDimension = WGPUTextureViewDimension_2D,
-                .multisampled = false
-            },
-            .storageTexture = {}
-        },
-        // red ink texture
-        {
-            .binding = 6,
-            .visibility = WGPUShaderStage_Fragment,
-            .buffer = {},
-            .sampler = {},
-            .texture = {
-                .sampleType = WGPUTextureSampleType_UnfilterableFloat,
-                .viewDimension = WGPUTextureViewDimension_2D,
-                .multisampled = false
-            },
-            .storageTexture = {}
-        },
-        // green ink texture
-        {
-            .binding = 7,
-            .visibility = WGPUShaderStage_Fragment,
-            .buffer = {},
-            .sampler = {},
-            .texture = {
-                .sampleType = WGPUTextureSampleType_UnfilterableFloat,
-                .viewDimension = WGPUTextureViewDimension_2D,
-                .multisampled = false
-            },
-            .storageTexture = {}
-        },
-        // blue ink texture
-        {
-            .binding = 8,
-            .visibility = WGPUShaderStage_Fragment,
-            .buffer = {},
-            .sampler = {},
-            .texture = {
-                .sampleType = WGPUTextureSampleType_UnfilterableFloat,
-                .viewDimension = WGPUTextureViewDimension_2D,
-                .multisampled = false
-            },
-            .storageTexture = {}
-        },
-    };
-
-    WGPUBindGroupLayoutDescriptor bindGroupLayoutDesc = {};
-    bindGroupLayoutDesc.nextInChain = nullptr;
-    bindGroupLayoutDesc.label = "Bind Group Layout";
-    bindGroupLayoutDesc.entryCount = layoutEntries.size();
-    bindGroupLayoutDesc.entries = layoutEntries.data();
-
-    bindGroupLayout = wgpuDeviceCreateBindGroupLayout(device, &bindGroupLayoutDesc);
-    if (!bindGroupLayout) {
-        std::cerr << "Failed to create bind group layout" << std::endl;
-        return false;
-    }
-
-    // pipeline layout
-    WGPUPipelineLayoutDescriptor pipelineLayoutDesc = {};
-    pipelineLayoutDesc.nextInChain = nullptr;
-    pipelineLayoutDesc.label = "Pipeline Layout";
-    pipelineLayoutDesc.bindGroupLayoutCount = 1;
-    pipelineLayoutDesc.bindGroupLayouts = &bindGroupLayout;
-
-    WGPUPipelineLayout pipelineLayout = wgpuDeviceCreatePipelineLayout(device, &pipelineLayoutDesc);
-    if (!pipelineLayout) {
-        std::cerr << "Failed to create pipeline layout" << std::endl;
-        return false;
-    }
-
-    // render pipeline
-    WGPUColorTargetState colorTarget = {};
-    colorTarget.format = surfaceFormat;
-    colorTarget.blend = nullptr;
-    colorTarget.writeMask = WGPUColorWriteMask_All;
-
-    WGPUFragmentState fragmentState = {};
-    fragmentState.module = fragmentShader;
-    fragmentState.entryPoint = "fs_main";
-    fragmentState.constantCount = 0;
-    fragmentState.constants = nullptr;
-    fragmentState.targetCount = 1;
-    fragmentState.targets = &colorTarget;
-
-    WGPURenderPipelineDescriptor pipelineDesc = {};
-    pipelineDesc.nextInChain = nullptr;
-    pipelineDesc.label = "Fluid Render Pipeline";
-    pipelineDesc.layout = pipelineLayout;
-    pipelineDesc.vertex = {
-        .module = vertexShader,
-        .entryPoint = "vs_main",
-        .constantCount = 0,
-        .constants = nullptr,
-        .bufferCount = 0,
-        .buffers = nullptr
-    };
-    pipelineDesc.primitive = {
-        .topology = WGPUPrimitiveTopology_TriangleList,
-        .stripIndexFormat = WGPUIndexFormat_Undefined,
-        .frontFace = WGPUFrontFace_CCW,
-        .cullMode = WGPUCullMode_None
-    };
-    pipelineDesc.multisample = {
-        .count = 1,
-        .mask = ~0u,
-        .alphaToCoverageEnabled = false
-    };
-    pipelineDesc.fragment = &fragmentState;
-    pipelineDesc.depthStencil = nullptr;
-
-    renderPipeline = wgpuDeviceCreateRenderPipeline(device, &pipelineDesc);
-    if (!renderPipeline) {
-        std::cerr << "Failed to create render pipeline" << std::endl;
-        return false;
-    }
-
-    // clean up temporary objects
-    wgpuShaderModuleRelease(vertexShader);
-    wgpuShaderModuleRelease(fragmentShader);
-    wgpuPipelineLayoutRelease(pipelineLayout);
-
-    return true;
-}
-
-void WebGPURenderer::computeHistograms(const ISimulator& simulator) {
-    IRenderer::HistogramData data;
-    data.densityHistogramBins = densityHistogramBins;
-    data.velocityHistogramBins = velocityHistogramBins;
-    
-    IRenderer::computeHistograms(simulator, data);
-    
-    densityHistogramMin = data.densityHistogramMin;
-    densityHistogramMax = data.densityHistogramMax;
-    velocityHistogramMin = data.velocityHistogramMin;
-    velocityHistogramMax = data.velocityHistogramMax;
-    densityHistogramBins = data.densityHistogramBins;
-    velocityHistogramBins = data.velocityHistogramBins;
-    
-    // compute max counts
-    densityHistogramMaxCount = 0;
-    velocityHistogramMaxCount = 0;
-    for (int i = 0; i < IRenderer::HISTOGRAM_BINS; i++) {
-        densityHistogramMaxCount = std::max(densityHistogramMaxCount, densityHistogramBins[i]);
-        velocityHistogramMaxCount = std::max(velocityHistogramMaxCount, velocityHistogramBins[i]);
-    }
-}
-
-void WebGPURenderer::updateUniformData(const ISimulator& simulator) {
-    uniformData.gridX = simulator.getGridX();
-    uniformData.gridY = simulator.getGridY();
-    uniformData.cellSize = simulator.getCellSize();
-    uniformData.simWidth = uniformData.gridX * uniformData.cellSize;
-    uniformData.simHeight = uniformData.gridY * uniformData.cellSize;
-
-    // pressure range
-    const auto& pressure = simulator.getPressure();
-    if (!pressure.empty()) {
-        uniformData.pressureMin = *std::min_element(pressure.begin(), pressure.end());
-        uniformData.pressureMax = *std::max_element(pressure.begin(), pressure.end());
-    }
-
-    // histogram data
-    uniformData.densityHistogramMin = densityHistogramMin;
-    uniformData.densityHistogramMax = densityHistogramMax;
-    uniformData.velocityHistogramMin = velocityHistogramMin;
-    uniformData.velocityHistogramMax = velocityHistogramMax;
-    uniformData.densityHistogramMaxCount = densityHistogramMaxCount;
-    uniformData.velocityHistogramMaxCount = velocityHistogramMaxCount;
-    // pack histogram bins into vec4 arrays 
-    for (int i = 0; i < 16; i++) {
-        uniformData.densityHistogramBins[i].x = densityHistogramBins[i * 4 + 0];
-        uniformData.densityHistogramBins[i].y = densityHistogramBins[i * 4 + 1];
-        uniformData.densityHistogramBins[i].z = densityHistogramBins[i * 4 + 2];
-        uniformData.densityHistogramBins[i].w = densityHistogramBins[i * 4 + 3];
-        uniformData.velocityHistogramBins[i].x = velocityHistogramBins[i * 4 + 0];
-        uniformData.velocityHistogramBins[i].y = velocityHistogramBins[i * 4 + 1];
-        uniformData.velocityHistogramBins[i].z = velocityHistogramBins[i * 4 + 2];
-        uniformData.velocityHistogramBins[i].w = velocityHistogramBins[i * 4 + 3];
-    }
-
-    // update uniform buffer
-    wgpuQueueWriteBuffer(queue, uniformBuffer, 0, &uniformData, sizeof(UniformData));
-}
-
-void WebGPURenderer::updateSimulationTextures(const ISimulator& simulator) {
-    int gridX = simulator.getGridX();
-    int gridY = simulator.getGridY();
-
-    // create textures initially or on resize
-    if (!pressureTexture || uniformData.gridX != gridX || uniformData.gridY != gridY) {
-        // release old textures (views first, then textures)
-        if (pressureTextureView) {
-            wgpuTextureViewRelease(pressureTextureView);
-            pressureTextureView = nullptr;
-        }
-        if (densityTextureView) {
-            wgpuTextureViewRelease(densityTextureView);
-            densityTextureView = nullptr;
-        }
-        if (velocityTextureView) {
-            wgpuTextureViewRelease(velocityTextureView);
-            velocityTextureView = nullptr;
-        }
-        if (solidTextureView) {
-            wgpuTextureViewRelease(solidTextureView);
-            solidTextureView = nullptr;
-        }
-        if (redInkTextureView) {
-            wgpuTextureViewRelease(redInkTextureView);
-            redInkTextureView = nullptr;
-        }
-        if (greenInkTextureView) {
-            wgpuTextureViewRelease(greenInkTextureView);
-            greenInkTextureView = nullptr;
-        }
-        if (blueInkTextureView) {
-            wgpuTextureViewRelease(blueInkTextureView);
-            blueInkTextureView = nullptr;
-        }
-        if (pressureTexture) {
-            wgpuTextureRelease(pressureTexture);
-            pressureTexture = nullptr;
-        }
-        if (densityTexture) {
-            wgpuTextureRelease(densityTexture);
-            densityTexture = nullptr;
-        }
-        if (velocityTexture) {
-            wgpuTextureRelease(velocityTexture);
-            velocityTexture = nullptr;
-        }
-        if (solidTexture) {
-            wgpuTextureRelease(solidTexture);
-            solidTexture = nullptr;
-        }
-        if (redInkTexture) {
-            wgpuTextureRelease(redInkTexture);
-            redInkTexture = nullptr;
-        }
-        if (greenInkTexture) {
-            wgpuTextureRelease(greenInkTexture);
-            greenInkTexture = nullptr;
-        }
-        if (blueInkTexture) {
-            wgpuTextureRelease(blueInkTexture);
-            blueInkTexture = nullptr;
-        }
-
-        // release old bind group before creating new textures
-        if (uniformBindGroup) {
-            wgpuBindGroupRelease(uniformBindGroup);
-            uniformBindGroup = nullptr;
-        }
-
-        // create new textures
-        WGPUTextureDescriptor textureDesc = {};
-        textureDesc.nextInChain = nullptr;
-        textureDesc.size = { static_cast<uint32_t>(gridX), static_cast<uint32_t>(gridY), 1 };
-        textureDesc.mipLevelCount = 1;
-        textureDesc.sampleCount = 1;
-        textureDesc.dimension = WGPUTextureDimension_2D;
-        textureDesc.format = WGPUTextureFormat_R32Float;
-        textureDesc.usage = WGPUTextureUsage_CopyDst | WGPUTextureUsage_TextureBinding;
-        textureDesc.label = "Pressure Texture";
-
-        pressureTexture = wgpuDeviceCreateTexture(device, &textureDesc);
-
-        textureDesc.label = "Density Texture";
-        densityTexture = wgpuDeviceCreateTexture(device, &textureDesc);
-
-        textureDesc.label = "Velocity Texture";
-        textureDesc.format = WGPUTextureFormat_RG32Float; // R=X velocity, G=Y velocity
-        velocityTexture = wgpuDeviceCreateTexture(device, &textureDesc);
-
-        textureDesc.label = "Solid Texture";
-        textureDesc.format = WGPUTextureFormat_R32Float; // single channel for solid/fluid
-        solidTexture = wgpuDeviceCreateTexture(device, &textureDesc);
-
-        // create ink textures with the same dimensions as other textures
-        textureDesc.label = "Red Ink Texture";
-        redInkTexture = wgpuDeviceCreateTexture(device, &textureDesc);
-
-        textureDesc.label = "Green Ink Texture";
-        greenInkTexture = wgpuDeviceCreateTexture(device, &textureDesc);
-
-        textureDesc.label = "Blue Ink Texture";
-        blueInkTexture = wgpuDeviceCreateTexture(device, &textureDesc);
-
-        if (!pressureTexture || !densityTexture || !velocityTexture || !solidTexture ||
-            !redInkTexture || !greenInkTexture || !blueInkTexture) {
-            std::cerr << "Failed to create simulation textures" << std::endl;
-            return;
-        }
-
-        // create texture views
-        WGPUTextureViewDescriptor viewDesc = {};
-        viewDesc.nextInChain = nullptr;
-        viewDesc.format = WGPUTextureFormat_R32Float;
-        viewDesc.dimension = WGPUTextureViewDimension_2D;
-        viewDesc.baseMipLevel = 0;
-        viewDesc.mipLevelCount = 1;
-        viewDesc.baseArrayLayer = 0;
-        viewDesc.arrayLayerCount = 1;
-
-        pressureTextureView = wgpuTextureCreateView(pressureTexture, &viewDesc);
-        densityTextureView = wgpuTextureCreateView(densityTexture, &viewDesc);
-
-        viewDesc.format = WGPUTextureFormat_RG32Float;
-        velocityTextureView = wgpuTextureCreateView(velocityTexture, &viewDesc);
-
-        viewDesc.format = WGPUTextureFormat_R32Float;
-        solidTextureView = wgpuTextureCreateView(solidTexture, &viewDesc);
-
-        // create ink texture views
-        redInkTextureView = wgpuTextureCreateView(redInkTexture, &viewDesc);
-        greenInkTextureView = wgpuTextureCreateView(greenInkTexture, &viewDesc);
-        blueInkTextureView = wgpuTextureCreateView(blueInkTexture, &viewDesc);
-
-        if (!pressureTextureView || !densityTextureView || !velocityTextureView || !solidTextureView ||
-            !redInkTextureView || !greenInkTextureView || !blueInkTextureView) {
-            std::cerr << "Failed to create texture views" << std::endl;
-            return;
-        }
-
-        // create bind groups
-        std::vector<WGPUBindGroupEntry> bindGroupEntries = {
-            {
-                .binding = 0,
-                .buffer = uniformBuffer,
-                .offset = 0,
-                .size = sizeof(UniformData)
-            },
-            {
-                .binding = 1,
-                .sampler = sampler
-            },
-            {
-                .binding = 2,
-                .textureView = pressureTextureView
-            },
-            {
-                .binding = 3,
-                .textureView = densityTextureView
-            },
-            {
-                .binding = 4,
-                .textureView = velocityTextureView
-            },
-            {
-                .binding = 5,
-                .textureView = solidTextureView
-            },
-            {
-                .binding = 6,
-                .textureView = redInkTextureView
-            },
-            {
-                .binding = 7,
-                .textureView = greenInkTextureView
-            },
-            {
-                .binding = 8,
-                .textureView = blueInkTextureView
-            }
-        };
-
-        WGPUBindGroupDescriptor bindGroupDesc = {};
-        bindGroupDesc.nextInChain = nullptr;
-        bindGroupDesc.label = "Main Bind Group";
-        bindGroupDesc.layout = bindGroupLayout;
-        bindGroupDesc.entryCount = bindGroupEntries.size();
-        bindGroupDesc.entries = bindGroupEntries.data();
-
-        uniformBindGroup = wgpuDeviceCreateBindGroup(device, &bindGroupDesc);
-        if (!uniformBindGroup) {
-            std::cerr << "Failed to create bind group" << std::endl;
-            return;
-        }
-    }
-
-    // update texture data
-    const auto& pressure = simulator.getPressure();
-    const auto& density = simulator.getDensity();
-    const auto& velocityX = simulator.getVelocityX();
-    const auto& velocityY = simulator.getVelocityY();
-    const auto& solid = simulator.getSolid();
-
-    if (!pressure.empty()) {
-        // write pressure data to texture
-        WGPUImageCopyTexture pressureCopy = {
-            .texture = pressureTexture,
-            .mipLevel = 0,
-            .origin = {0, 0, 0},
-            .aspect = WGPUTextureAspect_All
-        };
-
-        WGPUTextureDataLayout pressureLayout = {
-            .offset = 0,
-            .bytesPerRow = static_cast<uint32_t>(gridX * sizeof(float)),
-            .rowsPerImage = static_cast<uint32_t>(gridY)
-        };
-
-        WGPUExtent3D pressureExtent = {
-            .width = static_cast<uint32_t>(gridX),
-            .height = static_cast<uint32_t>(gridY),
-            .depthOrArrayLayers = 1
-        };
-
-        wgpuQueueWriteTexture(queue, &pressureCopy, pressure.data(),
-                           pressure.size() * sizeof(float), &pressureLayout, &pressureExtent);
-
-        // write density data to texture
-        if (!density.empty()) {
-            WGPUImageCopyTexture densityCopy = {
-                .texture = densityTexture,
-                .mipLevel = 0,
-                .origin = {0, 0, 0},
-                .aspect = WGPUTextureAspect_All
-            };
-
-            WGPUTextureDataLayout densityLayout = {
-                .offset = 0,
-                .bytesPerRow = static_cast<uint32_t>(gridX * sizeof(float)),
-                .rowsPerImage = static_cast<uint32_t>(gridY)
-            };
-
-            WGPUExtent3D densityExtent = {
-                .width = static_cast<uint32_t>(gridX),
-                .height = static_cast<uint32_t>(gridY),
-                .depthOrArrayLayers = 1
-            };
-
-            wgpuQueueWriteTexture(queue, &densityCopy, density.data(),
-                               density.size() * sizeof(float), &densityLayout, &densityExtent);
-        }
-
-        // write velocity data to texture
-        // uses interleaved RG
-        std::vector<float> velocityData;
-        velocityData.reserve(pressure.size() * 2);
-        for (size_t i = 0; i < pressure.size(); ++i) {
-            velocityData.push_back(velocityX[i]);
-            velocityData.push_back(velocityY[i]);
-        }
-
-        if (!velocityData.empty()) {
-            WGPUImageCopyTexture velocityCopy = {
-                .texture = velocityTexture,
-                .mipLevel = 0,
-                .origin = {0, 0, 0},
-                .aspect = WGPUTextureAspect_All
-            };
-
-            WGPUTextureDataLayout velocityLayout = {
-                .offset = 0,
-                .bytesPerRow = static_cast<uint32_t>(gridX * 2 * sizeof(float)),
-                .rowsPerImage = static_cast<uint32_t>(gridY)
-            };
-
-            WGPUExtent3D velocityExtent = {
-                .width = static_cast<uint32_t>(gridX),
-                .height = static_cast<uint32_t>(gridY),
-                .depthOrArrayLayers = 1
-            };
-
-            wgpuQueueWriteTexture(queue, &velocityCopy, velocityData.data(),
-                               velocityData.size() * sizeof(float), &velocityLayout, &velocityExtent);
-        }
-
-        // write solid data to texture
-        if (!solid.empty()) {
-            WGPUImageCopyTexture solidCopy = {
-                .texture = solidTexture,
-                .mipLevel = 0,
-                .origin = {0, 0, 0},
-                .aspect = WGPUTextureAspect_All
-            };
-
-            WGPUTextureDataLayout solidLayout = {
-                .offset = 0,
-                .bytesPerRow = static_cast<uint32_t>(gridX * sizeof(float)),
-                .rowsPerImage = static_cast<uint32_t>(gridY)
-            };
-
-            WGPUExtent3D solidExtent = {
-                .width = static_cast<uint32_t>(gridX),
-                .height = static_cast<uint32_t>(gridY),
-                .depthOrArrayLayers = 1
-            };
-
-            wgpuQueueWriteTexture(queue, &solidCopy, solid.data(),
-                               solid.size() * sizeof(float), &solidLayout, &solidExtent);
-        }
-
-        // write ink data to textures
-        const auto& redInk = simulator.getRedInk();
-        const auto& greenInk = simulator.getGreenInk();
-        const auto& blueInk = simulator.getBlueInk();
-
-        // only process those textures if the simulator has ink initialized
-        if (simulator.isInkInitialized() && !redInk.empty()) {
-            WGPUImageCopyTexture redInkCopy = {
-                .texture = redInkTexture,
-                .mipLevel = 0,
-                .origin = {0, 0, 0},
-                .aspect = WGPUTextureAspect_All
-            };
-
-            WGPUTextureDataLayout redInkLayout = {
-                .offset = 0,
-                .bytesPerRow = static_cast<uint32_t>(gridX * sizeof(float)),
-                .rowsPerImage = static_cast<uint32_t>(gridY)
-            };
-
-            WGPUExtent3D redInkExtent = {
-                .width = static_cast<uint32_t>(gridX),
-                .height = static_cast<uint32_t>(gridY),
-                .depthOrArrayLayers = 1
-            };
-
-            wgpuQueueWriteTexture(queue, &redInkCopy, redInk.data(),
-                                   redInk.size() * sizeof(float), &redInkLayout, &redInkExtent);
-        }
-
-        if (!greenInk.empty()) {
-            WGPUImageCopyTexture greenInkCopy = {
-                .texture = greenInkTexture,
-                .mipLevel = 0,
-                .origin = {0, 0, 0},
-                .aspect = WGPUTextureAspect_All
-            };
-
-            WGPUTextureDataLayout greenInkLayout = {
-                .offset = 0,
-                .bytesPerRow = static_cast<uint32_t>(gridX * sizeof(float)),
-                .rowsPerImage = static_cast<uint32_t>(gridY)
-            };
-
-            WGPUExtent3D greenInkExtent = {
-                .width = static_cast<uint32_t>(gridX),
-                .height = static_cast<uint32_t>(gridY),
-                .depthOrArrayLayers = 1
-            };
-
-            wgpuQueueWriteTexture(queue, &greenInkCopy, greenInk.data(),
-                                   greenInk.size() * sizeof(float), &greenInkLayout, &greenInkExtent);
-        }
-
-        if (!blueInk.empty()) {
-            WGPUImageCopyTexture blueInkCopy = {
-                .texture = blueInkTexture,
-                .mipLevel = 0,
-                .origin = {0, 0, 0},
-                .aspect = WGPUTextureAspect_All
-            };
-
-            WGPUTextureDataLayout blueInkLayout = {
-                .offset = 0,
-                .bytesPerRow = static_cast<uint32_t>(gridX * sizeof(float)),
-                .rowsPerImage = static_cast<uint32_t>(gridY)
-            };
-
-            WGPUExtent3D blueInkExtent = {
-                .width = static_cast<uint32_t>(gridX),
-                .height = static_cast<uint32_t>(gridY),
-                .depthOrArrayLayers = 1
-            };
-
-            wgpuQueueWriteTexture(queue, &blueInkCopy, blueInk.data(),
-                                   blueInk.size() * sizeof(float), &blueInkLayout, &blueInkExtent);
-        }
-    }
-}
-
-void WebGPURenderer::render(const ISimulator& simulator) {
-    if (!initialized) return;
-
-    // compute histograms every n frames
-    int histogramFrameInterval = 1;
-    if (!disableHistograms && frameCount++ % histogramFrameInterval == 0) {
-        computeHistograms(simulator);
-    }
-
-    updateUniformData(simulator);
-    updateSimulationTextures(simulator);
-
-    // get current texture from surface
-    WGPUSurfaceTexture surfaceTexture;
-    wgpuSurfaceGetCurrentTexture(surface, &surfaceTexture);
-
-    // check if surface is still valid
-    if (surfaceTexture.status != WGPUSurfaceGetCurrentTextureStatus_Success) {
-        std::cerr << "Surface texture status error: " << surfaceTexture.status << std::endl;
-        if (surfaceTexture.texture) {
-            wgpuTextureRelease(surfaceTexture.texture);
-        }
-        return;
-    }
-
-    if (!surfaceTexture.texture) {
-        std::cerr << "Failed to get texture from surface" << std::endl;
-        return;
-    }
-
-    // try to get the texture view directly from the surface texture
-    WGPUTextureView nextTexture = wgpuTextureCreateView(surfaceTexture.texture, nullptr);
-    if (!nextTexture) {
-        std::cerr << "Failed to create texture view from surface texture" << std::endl;
-        wgpuTextureRelease(surfaceTexture.texture);
-        return;
-    }
-
-    // command encoder
-    WGPUCommandEncoderDescriptor encoderDesc = {};
-    encoderDesc.nextInChain = nullptr;
-    encoderDesc.label = "Command Encoder";
-
-    WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(device, &encoderDesc);
-    if (!encoder) {
-        std::cerr << "Failed to create command encoder" << std::endl;
-        wgpuTextureViewRelease(nextTexture);
-        wgpuTextureRelease(surfaceTexture.texture);
-        return;
-    }
-
-    // render pass
-    WGPURenderPassColorAttachment colorAttachment = {};
-    colorAttachment.view = nextTexture;
-    colorAttachment.resolveTarget = nullptr;
-    colorAttachment.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED; // https://github.com/floooh/sokol/issues/1003
-    colorAttachment.loadOp = WGPULoadOp_Clear;
-    colorAttachment.storeOp = WGPUStoreOp_Store;
-    colorAttachment.clearValue = { 0.0f, 0.0f, 0.0f, 1.0f };
-
-    WGPURenderPassDescriptor renderPassDesc = {};
-    renderPassDesc.nextInChain = nullptr;
-    renderPassDesc.colorAttachmentCount = 1;
-    renderPassDesc.colorAttachments = &colorAttachment;
-    renderPassDesc.depthStencilAttachment = nullptr;
-
-    WGPURenderPassEncoder renderPassEncoder = wgpuCommandEncoderBeginRenderPass(encoder, &renderPassDesc);
-    if (!renderPassEncoder) {
-        std::cerr << "Failed to begin render pass" << std::endl;
-        wgpuTextureViewRelease(nextTexture);
-        wgpuTextureRelease(surfaceTexture.texture);
-        wgpuCommandEncoderRelease(encoder);
-        return;
-    }
-
-    // set pipeline and bind groups
-    wgpuRenderPassEncoderSetPipeline(renderPassEncoder, renderPipeline);
-    wgpuRenderPassEncoderSetBindGroup(renderPassEncoder, 0, uniformBindGroup, 0, nullptr);
-
-    // draw fullscreen quad
-    wgpuRenderPassEncoderDraw(renderPassEncoder, 6, 1, 0, 0);
-
-    // END render pass
-    wgpuRenderPassEncoderEnd(renderPassEncoder);
-    wgpuRenderPassEncoderRelease(renderPassEncoder);
-
-    // submit commands
-    WGPUCommandBufferDescriptor cmdBufferDesc = {};
-    cmdBufferDesc.nextInChain = nullptr;
-    cmdBufferDesc.label = "Command Buffer";
-
-    WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, &cmdBufferDesc);
-    wgpuQueueSubmit(queue, 1, &commands);
-
-    // present (draw)
-    wgpuSurfacePresent(surface);
-
-    // clean up
-    wgpuCommandBufferRelease(commands);
-    wgpuCommandEncoderRelease(encoder);
-    wgpuTextureViewRelease(nextTexture);
-    wgpuTextureRelease(surfaceTexture.texture);
 }

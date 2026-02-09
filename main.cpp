@@ -15,86 +15,72 @@
 #include "isimulator.h"
 #include "config.h"
 
+// cpu -> cpu renderer, otherwise hybrid/gpu both use gpu
 std::unique_ptr<IRenderer> createRenderer(SDL_Window* window, const Config& config) {
     if (config.pipeline == PipelineType::CPU) {
         return std::make_unique<Renderer>(window, config);
     }
-    return std::make_unique<WebGPURenderer>(window, config);
+    return std::make_unique<GPURenderer>(window, config);
 }
 
+// gpu -> gpu simulator, otherwise hybrid/cpu both use cpu
 std::unique_ptr<ISimulator> createSimulator(const Config& config) {
     if (config.pipeline == PipelineType::GPU) {
-        return std::make_unique<GPUFluidSimulator>(config);
+        return std::make_unique<GPUSimulator>(config);
     }
-    return std::make_unique<FluidSimulator>(config);
-}
-
-std::pair<int, int> mouseToGridCoords(const SDL_Event& event, int windowWidth, int windowHeight, ISimulator* simulator) {
-    int mouseX = event.motion.x;
-    int mouseY = event.motion.y;
-
-    // convert screen coordinates to simulator world space coordinates
-    float simX = mouseX / static_cast<float>(windowWidth) * simulator->getDomainWidth();
-    float simY = (windowHeight - mouseY) / static_cast<float>(windowHeight) * simulator->getDomainHeight();
-
-    int gridX = static_cast<int>(simX / simulator->getCellSize());
-    int gridY = static_cast<int>(simY / simulator->getCellSize());
-
-    return {gridX, gridY};
+    return std::make_unique<Simulator>(config);
 }
 
 int main(int argc, char** argv) {
-    // TODO support command line arguments for config file path
-    Config config = ConfigLoader::loadConfig("../config.json");
+    // load config from default path if none specified
+    std::string configPath = "../config.json";
+    if (argc > 1) {
+        configPath = argv[1];
+    }
+    Config config = ConfigLoader::loadConfig(configPath);
 
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-        std::cerr << "SDL initialization error: " << SDL_GetError() << std::endl;
+        std::cerr << "ERR initializing SDL: " << SDL_GetError() << std::endl;
         return 1;
     }
 
+    // window size
     int windowWidth = config.window.defaultWidth;
     int windowHeight = config.window.defaultHeight;
+    float aspectRatio = static_cast<float>(config.window.defaultWidth) / config.window.defaultHeight;
 
     // image loading
     SDL_Surface* imageSurface = nullptr;
     SDL_Surface* convertedSurface = nullptr;
     ImageData* imageData = nullptr;
-
     if (!config.ink.imagePath.empty() && config.rendering.target == 3) {
+        // load an image and grab its dimensions for window sizing
         imageSurface = IMG_Load(config.ink.imagePath.c_str());
         if (imageSurface) {
-            float imageAspectRatio = static_cast<float>(imageSurface->w) / imageSurface->h;
+            aspectRatio = static_cast<float>(imageSurface->w) / imageSurface->h;
 
-            if (imageAspectRatio > 1.0f) { // landscape
-                windowWidth = static_cast<int>(config.window.baseSize * 1.2f);
-                windowHeight = static_cast<int>(windowWidth / imageAspectRatio);
-
-                if (windowHeight < 600) {
-                    windowHeight = 600;
-                    windowWidth = static_cast<int>(windowHeight * imageAspectRatio);
-                }
+            // baseSize is the smaller dimension
+            if (aspectRatio >= 1.0f) { // landscape
+                windowHeight = config.window.baseSize;
+                windowWidth = static_cast<int>(config.window.baseSize * aspectRatio);
             } else { // portrait
-                windowHeight = static_cast<int>(config.window.baseSize * 1.2f);
-                windowWidth = static_cast<int>(windowHeight * imageAspectRatio);
-
-                if (windowWidth < 600) {
-                    windowWidth = 600;
-                    windowHeight = static_cast<int>(windowWidth / imageAspectRatio);
-                }
+                windowWidth = config.window.baseSize;
+                windowHeight = static_cast<int>(config.window.baseSize / aspectRatio);
             }
 
-            std::cout << "Window size: " << windowWidth << " by " << windowHeight << std::endl;
-            std::cout << "Aspect ratio: " << imageAspectRatio << std::endl;
+            std::cout << "Got image with aspect ratio: " << aspectRatio << std::endl;
+            std::cout << "Resulting window size: " << windowWidth << "x" << windowHeight << std::endl;
 
             // 32-bit RGB
             convertedSurface = SDL_ConvertSurfaceFormat(imageSurface, SDL_PIXELFORMAT_RGB888, 0);
             if (!convertedSurface) {
-                std::cerr << "Error: Could not convert image surface: " << SDL_GetError() << std::endl;
+                std::cerr << "ERR converting image surface: " << SDL_GetError() << std::endl;
                 SDL_FreeSurface(imageSurface);
                 SDL_Quit();
                 return 1;
             }
 
+            // copy data to struct
             imageData = new ImageData();
             imageData->pixels = convertedSurface->pixels;
             imageData->width = convertedSurface->w;
@@ -104,13 +90,12 @@ int main(int argc, char** argv) {
             imageData->gShift = convertedSurface->format->Gshift;
             imageData->bShift = convertedSurface->format->Bshift;
         } else {
-            std::cerr << "Could not load image " << config.ink.imagePath
-                      << ": " << IMG_GetError() << std::endl;
+            std::cerr << "ERR loading image (path: " << config.ink.imagePath << "): " << IMG_GetError() << std::endl;
             SDL_Quit();
             return 1;
         }
     } else if (config.rendering.target == 3) {
-        std::cerr << "No input image path provided for ink mode" << std::endl;
+        std::cerr << "ERR rendering target=3 but no image path was provided" << std::endl;
         SDL_Quit();
         return 1;
     }
@@ -122,7 +107,7 @@ int main(int argc, char** argv) {
                                           windowHeight,
                                           SDL_WINDOW_SHOWN);
     if (!window) {
-        std::cerr << "Window creation error: " << SDL_GetError() << std::endl;
+        std::cerr << "ERR creating window: " << SDL_GetError() << std::endl;
         delete imageData;
         if (convertedSurface) SDL_FreeSurface(convertedSurface);
         if (imageSurface) SDL_FreeSurface(imageSurface);
@@ -134,7 +119,7 @@ int main(int argc, char** argv) {
     auto simulator = createSimulator(config);
 
     if (!renderer->init(config)) {
-        std::cerr << "Renderer initialization error" << std::endl;
+        std::cerr << "ERR initializing renderer" << std::endl;
         delete imageData;
         if (convertedSurface) SDL_FreeSurface(convertedSurface);
         if (imageSurface) SDL_FreeSurface(imageSurface);
@@ -142,36 +127,43 @@ int main(int argc, char** argv) {
         SDL_Quit();
         return 1;
     }
+    std::cout << "Renderer initialized" << std::endl;
 
-    // TEMP disabled
-    // if (config.pipeline == PipelineType::GPU) {
-    //     auto gpuSimulator = static_cast<GPUFluidSimulator*>(simulator.get());
-    //     auto gpuRenderer = static_cast<WebGPURenderer*>(renderer.get());
+    if (config.pipeline == PipelineType::GPU) {
+        auto gpuSimulator = static_cast<GPUSimulator*>(simulator.get());
+        auto gpuRenderer = static_cast<GPURenderer*>(renderer.get());
+        gpuSimulator->device = gpuRenderer->device;
+        gpuSimulator->queue = gpuRenderer->queue;
+    }
 
-    //     if (!gpuSimulator->initWebGPU(gpuRenderer->getDevice(), gpuRenderer->getQueue())) {
-    //         std::cerr << "Error initializing WebGPU device" << std::endl;
-    //         exit(1);
-    //     }
-    // }
+    if (!simulator->init(config, imageData, aspectRatio)) {
+        std::cerr << "ERR initializing simulator" << std::endl;
+        delete imageData;
+        if (convertedSurface) SDL_FreeSurface(convertedSurface);
+        if (imageSurface) SDL_FreeSurface(imageSurface);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 1;
+    }
+    std::cout << "Simulator initialized" << std::endl;
 
-    simulator->init(config, imageData);
-
+    // MAIN LOOP
     bool running = true;
     SDL_Event event;
-
+    uint delay = config.simulation.timestep * 1000;
     while (running) {
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
                 running = false;
             } else if (event.type == SDL_MOUSEBUTTONDOWN and event.button.button == SDL_BUTTON_LEFT) {
-                std::pair<int, int> gridCoords = mouseToGridCoords(event, windowWidth, windowHeight, simulator.get());
+                std::pair<int, int> gridCoords = simulator->screenToGridCoords(event.button.x, event.button.y, windowWidth, windowHeight);
                 if (simulator->isInsideCircle(gridCoords.first, gridCoords.second)) {
                     simulator->onMouseDown(gridCoords.first, gridCoords.second);
                 }
             } else if (event.type == SDL_MOUSEBUTTONUP and event.button.button == SDL_BUTTON_LEFT) {
                 simulator->onMouseUp();
             } else if (event.type == SDL_MOUSEMOTION and event.motion.state & SDL_BUTTON_LMASK) {
-                std::pair<int, int> gridCoords = mouseToGridCoords(event, windowWidth, windowHeight, simulator.get());
+                std::pair<int, int> gridCoords = simulator->screenToGridCoords(event.motion.x, event.motion.y, windowWidth, windowHeight);
                 simulator->onMouseDrag(gridCoords.first, gridCoords.second);
             }
         }
@@ -179,11 +171,11 @@ int main(int argc, char** argv) {
         simulator->update();
         renderer->render(*simulator);
 
-        // 60 fps
-        SDL_Delay(16);
+        // force realtime
+        SDL_Delay(delay);
     }
 
-    renderer->cleanup();
+    // cleanup
     SDL_DestroyWindow(window);
 
     delete imageData;

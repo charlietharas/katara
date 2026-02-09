@@ -29,9 +29,38 @@ struct UniformData {
 @group(0) @binding(3) var densityTexture: texture_2d<f32>;
 @group(0) @binding(4) var velocityTexture: texture_2d<f32>;
 @group(0) @binding(5) var solidTexture: texture_2d<f32>;
-@group(0) @binding(6) var redInkTexture: texture_2d<f32>;
-@group(0) @binding(7) var greenInkTexture: texture_2d<f32>;
-@group(0) @binding(8) var blueInkTexture: texture_2d<f32>;
+@group(0) @binding(6) var inkTexture: texture_2d<f32>; // RGBA texture for GPU mode
+
+// TODO MAIN -- WIP ^_^
+// cleaned everything up with a fat commit,
+// now misc. todos and tinkering a little bit
+// also soon compile test program for browser
+// then more tinkering until it's production-rdy
+/*
+// TODO better window layout configuration (e.g. histograms scale with window size)
+
+// TODO LATER examine differences in pressure/velocity histograms between GPU/CPU
+- see plotting script
+- note: it seems like we can get better behavior by cranking Jacobi iterations up (1000)
+// TODO LATER swap to different pressure solver
+
+// TODO LATER -- up/right wind tunnel behaves differently from down/left
+likely because of the forward texture accesses (e.g. asymmetric +1) somewhere
+or it could be something else...
+- there are still some subtle bugs with gpu sim (bot left corner, circle detection)
+- and ofc the velocity field perturbations affecting the histogram limits when the circle is moved
+- and general poor behavior at high magnitudes (e.g. of velocity)--are we correctly checking fluids at boundaries
+  and is there any undefined behavior during advection?
+
+// TODO WAY LATER - extensions:
+- try to vibrate some obstacle proportional to an audio signal
+- measure system entropy and write a proof that the system does/does not
+  follow laws of fluid entropy
+- by the end, 4 different views: raw camera with model visualization, ink, current pretty view, combined
+ - combined: camera feed with model visualization rendered behind pretty fluid field
+
+// TODO WAY LATER lots of tiny memory problems in valgrind, investigate if some of these are my fault
+*/
 
 // color helpers
 fn mapValueToColor(value: f32, min: f32, max: f32) -> vec3<f32> {
@@ -66,7 +95,7 @@ fn mapValueToVelocityColor(value: f32, min: f32, max: f32) -> vec3<f32> {
     var clampedValue = clamp(value, min, max - 0.0001);
     var delta = max - min;
     var normalized = select(0.5, (clampedValue - min) / delta, delta != 0.0);
-    
+
     if (normalized < 0.5) {
         var t = normalized * 2.0;
         return vec3<f32>(1.0, t * 0.647, 0.0); // orange to yellow
@@ -74,15 +103,6 @@ fn mapValueToVelocityColor(value: f32, min: f32, max: f32) -> vec3<f32> {
         var t = (normalized - 0.5) * 2.0;
         return vec3<f32>(1.0, 0.647 + t * 0.353, 0.0); // yellow to white
     }
-}
-
-// unique to hybrid shader
-fn mapInkToColor(r: f32, g: f32, b: f32) -> vec3<f32> {
-    var r_clamped = clamp(r, 0.0, 1.0);
-    var g_clamped = clamp(g, 0.0, 1.0);
-    var b_clamped = clamp(b, 0.0, 1.0);
-
-    return vec3<f32>(r_clamped, g_clamped, b_clamped);
 }
 
 fn distanceToLineSegment(point: vec2<f32>, lineStart: vec2<f32>, lineEnd: vec2<f32>) -> f32 {
@@ -166,114 +186,114 @@ fn drawHistograms(pixelCoord: vec2<f32>) -> vec4<f32> {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
 
-    const histWidth = 300.0;
-    const histHeight = 150.0;
-    
+    let histWidth = 300.0;
+    let histHeight = 150.0;
+
     // density histogram
-    var dhistX = 10.0;
-    var dhistY = 10.0;
+    let dhistX = 10.0;
+    let dhistY = 10.0;
     // velocity histogram
-    var vhistX = 320.0;
-    var vhistY = 10.0;
-    
+    let vhistX = 320.0;
+    let vhistY = 10.0;
+
     // draw density histogram
     if (pixelCoord.x >= dhistX && pixelCoord.x < dhistX + histWidth &&
         pixelCoord.y >= dhistY && pixelCoord.y < dhistY + histHeight) {
-        
-        var localX = pixelCoord.x - dhistX;
-        var localY = pixelCoord.y - dhistY;
-        
+
+        let localX = pixelCoord.x - dhistX;
+        let localY = pixelCoord.y - dhistY;
+
         // background
-        var bg = 40.0 / 255.0;
+        let bg = 40.0 / 255.0;
         var result = vec3<f32>(bg, bg, bg);
-        
+
         // border
-        var border = 200.0 / 255.0;
+        let border = 200.0 / 255.0;
         if (localX < 1.0 || localX >= histWidth - 1.0 || localY < 1.0 || localY >= histHeight - 1.0) {
             result = vec3<f32>(border, border, border);
         } else {
             // bar
-            var barAreaX = localX - 10.0;
-            var barAreaY = localY - 10.0;
-            var barAreaWidth = histWidth - 20.0;
-            var barAreaHeight = histHeight - 20.0;
-            
+            let barAreaX = localX - 10.0;
+            let barAreaY = localY - 10.0;
+            let barAreaWidth = histWidth - 20.0;
+            let barAreaHeight = histHeight - 20.0;
+
             if (barAreaX >= 0.0 && barAreaX < barAreaWidth && barAreaY >= 0.0 && barAreaY < barAreaHeight) {
-                var barWidth = histWidth / 64.0;
+                let barWidth = histWidth / 64.0;
                 var binIndex = i32(barAreaX / barWidth);
                 binIndex = clamp(binIndex, 0, 63);
-                
-                var maxCount = uniforms.densityHistogramMaxCount;
-                
+
+                let maxCount = uniforms.densityHistogramMaxCount;
+
                 if (maxCount > 0) {
                     let vecIndex = binIndex / 4;
                     let component = binIndex % 4;
                     let vec = uniforms.densityHistogramBins[vecIndex];
                     let binCount = getBinCount(vec, component);
-                    var barHeight = (f32(binCount) / f32(maxCount)) * barAreaHeight;
-                    var barBottom = barAreaHeight - barHeight;
-                    
+                    let barHeight = (f32(binCount) / f32(maxCount)) * barAreaHeight;
+                    let barBottom = barAreaHeight - barHeight;
+
                     // within bar
                     if (barAreaY >= barBottom && barAreaY < barAreaHeight) {
-                        var normalized = f32(binIndex) / 64.0;
+                        let normalized = f32(binIndex) / 64.0;
                         result = mapValueToColor(normalized, 0.0, 1.0);
                     }
                 }
             }
         }
-        
+
         return vec4<f32>(result, 1.0);
     }
-    
+
     // draw velocity histogram
     if (pixelCoord.x >= vhistX && pixelCoord.x < vhistX + histWidth &&
         pixelCoord.y >= vhistY && pixelCoord.y < vhistY + histHeight) {
-        
-        var localX = pixelCoord.x - vhistX;
-        var localY = pixelCoord.y - vhistY;
-        
+
+        let localX = pixelCoord.x - vhistX;
+        let localY = pixelCoord.y - vhistY;
+
         // background
-        var bg = 40.0 / 255.0;
+        let bg = 40.0 / 255.0;
         var result = vec3<f32>(bg, bg, bg);
-        
+
         // border
-        var border = 200.0 / 255.0;
+        let border = 200.0 / 255.0;
         if (localX < 1.0 || localX >= histWidth - 1.0 || localY < 1.0 || localY >= histHeight - 1.0) {
             result = vec3<f32>(border, border, border);
         } else {
             // bar
-            var barAreaX = localX - 10.0;
-            var barAreaY = localY - 10.0;
-            var barAreaWidth = histWidth - 20.0;
-            var barAreaHeight = histHeight - 20.0;
-            
+            let barAreaX = localX - 10.0;
+            let barAreaY = localY - 10.0;
+            let barAreaWidth = histWidth - 20.0;
+            let barAreaHeight = histHeight - 20.0;
+
             if (barAreaX >= 0.0 && barAreaX < barAreaWidth && barAreaY >= 0.0 && barAreaY < barAreaHeight) {
-                var barWidth = histWidth / 64.0;
+                let barWidth = histWidth / 64.0;
                 var binIndex = i32(barAreaX / barWidth);
                 binIndex = clamp(binIndex, 0, 63);
-                
-                var maxCount = uniforms.velocityHistogramMaxCount;
-                
+
+                let maxCount = uniforms.velocityHistogramMaxCount;
+
                 if (maxCount > 0) {
                     let vecIndex = binIndex / 4;
                     let component = binIndex % 4;
                     let vec = uniforms.velocityHistogramBins[vecIndex];
                     let binCount = getBinCount(vec, component);
-                    var barHeight = (f32(binCount) / f32(maxCount)) * barAreaHeight;
-                    var barBottom = barAreaHeight - barHeight;
-                    
+                    let barHeight = (f32(binCount) / f32(maxCount)) * barAreaHeight;
+                    let barBottom = barAreaHeight - barHeight;
+
                     // within bar
                     if (barAreaY >= barBottom && barAreaY < barAreaHeight) {
-                        var normalized = f32(binIndex) / 64.0;
+                        let normalized = f32(binIndex) / 64.0;
                         result = mapValueToVelocityColor(normalized, 0.0, 1.0);
                     }
                 }
             }
         }
-        
+
         return vec4<f32>(result, 1.0);
     }
-    
+
     return vec4<f32>(0.0, 0.0, 0.0, 0.0);
 }
 
@@ -308,10 +328,9 @@ fn fs_main(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
     // load simulation data
     let pressure = textureLoad(pressureTexture, texCoord, 0).r;
     let density = textureLoad(densityTexture, texCoord, 0).r;
+    let velocity = textureLoad(velocityTexture, texCoord, 0).rg;
     let solid = textureLoad(solidTexture, texCoord, 0).r;
-    let redInk = textureLoad(redInkTexture, texCoord, 0).r;
-    let greenInk = textureLoad(greenInkTexture, texCoord, 0).r;
-    let blueInk = textureLoad(blueInkTexture, texCoord, 0).r;
+    let ink = textureLoad(inkTexture, texCoord, 0);
 
     // draw based on target
     if (solid > 0.5) {
@@ -327,8 +346,7 @@ fn fs_main(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
             finalColor = finalColor - density * vec3<f32>(1.0, 1.0, 1.0);
             finalColor = max(finalColor, vec3<f32>(0.0, 0.0, 0.0));
         } else if (uniforms.drawTarget == 3) { // ink
-            // draw ink diffusion
-            finalColor = mapInkToColor(redInk, greenInk, blueInk);
+            finalColor = ink.rgb;
         }
     } else {
         // boundaries in grey
