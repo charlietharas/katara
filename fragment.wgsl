@@ -14,12 +14,13 @@ struct UniformData {
     disableHistograms: i32,
     densityHistogramMin: f32,
     densityHistogramMax: f32,
+    densityHistogramMaxCount: i32,
     velocityHistogramMin: f32,
     velocityHistogramMax: f32,
-    densityHistogramMaxCount: i32,
     velocityHistogramMaxCount: i32,
-    densityHistogramBins: array<vec4<i32>, 16>, // packed as vec4 for 16-byte alignment
-    velocityHistogramBins: array<vec4<i32>, 16>, // packed as vec4 for 16-byte alignment
+    pad0: i32,
+    densityHistogramBins: array<vec4<i32>, 16>,
+    velocityHistogramBins: array<vec4<i32>, 16>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: UniformData;
@@ -75,92 +76,39 @@ fn mapValueToVelocityColor(value: f32, min: f32, max: f32) -> vec3<f32> {
     }
 }
 
+// unique to hybrid shader
 fn mapInkToColor(r: f32, g: f32, b: f32) -> vec3<f32> {
     var r_clamped = clamp(r, 0.0, 1.0);
     var g_clamped = clamp(g, 0.0, 1.0);
     var b_clamped = clamp(b, 0.0, 1.0);
-    
+
     return vec3<f32>(r_clamped, g_clamped, b_clamped);
 }
 
-fn worldToScreen(worldPos: vec2<f32>) -> vec2<f32> {
-    var screenPos = worldPos;
-    screenPos.y = uniforms.simHeight - worldPos.y;
-    screenPos = screenPos / vec2<f32>(uniforms.simWidth, uniforms.simHeight);
-    screenPos = screenPos * 2.0 - 1.0;
-    return screenPos;
-}
+fn distanceToLineSegment(point: vec2<f32>, lineStart: vec2<f32>, lineEnd: vec2<f32>) -> f32 {
+    var line = lineEnd - lineStart;
+    var lineLength = length(line);
 
-fn sampleFluidField(coord: vec2<f32>) -> vec4<f32> {
-    var gridCoord = coord / uniforms.cellSize;
-
-    // integer grid coordinates
-    var gridX = i32(gridCoord.x);
-    var gridY = i32(gridCoord.y);
-
-    // bounds
-    if (gridX < 0 || gridX >= uniforms.gridX ||
-        gridY < 0 || gridY >= uniforms.gridY) {
-        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    if (lineLength < 0.0001) {
+        return distance(point, lineStart);
     }
 
-    var texX = gridX; // col index
-    var texY = gridY; // row index
+    var t = max(0.0, min(1.0, dot(point - lineStart, line) / (lineLength * lineLength)));
+    var projection = lineStart + t * line;
 
-    // load simulation data
-    var pressure = textureLoad(pressureTexture, vec2<i32>(texX, texY), 0);
-    var density = textureLoad(densityTexture, vec2<i32>(texX, texY), 0);
-    var solid = textureLoad(solidTexture, vec2<i32>(texX, texY), 0);
-    var redInk = textureLoad(redInkTexture, vec2<i32>(texX, texY), 0);
-    var greenInk = textureLoad(greenInkTexture, vec2<i32>(texX, texY), 0);
-    var blueInk = textureLoad(blueInkTexture, vec2<i32>(texX, texY), 0);
-
-    var color = vec3<f32>(0.0, 0.0, 0.0);
-
-    if (solid.r > 0.5) {
-        // fluid cell
-        if (uniforms.drawTarget == 0) {
-            // draw pressure
-            color = mapValueToColor(pressure.r, uniforms.pressureMin, uniforms.pressureMax);
-        } else if (uniforms.drawTarget == 1) {
-            // draw smoke/density
-            color = mapValueToGreyscale(density.r, 0.0, 1.0);
-        } else if (uniforms.drawTarget == 3) {
-            // draw ink diffusion
-            color = mapInkToColor(redInk.r, greenInk.r, blueInk.r);
-        } else {
-            // draw pretty pressure + smoke
-            color = mapValueToColor(pressure.r, uniforms.pressureMin, uniforms.pressureMax);
-            color = color - density.r * vec3<f32>(1.0, 1.0, 1.0);
-            color = max(color, vec3<f32>(0.0, 0.0, 0.0));
-        }
-    } else {
-        // boundaries in grey
-        color = vec3<f32>(0.49, 0.49, 0.49);
-    }
-
-    return vec4<f32>(color, 1.0);
+    return distance(point, projection);
 }
 
-fn drawVelocityField(coord: vec2<f32>) -> vec4<f32> {
-    var gridCoord = coord / uniforms.cellSize;
-
-    // integer grid coordinates
-    var gridX = i32(gridCoord.x);
-    var gridY = i32(gridCoord.y);
-
+fn drawVelocityField(coord: vec2<f32>, gridX: i32, gridY: i32) -> vec4<f32> {
     // bounds
     if (gridX < 0 || gridX >= uniforms.gridX ||
         gridY < 0 || gridY >= uniforms.gridY) {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
 
-    var texX = gridX; // col index
-    var texY = gridY; // row index
-
     // load simulation data
-    var solid = textureLoad(solidTexture, vec2<i32>(texX, texY), 0);
-    var velocity = textureLoad(velocityTexture, vec2<i32>(texX, texY), 0);
+    var solid = textureLoad(solidTexture, vec2<i32>(gridX, gridY), 0);
+    var velocity = textureLoad(velocityTexture, vec2<i32>(gridX, gridY), 0);
 
     // only show velocity in fluid cells
     if (solid.r <= 0.5) {
@@ -203,21 +151,14 @@ fn drawVelocityField(coord: vec2<f32>) -> vec4<f32> {
         }
     }
 
-    return vec4<f32>(color, 0.7);
+    return vec4<f32>(color, 0.5);
 }
 
-fn distanceToLineSegment(point: vec2<f32>, lineStart: vec2<f32>, lineEnd: vec2<f32>) -> f32 {
-    var line = lineEnd - lineStart;
-    var lineLength = length(line);
-
-    if (lineLength < 0.0001) {
-        return distance(point, lineStart);
-    }
-
-    var t = max(0.0, min(1.0, dot(point - lineStart, line) / (lineLength * lineLength)));
-    var projection = lineStart + t * line;
-
-    return distance(point, projection);
+fn getBinCount(vec: vec4<i32>, component: i32) -> i32 {
+    if (component == 0) { return vec.x; }
+    if (component == 1) { return vec.y; }
+    if (component == 2) { return vec.z; }
+    return vec.w;
 }
 
 fn drawHistograms(pixelCoord: vec2<f32>) -> vec4<f32> {
@@ -265,19 +206,10 @@ fn drawHistograms(pixelCoord: vec2<f32>) -> vec4<f32> {
                 var maxCount = uniforms.densityHistogramMaxCount;
                 
                 if (maxCount > 0) {
-                    var vecIndex = binIndex / 4;
-                    var component = binIndex % 4;
-                    var vec = uniforms.densityHistogramBins[vecIndex];
-                    var binCount = 0;
-                    if (component == 0) {
-                        binCount = vec.x;
-                    } else if (component == 1) {
-                        binCount = vec.y;
-                    } else if (component == 2) {
-                        binCount = vec.z;
-                    } else {
-                        binCount = vec.w;
-                    }
+                    let vecIndex = binIndex / 4;
+                    let component = binIndex % 4;
+                    let vec = uniforms.densityHistogramBins[vecIndex];
+                    let binCount = getBinCount(vec, component);
                     var barHeight = (f32(binCount) / f32(maxCount)) * barAreaHeight;
                     var barBottom = barAreaHeight - barHeight;
                     
@@ -323,19 +255,10 @@ fn drawHistograms(pixelCoord: vec2<f32>) -> vec4<f32> {
                 var maxCount = uniforms.velocityHistogramMaxCount;
                 
                 if (maxCount > 0) {
-                    var vecIndex = binIndex / 4;
-                    var component = binIndex % 4;
-                    var vec = uniforms.velocityHistogramBins[vecIndex];
-                    var binCount = 0;
-                    if (component == 0) {
-                        binCount = vec.x;
-                    } else if (component == 1) {
-                        binCount = vec.y;
-                    } else if (component == 2) {
-                        binCount = vec.z;
-                    } else {
-                        binCount = vec.w;
-                    }
+                    let vecIndex = binIndex / 4;
+                    let component = binIndex % 4;
+                    let vec = uniforms.velocityHistogramBins[vecIndex];
+                    let binCount = getBinCount(vec, component);
                     var barHeight = (f32(binCount) / f32(maxCount)) * barAreaHeight;
                     var barBottom = barAreaHeight - barHeight;
                     
@@ -356,32 +279,70 @@ fn drawHistograms(pixelCoord: vec2<f32>) -> vec4<f32> {
 
 @fragment
 fn fs_main(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
-    var pixelCoord = fragCoord.xy;
+    let pixelCoord = fragCoord.xy;
 
     // histograms first (on top)
-    var histColor = drawHistograms(pixelCoord);
+    let histColor = drawHistograms(pixelCoord);
     if (histColor.a > 0.0) {
         return histColor;
     }
 
+    var finalColor: vec3<f32> = vec3<f32>(0.0);
+
     // pixel to world coords
-    var worldCoord = vec2<f32>(
+    let worldCoord = vec2<f32>(
         pixelCoord.x / uniforms.windowWidth * uniforms.simWidth,
         (uniforms.windowHeight - pixelCoord.y) / uniforms.windowHeight * uniforms.simHeight
     );
 
-    var color = sampleFluidField(worldCoord);
+    // convert world coords to integer grid indices
+    let simCoord = worldCoord / uniforms.cellSize;
+    let texCoord = vec2<i32>(i32(simCoord.x), i32(simCoord.y));
 
+    // guard against sampling outside the simulation domain
+    if (texCoord.x < 0 || texCoord.x >= uniforms.gridX ||
+        texCoord.y < 0 || texCoord.y >= uniforms.gridY) {
+        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    }
+
+    // load simulation data
+    let pressure = textureLoad(pressureTexture, texCoord, 0).r;
+    let density = textureLoad(densityTexture, texCoord, 0).r;
+    let solid = textureLoad(solidTexture, texCoord, 0).r;
+    let redInk = textureLoad(redInkTexture, texCoord, 0).r;
+    let greenInk = textureLoad(greenInkTexture, texCoord, 0).r;
+    let blueInk = textureLoad(blueInkTexture, texCoord, 0).r;
+
+    // draw based on target
+    if (solid > 0.5) {
+        // fluid cell
+        if (uniforms.drawTarget == 0) { // pressure
+            finalColor = mapValueToColor(pressure, uniforms.pressureMin, uniforms.pressureMax);
+        } else if (uniforms.drawTarget == 1) { // density
+            // draw smoke/density
+            finalColor = mapValueToGreyscale(density, 0.0, 1.0);
+        } else if (uniforms.drawTarget == 2) { // both
+            // draw pretty pressure + smoke
+            finalColor = mapValueToColor(pressure, uniforms.pressureMin, uniforms.pressureMax);
+            finalColor = finalColor - density * vec3<f32>(1.0, 1.0, 1.0);
+            finalColor = max(finalColor, vec3<f32>(0.0, 0.0, 0.0));
+        } else if (uniforms.drawTarget == 3) { // ink
+            // draw ink diffusion
+            finalColor = mapInkToColor(redInk, greenInk, blueInk);
+        }
+    } else {
+        // boundaries in grey
+        finalColor = vec3<f32>(0.47);
+    }
+
+    // draw velocity field
     if (uniforms.drawVelocities != 0) {
-        var velColor = drawVelocityField(worldCoord);
+        var velColor = drawVelocityField(worldCoord, texCoord.x, texCoord.y);
         // blend velocity lines
         if (velColor.a > 0.0) {
-            return vec4<f32>(
-                velColor.rgb * velColor.a + color.rgb * (1.0 - velColor.a),
-                1.0
-            );
+            finalColor = velColor.rgb * velColor.a + finalColor * (1.0 - velColor.a);
         }
     }
 
-    return color;
+    return vec4<f32>(finalColor, 1.0);
 }

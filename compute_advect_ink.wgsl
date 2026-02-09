@@ -2,17 +2,27 @@ struct SimParams {
     gridX: i32,
     gridY: i32,
     cellSize: f32,
-    timeStep: f32,
+    timestep: f32,
     gravity: f32,
     vorticity: f32,
     vorticityLen: f32,
     projectionIters: f32,
-    overrelaxationCoeff: f32,
     density: f32,
     windTunnelSide: i32,
     windTunnelStart: i32,
     windTunnelEnd: i32,
-    windTunnelVelocity: f32,
+    windTunnelSpeed: f32,
+    circleX: i32,
+    circleY: i32,
+    prevCircleX: i32,
+    prevCircleY: i32,
+    circleRadius: i32,
+    circleVelX: f32,
+    circleVelY: f32,
+    momentumTransferStrength: f32,
+    momentumTransferRadius: f32,
+    circleWasMoved: i32,
+    halfCellSize: f32,
     pad0: f32,
     pad1: f32,
     pad2: f32,
@@ -24,15 +34,12 @@ struct SimParams {
 @group(0) @binding(3) var solidTexture: texture_2d<f32>;
 @group(0) @binding(4) var newInkTexture: texture_storage_2d<rgba32float, write>;
 
-// Bilinear interpolation for RGBA field
 fn sampleInk(x: f32, y: f32, texture: texture_storage_2d<rgba32float, read>) -> vec4<f32> {
-    let halfCell = params.cellSize * 0.5;
+    let x_clamp = clamp(x, params.halfCellSize, (f32(params.gridX) * params.cellSize) - params.halfCellSize);
+    let y_clamp = clamp(y, params.halfCellSize, (f32(params.gridY) * params.cellSize) - params.halfCellSize);
 
-    let x_clamp = clamp(x, halfCell, (f32(params.gridX) * params.cellSize) - halfCell);
-    let y_clamp = clamp(y, halfCell, (f32(params.gridY) * params.cellSize) - halfCell);
-
-    let gx = (x_clamp - halfCell) / params.cellSize;
-    let gy = (y_clamp - halfCell) / params.cellSize;
+    let gx = (x_clamp - params.halfCellSize) / params.cellSize;
+    let gy = (y_clamp - params.halfCellSize) / params.cellSize;
 
     let i0 = i32(floor(gx));
     let j0 = i32(floor(gy));
@@ -53,48 +60,36 @@ fn sampleInk(x: f32, y: f32, texture: texture_storage_2d<rgba32float, read>) -> 
     return mix(v0, v1, fy);
 }
 
-
 @compute @workgroup_size(16, 16)
 fn advectInk(@builtin(global_invocation_id) id: vec3<u32>) {
     let i = i32(id.x);
     let j = i32(id.y);
 
-    // Copy ink for all cells initially (CPU line 322-324)
-    let ink = textureLoad(inkTexture, vec2<i32>(i, j));
-    var newInk = ink;
-
-    // CPU loops: for (int i = 1; i < gridX; i++) and (int j = 1; j < gridY; j++)
     if (i < 1 || i >= params.gridX || j < 1 || j >= params.gridY) {
-        textureStore(newInkTexture, vec2<i32>(i, j), newInk);
+        textureStore(newInkTexture, vec2<i32>(i, j), vec4<f32>(0.0));
         return;
     }
 
-    let halfCell = params.cellSize * 0.5;
-
-    // Check if we're in a solid cell (CPU line 358: s[idx(i, j)] != 0.0f)
+    var newInk = textureLoad(inkTexture, vec2<i32>(i, j));
     let solid = textureLoad(solidTexture, vec2<i32>(i, j), 0).r;
-    if (solid == 0.0f) {
-        textureStore(newInkTexture, vec2<i32>(i, j), newInk);
-        return;
+
+    if (solid != 0.0) {
+        // ink advection
+        let vel = textureLoad(velocityTexture, vec2<i32>(i, j));
+        let velRight = textureLoad(velocityTexture, vec2<i32>(i+1, j));
+        let velTop = textureLoad(velocityTexture, vec2<i32>(i, j+1));
+
+        let vel_x = (vel.x + velRight.x) * 0.5;
+        let vel_y = (vel.y + velTop.y) * 0.5;
+
+        let x0 = f32(i) * params.cellSize + params.halfCellSize;
+        let y0 = f32(j) * params.cellSize + params.halfCellSize;
+
+        let x1 = x0 - vel_x * params.timestep;
+        let y1 = y0 - vel_y * params.timestep;
+
+        newInk = sampleInk(x1, y1, inkTexture);
     }
-
-    // Sample velocity at cell center (same as density)
-    let vel = textureLoad(velocityTexture, vec2<i32>(i, j));
-    let velRight = textureLoad(velocityTexture, vec2<i32>(i+1, j));
-    let velTop = textureLoad(velocityTexture, vec2<i32>(i, j+1));
-
-    let velX = (vel.x + velRight.x) * 0.5;
-    let velY = (vel.y + velTop.y) * 0.5;
-
-    // Trace back from cell center
-    let x0 = f32(i) * params.cellSize + halfCell;
-    let y0 = f32(j) * params.cellSize + halfCell;
-
-    let x_back = x0 - velX * params.timeStep;
-    let y_back = y0 - velY * params.timeStep;
-
-    // Sample ink at traced-back position
-    newInk = sampleInk(x_back, y_back, inkTexture);
 
     textureStore(newInkTexture, vec2<i32>(i, j), newInk);
 }

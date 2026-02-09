@@ -1,9 +1,36 @@
-// Histogram Bin Counting Compute Shader
-// Counts values into histogram bins using min/max ranges
+struct SimParams {
+    gridX: i32,
+    gridY: i32,
+    cellSize: f32,
+    timestep: f32,
+    gravity: f32,
+    vorticity: f32,
+    vorticityLen: f32,
+    projectionIters: f32,
+    density: f32,
+    windTunnelSide: i32,
+    windTunnelStart: i32,
+    windTunnelEnd: i32,
+    windTunnelSpeed: f32,
+    circleX: i32,
+    circleY: i32,
+    prevCircleX: i32,
+    prevCircleY: i32,
+    circleRadius: i32,
+    circleVelX: f32,
+    circleVelY: f32,
+    momentumTransferStrength: f32,
+    momentumTransferRadius: f32,
+    circleWasMoved: i32,
+    halfCellSize: f32,
+    pad0: f32,
+    pad1: f32,
+    pad2: f32,
+};
 
 struct HistogramBins {
-    densityBins : array<atomic<i32>, 64>,   // Pressure histogram
-    velocityBins : array<atomic<i32>, 64>,   // Velocity magnitude histogram
+    densityBins : array<atomic<i32>, 64>,
+    velocityBins : array<atomic<i32>, 64>,
 }
 
 struct MinMaxUniform {
@@ -11,33 +38,9 @@ struct MinMaxUniform {
     pressMax : f32,
     velMin : f32,
     velMax : f32,
-};
+}
 
-struct UniformData {
-    drawTarget: i32,
-    gridX: i32,
-    gridY: i32,
-    cellSize: f32,
-    pressureMin: f32,
-    pressureMax: f32,
-    drawVelocities: i32,
-    velScale: f32,
-    windowWidth: f32,
-    windowHeight: f32,
-    simWidth: f32,
-    simHeight: f32,
-    disableHistograms: i32,
-    densityHistogramMin: f32,
-    densityHistogramMax: f32,
-    velocityHistogramMin: f32,
-    velocityHistogramMax: f32,
-    densityHistogramMaxCount: i32,
-    velocityHistogramMaxCount: i32,
-    densityHistogramBins: array<vec4<i32>, 16>,
-    velocityHistogramBins: array<vec4<i32>, 16>,
-};
-
-@group(0) @binding(0) var<uniform> uniforms : UniformData;
+@group(0) @binding(0) var<uniform> uniforms : SimParams;
 @group(0) @binding(1) var<uniform> minMaxUniform : MinMaxUniform;
 @group(0) @binding(2) var pressureTexture : texture_storage_2d<r32float, read>;
 @group(0) @binding(3) var velocityTexture : texture_storage_2d<rg32float, read>;
@@ -45,7 +48,7 @@ struct UniformData {
 @group(0) @binding(5) var<storage, read_write> bins : HistogramBins;
 
 @compute @workgroup_size(16, 16)
-fn main(@builtin(global_invocation_id) id : vec3<u32>) {
+fn computeHistogramBins(@builtin(global_invocation_id) id : vec3<u32>) {
     let gridX = u32(uniforms.gridX);
     let gridY = u32(uniforms.gridY);
     let i = id.x;
@@ -55,13 +58,12 @@ fn main(@builtin(global_invocation_id) id : vec3<u32>) {
         return;
     }
 
-    // Read solid value to check if fluid cell
     let solid = textureLoad(solidTexture, vec2<i32>(i32(i), i32(j))).r;
-    if (solid < 0.5) {
-        return;  // Skip boundary cells
+    if (solid == 0.0) { // only fluid cells
+        return;
     }
 
-    // Density histogram (pressure)
+    // density histogram (using pressure)
     let pressure = textureLoad(pressureTexture, vec2<i32>(i32(i), i32(j))).r;
     let pressDelta = minMaxUniform.pressMax - minMaxUniform.pressMin;
     if (pressDelta > 0.0001) {
@@ -71,7 +73,7 @@ fn main(@builtin(global_invocation_id) id : vec3<u32>) {
         atomicAdd(&bins.densityBins[u32(bin)], 1);
     }
 
-    // Velocity histogram (magnitude)
+    // velocity histogram
     let velocity = textureLoad(velocityTexture, vec2<i32>(i32(i), i32(j)));
     let velMagnitude = sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
     let velDelta = minMaxUniform.velMax - minMaxUniform.velMin;

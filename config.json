@@ -1,18 +1,19 @@
 {
     "pipeline": "device",
     "window": {
-        "baseSize": 800,
+        "baseSize": 900,
         "defaultWidth": 1200,
         "defaultHeight": 800
     },
     "simulation": {
-        "resolution": 300,
+        "resolution": 600,
         "timestep": 0.02,
-        "gravity": -10,
+        "gravity": 0,
         "fluidDensity": 1000.0,
+        "edges": 14,
         "projection": {
             "overrelaxationCoefficient": 1.0,
-            "iterations": 400
+            "iterations": 200
         },
         "vorticity": {
             "enabled": true,
@@ -21,18 +22,18 @@
         },
         "windTunnel": {
             "side": 0,
-            "startPosition": 0.4,
-            "endPosition": 0.5,
-            "velocity": 3.0
+            "startPosition": 0.45,
+            "endPosition": 0.55,
+            "velocity": 0
         },
         "circle": {
-            "radius": 15,
-            "momentumTransferCoeff": 0.25,
-            "momentumTransferRadius": 1.0
+            "radius": 0.05,
+            "momentumTransferStrength": 0.5,
+            "momentumTransferRadius": 1
         }
     },
     "rendering": {
-        "target": 2,
+        "target": 3,
         "showVelocityVectors": false,
         "velocityScale": 0.1,
         "disableHistograms": false

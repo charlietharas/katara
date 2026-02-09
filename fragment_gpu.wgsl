@@ -14,12 +14,13 @@ struct UniformData {
     disableHistograms: i32,
     densityHistogramMin: f32,
     densityHistogramMax: f32,
+    densityHistogramMaxCount: i32,
     velocityHistogramMin: f32,
     velocityHistogramMax: f32,
-    densityHistogramMaxCount: i32,
     velocityHistogramMaxCount: i32,
-    densityHistogramBins: array<vec4<i32>, 16>, // packed as vec4 for 16-byte alignment
-    velocityHistogramBins: array<vec4<i32>, 16>, // packed as vec4 for 16-byte alignment
+    pad0: i32,
+    densityHistogramBins: array<vec4<i32>, 16>,
+    velocityHistogramBins: array<vec4<i32>, 16>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: UniformData;
@@ -30,24 +31,36 @@ struct UniformData {
 @group(0) @binding(5) var solidTexture: texture_2d<f32>;
 @group(0) @binding(6) var inkTexture: texture_2d<f32>; // RGBA texture for GPU mode
 
-// TODO MAIN
-// I need better version control to address these problems, and for that
-// I may as well read through the diff and establish and understanding of the current
-// version
-// So __main__ priority is to do that: read and clean
-// TODO private variables prefixed with _ ?
-
+// TODO MAIN -- WIP ^_^
+// cleaned everything up with a fat commit,
+// now misc. todos and tinkering a little bit
+// also soon compile test program for browser
+// then more tinkering until it's production-rdy
 /*
-IDEA:
-- use piping from simult. gpu/cpu run to compare field min/max values
-- dump to csv and graph in notebook; see how system behavior diverges
+// TODO better window layout configuration (e.g. histograms scale with window size)
+
+// TODO LATER examine differences in pressure/velocity histograms between GPU/CPU
+- see plotting script
+- note: it seems like we can get better behavior by cranking Jacobi iterations up (1000)
+// TODO LATER swap to different pressure solver
+
+// TODO LATER -- up/right wind tunnel behaves differently from down/left
+likely because of the forward texture accesses (e.g. asymmetric +1) somewhere
+or it could be something else...
+- there are still some subtle bugs with gpu sim (bot left corner, circle detection)
+- and ofc the velocity field perturbations affecting the histogram limits when the circle is moved
+- and general poor behavior at high magnitudes (e.g. of velocity)--are we correctly checking fluids at boundaries
+  and is there any undefined behavior during advection?
+
+// TODO WAY LATER - extensions:
+- try to vibrate some obstacle proportional to an audio signal
+- measure system entropy and write a proof that the system does/does not
+  follow laws of fluid entropy
+- by the end, 4 different views: raw camera with model visualization, ink, current pretty view, combined
+ - combined: camera feed with model visualization rendered behind pretty fluid field
+
+// TODO WAY LATER lots of tiny memory problems in valgrind, investigate if some of these are my fault
 */
-
-
-// TODO examine differences in pressure/velocity histograms between GPU/CPU
-// -> but this is better deferred until developing better understanding of program ^
-// TODO undefined simulation behavior w/ GPU at medium velocity/gravity
-// TODO ring buffer for histogram optimization (plan in downloads)
 
 // color helpers
 fn mapValueToColor(value: f32, min: f32, max: f32) -> vec3<f32> {
@@ -107,19 +120,25 @@ fn distanceToLineSegment(point: vec2<f32>, lineStart: vec2<f32>, lineEnd: vec2<f
 }
 
 fn drawVelocityField(coord: vec2<f32>, gridX: i32, gridY: i32) -> vec4<f32> {
-    // Load solid and velocity for this cell
-    let solid = textureLoad(solidTexture, vec2<i32>(gridX, gridY), 0).r;
-    let velocity = textureLoad(velocityTexture, vec2<i32>(gridX, gridY), 0).rg;
+    // bounds
+    if (gridX < 0 || gridX >= uniforms.gridX ||
+        gridY < 0 || gridY >= uniforms.gridY) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
 
-    // Only show velocity in fluid cells (solid >= 0.5 means fluid)
-    if (solid < 0.5) {
+    // load simulation data
+    var solid = textureLoad(solidTexture, vec2<i32>(gridX, gridY), 0);
+    var velocity = textureLoad(velocityTexture, vec2<i32>(gridX, gridY), 0);
+
+    // only show velocity in fluid cells
+    if (solid.r <= 0.5) {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
 
     var velX = velocity.x;
     var velY = velocity.y;
-
-    // Normalize velocity to fixed length (matches CPU and GPU/CPU)
+    
+    // normalize velocity to fixed length
     var magnitude = sqrt(velX * velX + velY * velY);
     var normalizedLength = 0.3;
     if (magnitude > 0.001) {
@@ -127,7 +146,7 @@ fn drawVelocityField(coord: vec2<f32>, gridX: i32, gridY: i32) -> vec4<f32> {
         velY = (velY / magnitude) * normalizedLength;
     }
 
-    // Calculate line segment positions
+    // check if we're close enough to a velocity line to draw it
     var hLineStart = vec2<f32>(f32(gridX) * uniforms.cellSize, (f32(gridY) + 0.5) * uniforms.cellSize);
     var hLineEnd = vec2<f32>(hLineStart.x + velX * uniforms.velScale, hLineStart.y);
     var vLineStart = vec2<f32>((f32(gridX) + 0.5) * uniforms.cellSize, f32(gridY) * uniforms.cellSize);
@@ -136,23 +155,30 @@ fn drawVelocityField(coord: vec2<f32>, gridX: i32, gridY: i32) -> vec4<f32> {
     var lineWidth = 0.002;
     var color = vec3<f32>(0.0, 0.0, 0.0);
 
-    // Check distance to horizontal line
+    // check distance to horizontal line
     if (abs(velX) > 0.001) {
         var hDist = distanceToLineSegment(coord, hLineStart, hLineEnd);
         if (hDist < lineWidth) {
-            color = vec3<f32>(1.0, 1.0, 1.0);  // White
+            color = vec3<f32>(1.0, 1.0, 1.0);
         }
     }
 
-    // Check distance to vertical line
+    // check distance to vertical line
     if (abs(velY) > 0.001) {
         var vDist = distanceToLineSegment(coord, vLineStart, vLineEnd);
         if (vDist < lineWidth) {
-            color = vec3<f32>(1.0, 1.0, 1.0);  // White
+            color = vec3<f32>(1.0, 1.0, 1.0);
         }
     }
 
-    return vec4<f32>(color, 0.7);  // Alpha blending
+    return vec4<f32>(color, 0.5);
+}
+
+fn getBinCount(vec: vec4<i32>, component: i32) -> i32 {
+    if (component == 0) { return vec.x; }
+    if (component == 1) { return vec.y; }
+    if (component == 2) { return vec.z; }
+    return vec.w;
 }
 
 fn drawHistograms(pixelCoord: vec2<f32>) -> vec4<f32> {
@@ -203,16 +229,7 @@ fn drawHistograms(pixelCoord: vec2<f32>) -> vec4<f32> {
                     let vecIndex = binIndex / 4;
                     let component = binIndex % 4;
                     let vec = uniforms.densityHistogramBins[vecIndex];
-                    var binCount = 0;
-                    if (component == 0) {
-                        binCount = vec.x;
-                    } else if (component == 1) {
-                        binCount = vec.y;
-                    } else if (component == 2) {
-                        binCount = vec.z;
-                    } else {
-                        binCount = vec.w;
-                    }
+                    let binCount = getBinCount(vec, component);
                     let barHeight = (f32(binCount) / f32(maxCount)) * barAreaHeight;
                     let barBottom = barAreaHeight - barHeight;
 
@@ -261,16 +278,7 @@ fn drawHistograms(pixelCoord: vec2<f32>) -> vec4<f32> {
                     let vecIndex = binIndex / 4;
                     let component = binIndex % 4;
                     let vec = uniforms.velocityHistogramBins[vecIndex];
-                    var binCount = 0;
-                    if (component == 0) {
-                        binCount = vec.x;
-                    } else if (component == 1) {
-                        binCount = vec.y;
-                    } else if (component == 2) {
-                        binCount = vec.z;
-                    } else {
-                        binCount = vec.w;
-                    }
+                    let binCount = getBinCount(vec, component);
                     let barHeight = (f32(binCount) / f32(maxCount)) * barAreaHeight;
                     let barBottom = barAreaHeight - barHeight;
 
@@ -301,53 +309,54 @@ fn fs_main(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
 
     var finalColor: vec3<f32> = vec3<f32>(0.0);
 
-    // Map screen pixel to simulation world coords (mirrors CPU shader path)
+    // pixel to world coords
     let worldCoord = vec2<f32>(
         pixelCoord.x / uniforms.windowWidth * uniforms.simWidth,
         (uniforms.windowHeight - pixelCoord.y) / uniforms.windowHeight * uniforms.simHeight
     );
 
-    // Convert world coords to integer grid indices
+    // convert world coords to integer grid indices
     let simCoord = worldCoord / uniforms.cellSize;
     let texCoord = vec2<i32>(i32(simCoord.x), i32(simCoord.y));
 
-    // Guard against sampling outside the simulation domain
+    // guard against sampling outside the simulation domain
     if (texCoord.x < 0 || texCoord.x >= uniforms.gridX ||
         texCoord.y < 0 || texCoord.y >= uniforms.gridY) {
         return vec4<f32>(0.0, 0.0, 0.0, 1.0);
     }
 
-    // Sample textures using grid indices
+    // load simulation data
     let pressure = textureLoad(pressureTexture, texCoord, 0).r;
     let density = textureLoad(densityTexture, texCoord, 0).r;
     let velocity = textureLoad(velocityTexture, texCoord, 0).rg;
     let solid = textureLoad(solidTexture, texCoord, 0).r;
-
-    // Sample RGBA ink texture directly
     let ink = textureLoad(inkTexture, texCoord, 0);
 
-    // Draw based on target
-    if (uniforms.drawTarget == 0) { // pressure
-        finalColor = mapValueToColor(pressure, uniforms.pressureMin, uniforms.pressureMax);
-    } else if (uniforms.drawTarget == 1) { // density
-        finalColor = mapValueToGreyscale(density, 0.0, 1.0);
-    } else if (uniforms.drawTarget == 2) { // both
-        // draw pretty pressure + smoke (matches fragment.wgsl)
-        finalColor = mapValueToColor(pressure, uniforms.pressureMin, uniforms.pressureMax);
-        finalColor = finalColor - density * vec3<f32>(1.0, 1.0, 1.0);
-        finalColor = max(finalColor, vec3<f32>(0.0, 0.0, 0.0));
-    } else if (uniforms.drawTarget == 3) { // ink - use RGBA directly
-        finalColor = ink.rgb;
-    }
-
-    if (solid < 0.5) {
+    // draw based on target
+    if (solid > 0.5) {
+        // fluid cell
+        if (uniforms.drawTarget == 0) { // pressure
+            finalColor = mapValueToColor(pressure, uniforms.pressureMin, uniforms.pressureMax);
+        } else if (uniforms.drawTarget == 1) { // density
+            // draw smoke/density
+            finalColor = mapValueToGreyscale(density, 0.0, 1.0);
+        } else if (uniforms.drawTarget == 2) { // both
+            // draw pretty pressure + smoke
+            finalColor = mapValueToColor(pressure, uniforms.pressureMin, uniforms.pressureMax);
+            finalColor = finalColor - density * vec3<f32>(1.0, 1.0, 1.0);
+            finalColor = max(finalColor, vec3<f32>(0.0, 0.0, 0.0));
+        } else if (uniforms.drawTarget == 3) { // ink
+            finalColor = ink.rgb;
+        }
+    } else {
+        // boundaries in grey
         finalColor = vec3<f32>(0.47);
     }
 
-    // Draw velocity vectors if enabled
+    // draw velocity field
     if (uniforms.drawVelocities != 0) {
         var velColor = drawVelocityField(worldCoord, texCoord.x, texCoord.y);
-        // Blend velocity lines
+        // blend velocity lines
         if (velColor.a > 0.0) {
             finalColor = velColor.rgb * velColor.a + finalColor * (1.0 - velColor.a);
         }

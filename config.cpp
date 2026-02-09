@@ -9,7 +9,7 @@ using json = nlohmann::json;
 Config ConfigLoader::loadConfig(const std::string& filename) {
     std::ifstream file(filename);
     if (!file.is_open()) {
-        std::cerr << "Error: could not open config file: " << filename << std::endl;
+        std::cerr << "ERR opening config file: " << filename << std::endl;
         exit(1);
     }
 
@@ -63,6 +63,7 @@ SimulationConfig ConfigLoader::loadSimulationConfig(const json& j) {
     config.timestep = j.value("timestep", 1.0f / 60.0f);
     config.gravity = j.value("gravity", 0.0f);
     config.fluidDensity = j.value("fluidDensity", 1000.0f);
+    config.edges = j.value("edges", 15);
 
     if (j.contains("projection")) {
         config.projection = loadProjectionConfig(j["projection"]);
@@ -121,8 +122,8 @@ WindTunnelConfig ConfigLoader::loadWindTunnelConfig(const json& j) {
 
 CircleConfig ConfigLoader::loadCircleConfig(const json& j) {
     CircleConfig config;
-    config.radius = j.value("radius", 10);
-    config.momentumTransferCoeff = j.value("momentumTransferCoeff", 0.25f);
+    config.radius = j.value("radius", 0.1f);
+    config.momentumTransferStrength = j.value("momentumTransferStrength", 0.25f);
     config.momentumTransferRadius = j.value("momentumTransferRadius", 1.0f);
     return config;
 }
@@ -131,7 +132,7 @@ std::string ConfigLoader::readFile(const char* filename) {
     std::string path = std::string("../") + filename; // NOTE assuming run from build/ or debug/ !
     std::ifstream file(path);
     if (!file.is_open()) {
-        std::cerr << "Error: could not open file: " << path << std::endl;
+        std::cerr << "ERR opening file: " << path << std::endl;
         return "";
     }
 

@@ -5,6 +5,7 @@
 #include <SDL2/SDL.h>
 #include "irenderer.h"
 #include "config.h"
+#include "wgpu_boilerplate.h"
 #include <vector>
 #include <string>
 #include <fstream>
@@ -13,7 +14,8 @@ struct alignas(16) Vec4Int {
     int x, y, z, w;
 };
 
-struct UniformData {
+// RENDER PASS UNIFORM
+struct alignas(16) UniformData {
     int drawTarget; // 0=pressure, 1=smoke, 2=both, 3=ink
     int gridX;
     int gridY;
@@ -29,93 +31,33 @@ struct UniformData {
     int disableHistograms; // 0=enabled, 1=disabled
     float densityHistogramMin;
     float densityHistogramMax;
+    int densityHistogramMaxCount;
     float velocityHistogramMin;
     float velocityHistogramMax;
-    int densityHistogramMaxCount;
     int velocityHistogramMaxCount;
-    Vec4Int densityHistogramBins[16]; // packed as vec4 for 16-byte alignment
-    Vec4Int velocityHistogramBins[16]; // packed as vec4 for 16-byte alignment
+    int pad0;
+    Vec4Int densityHistogramBins[16];
+    Vec4Int velocityHistogramBins[16];
 };
 
-class WebGPURenderer : public IRenderer {
+class GPURenderer : public WGPUBoilerplate, public IRenderer {
 public:
-    WebGPURenderer(SDL_Window* window, const Config& config);
-    ~WebGPURenderer();
+    static constexpr WGPUTextureUsageFlags TEXTURE_BINDING_FLAGS = WGPUTextureUsage_CopyDst | WGPUTextureUsage_TextureBinding;
+    static constexpr int HISTOGRAM_FRAME_INTERVAL = 1; // compute histograms every n frames
+
+    GPURenderer(SDL_Window* window, const Config& config);
+    ~GPURenderer();
 
     bool init(const Config& config) override;
-    void cleanup() override {}
     void render(const ISimulator& simulator) override;
-
-    WGPUDevice getDevice() const { return device; }
-    WGPUQueue getQueue() const { return queue; }
-    bool isInitialized() const { return initialized; }
-
 private:
     SDL_Window* window;
-    int windowWidth, windowHeight;
-
-    // WebGPU objects
-    WGPUInstance instance;
-    WGPUSurface surface;
-    WGPUAdapter adapter;
-    WGPUDevice device;
-    WGPUQueue queue;
-    WGPUTextureFormat surfaceFormat;
-    // for cpu sim
-    WGPURenderPipeline renderPipeline;
-    WGPUBindGroup uniformBindGroup;
-    WGPUBindGroupLayout bindGroupLayout;
-    // for gpu sim
-    WGPURenderPipeline renderPipelineGPU;
-    WGPUBindGroup uniformBindGroupGPU;
-    WGPUBindGroupLayout bindGroupLayoutGPU;
-    // for pressure min/max compute
-    WGPUComputePipeline computePipelineMinMax;
-    WGPUBindGroup bindGroupMinMax;
-    WGPUBindGroupLayout bindGroupLayoutMinMax;
-  
-    // buffers and textures
-    WGPUBuffer uniformBuffer;
-    WGPUTexture pressureTexture;
-    WGPUTexture densityTexture;
-    WGPUTexture velocityTexture;
-    WGPUTexture solidTexture;
-    WGPUTexture redInkTexture;
-    WGPUTexture greenInkTexture;
-    WGPUTexture blueInkTexture;
-    WGPUSampler sampler;
-
-    // simulation data textures
-    WGPUTextureView pressureTextureView;
-    WGPUTextureView pressureTextureStorageView;
-    WGPUTextureView densityTextureView;
-    WGPUTextureView velocityTextureView;
-    WGPUTextureView solidTextureView;
-    WGPUTextureView solidTextureStorageView;
-    WGPUTextureView redInkTextureView;
-    WGPUTextureView greenInkTextureView;
-    WGPUTextureView blueInkTextureView;
-
-    // unified min/max buffers (pressure + velocity, 4 floats total)
-    WGPUBuffer minMaxBuffer;
-    WGPUBuffer minMaxStagingBuffer;
-
-    // histogram bin buffer
-    WGPUBuffer histogramBinBuffer;            // 128 ints: 64 density + 64 velocity bins
-    WGPUBuffer histogramStagingBuffer;        // Staging for histogram bin readback
-
-    // histogram compute pipeline (for bin counting only)
-    WGPUComputePipeline computePipelineHistogramBins;
-    WGPUBindGroupLayout bindGroupLayoutHistogramBins;
-    WGPUBindGroup bindGroupHistogramBins;
-
-    // small uniform buffer for passing min/max to histogram bin shader
-    WGPUBuffer minMaxUniformBuffer;
+    int windowWidth = 0, windowHeight = 0;
 
     // render state
     UniformData uniformData;
-    bool initialized;
-    bool usingGPUTextures;
+    bool initialized = false;
+    bool usingGPUTextures = false;
 
     // cached config values
     int drawTarget;
@@ -123,45 +65,71 @@ private:
     bool disableHistograms;
     float velocityScale;
 
-    // histogram state
-    int frameCount;
-    std::vector<int> densityHistogramBins;
-    float densityHistogramMin, densityHistogramMax;
-    int densityHistogramMaxCount;
-    std::vector<int> velocityHistogramBins;
-    float velocityHistogramMin, velocityHistogramMax;
-    int velocityHistogramMaxCount;
+    // histogram state (CPU/HYBRID)
+    bool minMaxReadPending = false;
+    int frameCount = 0;
+    std::vector<int> densityHistogramBins = std::vector<int>(IRenderer::HISTOGRAM_BINS, 0);
+    float densityHistogramMin = -1.0f;
+    float densityHistogramMax = 1.0f;
+    int densityHistogramMaxCount = 0;
+    std::vector<int> velocityHistogramBins = std::vector<int>(IRenderer::HISTOGRAM_BINS, 0);
+    float velocityHistogramMin = 0.0f;
+    float velocityHistogramMax = 1.0f;
+    int velocityHistogramMaxCount = 0;
 
-    // unified min/max readback state
-    float pendingPressureMinMax[2];  // pressMin, pressMax
-    float pendingVelocityMinMax[2];  // velMin, velMax
-    bool minMaxReadPending;
-    bool minMaxMapInFlight;
+    // webgpu core
+    WGPUInstance instance = nullptr;
+    WGPUSurface surface = nullptr;
+    WGPUAdapter adapter = nullptr;
+    WGPUTextureFormat surfaceFormat;
+    WGPUBuffer uniformBuffer = nullptr;
+    WGPUSampler sampler = nullptr;
+    // for cpu sim
+    WGPURenderPipeline renderPipeline = nullptr;
+    WGPUBindGroup uniformBindGroup = nullptr;
+    WGPUBindGroupLayout bindGroupLayout = nullptr;
+    // for gpu sim
+    WGPURenderPipeline renderPipelineGPU = nullptr;
+    WGPUBindGroup uniformBindGroupGPU = nullptr;
+    WGPUBindGroupLayout bindGroupLayoutGPU = nullptr;
 
-    // histogram readback state
-    int pendingHistogramBins[128];            // 64 density + 64 velocity bins
-    bool histogramBinsReadPending;
-    bool histogramMapInFlight;
+    // textures and views
+    DECLARE_TEXTURE_AND_VIEW(pressure)
+    DECLARE_STORAGE_VIEW(pressure)
+    DECLARE_TEXTURE_AND_VIEW(density)
+    DECLARE_TEXTURE_AND_VIEW(velocity)
+    DECLARE_TEXTURE_AND_VIEW(solid)
+    DECLARE_STORAGE_VIEW(solid)
+    DECLARE_TEXTURE_AND_VIEW(redInk)
+    DECLARE_TEXTURE_AND_VIEW(greenInk)
+    DECLARE_TEXTURE_AND_VIEW(blueInk)
 
-    // initialization methods
-    bool initWebGPU();
+    // main render loop
+    void updateUniformBufferRender(const ISimulator& simulator);
+    void updateTextures(const ISimulator& simulator);
+    void computeHistograms(const ISimulator& simulator);
+
+    // gpu resource initialization helpers
+    struct RenderPipelineResult {
+        WGPURenderPipeline pipeline = nullptr;
+        WGPUBindGroupLayout bindGroupLayout = nullptr;
+    };
+    bool createTexture(const TextureDesc& desc, WGPUTexture& texture, WGPUTextureView& view);
+    void copyTextureHostToDevice(WGPUTexture texture, const float* data, size_t dataSize, int gridX, int gridY, int channelCount = 1);
+    WGPUSurfaceConfiguration createSurfaceConfiguration();
+    WGPURenderPassColorAttachment createRenderPassColorAttachment(WGPUTextureView view, WGPULoadOp loadOp, WGPUStoreOp storeOp, WGPUColor clearValue);
+    WGPURenderPassDescriptor createRenderPassDescriptor(WGPURenderPassColorAttachment* colorAttachment);
+    WGPUTextureViewDescriptor createTextureViewDescriptor(WGPUTextureFormat format);
+    WGPUBindGroupLayout createRenderBindGroupLayout(int textureCount, WGPUShaderStage visibility, size_t uniformSize);
+    RenderPipelineResult createRenderPipelineWithLayout(const char* vertexShaderFile, const char* fragmentShaderFile, const char* fragmentEntry, WGPUTextureFormat surfaceFormat, int textureCount, WGPUShaderStage visibility, size_t uniformSize);
+    WGPUBindGroupLayoutEntry createSamplerLayoutEntry(int binding, WGPUShaderStage visibility);
+    WGPUBindGroupEntry createSamplerBindGroupEntry(int binding, WGPUSampler sampler);
+
+    // gpu resource instantiation boilerplate
     bool initDevice();
     bool initSurface();
     bool initRenderPipeline();
     bool initBuffers();
-    bool initTextures();
-
-    // render methods
-    void updateUniformData(const ISimulator& simulator);
-    void updateSimulationTextures(const ISimulator& simulator);
-    void computeHistograms(const ISimulator& simulator);
-    void dispatchHistogramBinCounting();
-    void createRenderPass();
-    void drawFrame();
-
-    // utilities
-    WGPUShaderModule loadShader(const char* source);
-    void releaseResources();
 };
 
 #endif

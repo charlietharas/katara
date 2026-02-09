@@ -5,71 +5,45 @@
 #include "isimulator.h"
 #include "config.h"
 
-class FluidSimulator : public ISimulator {
+class Simulator : public ISimulator {
 public:
-    FluidSimulator(const Config& config);
-    ~FluidSimulator();
+    Simulator(const Config& config);
+    ~Simulator();
 
-    void init(const Config& config, const ImageData* imageData = nullptr) override;
+    bool init(const Config& config, const ImageData* imageData = nullptr, float aspectRatio = 1.5f) override;
     void update() override;
 
-    // mouse interaction methods
-    void onMouseDown(int gridX, int gridY) override;
-    void onMouseDrag(int gridX, int gridY) override;
-    void onMouseUp() override;
-    bool isInsideCircle(int i, int j);
+    void moveCircle(int newGridX, int newGridY) override;
 
-    int getGridX() const override { return gridX; }
-    int getGridY() const override { return gridY; }
-    float getCellSize() const override { return cellHeight; }
-    float getDomainWidth() const override { return domainWidth; }
-    float getDomainHeight() const override { return domainHeight; }
-  
+    // fields
     const std::vector<float>& getVelocityX() const override { return x; }
     const std::vector<float>& getVelocityY() const override { return y; }
     const std::vector<float>& getPressure() const override { return p; }
     const std::vector<float>& getDensity() const override { return d; }
     const std::vector<float>& getSolid() const override { return s; }
-    const std::vector<float>& getRedInk() const override { return r_ink; }
-    const std::vector<float>& getGreenInk() const override { return g_ink; }
-    const std::vector<float>& getBlueInk() const override { return b_ink; }
-    bool isInkInitialized() const override { return inkInitialized; }
-
-    // circle state access
-    int getCircleX() const override { return circleX; }
-    int getCircleY() const override { return circleY; }
-    int getCircleRadius() const override { return circleRadius; }
+    const std::vector<float>& getRedInk() const override { return inkRed; }
+    const std::vector<float>& getGreenInk() const override { return inkGreen; }
+    const std::vector<float>& getBlueInk() const override { return inkBlue; }
 
 private:
+    // config for reference in init
+    const Config* config = nullptr;
+
     // grid params
     int resolution;
-    int gridX, gridY;
-    float domainHeight, domainWidth;
-    float cellHeight, halfCellHeight;
-    float xHeight, yHeight;
+    float halfCellSize = 0.0f;
 
     // sim params
-    float timeStep;
-    float gravity;
+    float timestep;
     float density;
-    float pressureMultiplier;
     float overrelaxationCoefficient;
     int projectionIters;
     bool doVorticity;
     float vorticity;
     float vorticityLen;
 
-    // wind tunnel state
-    float windTunnelStart; // 0-1 (pass this one in)
-    float windTunnelEnd;
-    int windTunnelStartCell; // reference; calculated in init
-    int windTunnelEndCell;
-    int pipeHeight;
-    int windTunnelSide; // 0, 1, 2, 3 = left, top, bottom, right; -1 = disabled
-    float windTunnelVelocity; // magnitude; direction inferred
-
     // momentum transfer parameters
-    float momentumTransferCoeff;
+    float momentumTransferStrength;
     float momentumTransferRadius;
 
     std::vector<float> x; // x vel field
@@ -80,30 +54,19 @@ private:
 
     // advection util arrays
     std::vector<float> newX, newY, newD;
-    std::vector<float> new_r_ink, new_g_ink, new_b_ink;
+    std::vector<float> newInkRed, newInkGreen, newInkBlue;
 
     // ink diffusion
-    std::vector<float> r_ink, g_ink, b_ink;
-    bool inkInitialized;
-
-    // configuration
-    bool domainSetByImage;
-
-    // circle state
-    int circleX, circleY;
-    int prevCircleX, prevCircleY;
-    float circleVelX, circleVelY;
-    int circleRadius;
-    bool isDragging;
+    std::vector<float> inkRed, inkGreen, inkBlue;
 
     // circle movement
-    void setupCircle();
-    void moveCircle(int newGridX, int newGridY);
     void updateCircle(int prevX, int prevY, int newX, int newY);
     void enforceBoundaryConditions();
     void circleMomentumTransfer();
-    void setupEdges();
     void updateCircleAreas(int prevX, int prevY, int newX, int newY);
+
+    // image initialization helpers
+    void initializeFromImageData(const Config& config, const ImageData* imageData);
 
     // sim steps
     void integrate();
@@ -119,9 +82,6 @@ private:
     float neighborhoodX(int i, int j);
     float neighborhoodY(int i, int j);
     float sample(float i, float j, int type);
-
-    // image initialization helpers
-    void initializeFromImageData(const Config& config, const ImageData* imageData);
 
     // misc helpers
     int idx(int i, int j) const { return j * gridX + i; }
