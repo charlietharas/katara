@@ -1,0 +1,28 @@
+# Build artifacts
+build/CMakeFiles/
+build/CMakeCache.txt
+build/cmake_install.cmake
+build/Makefile
+build/*.wasm
+build/*.js
+build/*.data
+src/web/*.wasm
+src/web/hand_tracking.js
+
+# Node modules
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

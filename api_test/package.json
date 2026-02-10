@@ -1,0 +1,16 @@
+{
+  "name": "hand-tracking-wasm",
+  "version": "1.0.0",
+  "description": "Web-based hand tracking with MediaPipe and WASM",
+  "type": "module",
+  "scripts": {
+    "build:wasm": "cd build && emcmake cmake . && emmake make",
+    "build:all": "npm run build:wasm",
+    "serve": "python3 server.py",
+    "dev": "npm run build:all && npm run serve"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "^0.10.21"
+  },
+  "devDependencies": {}
+}

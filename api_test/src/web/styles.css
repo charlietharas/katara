@@ -1,0 +1,132 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    background: #1a1a2e;
+    color: #eee;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    padding: 20px;
+}
+
+.container {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    max-width: 900px;
+    width: 100%;
+}
+
+.canvas-container {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 4/3;
+    background: #0f0f1a;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+#canvas {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+}
+
+.controls {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    background: #16213e;
+    padding: 16px 24px;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+    flex-wrap: wrap;
+}
+
+button {
+    padding: 10px 20px;
+    font-size: 14px;
+    font-weight: 600;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+#startButton {
+    background: #4ade80;
+    color: #064e3b;
+}
+
+#stopButton {
+    background: #f87171;
+    color: #7f1d1d;
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+button:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+button:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.status {
+    flex: 1;
+    text-align: center;
+    font-size: 14px;
+    color: #94a3b8;
+    min-width: 200px;
+}
+
+.performance {
+    display: flex;
+    gap: 20px;
+    font-size: 12px;
+    color: #64748b;
+}
+
+.performance span {
+    white-space: nowrap;
+}
+
+.info {
+    text-align: center;
+    font-size: 12px;
+    color: #475569;
+    line-height: 1.6;
+}
+
+.info p {
+    margin: 4px 0;
+}
+
+/* Responsive adjustments */
+@media (max-width: 600px) {
+    .controls {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .status {
+        text-align: center;
+    }
+
+    .performance {
+        justify-content: center;
+    }
+}
