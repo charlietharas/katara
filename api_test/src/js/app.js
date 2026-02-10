@@ -49,7 +49,8 @@ class HandTrackingApp {
             this.updateStatus('Ready');
 
             // Enable start button
-            document.getElementById('startButton').disabled = false;
+            const startBtn = document.getElementById('startButton');
+            if (startBtn) startBtn.disabled = false;
 
             console.log('HandTrackingApp initialized');
 
@@ -71,10 +72,8 @@ class HandTrackingApp {
             this.lastTime = performance.now();
 
             // Update UI
-            document.getElementById('startButton').disabled = true;
-            document.getElementById('stopButton').disabled = false;
-
-            this.updateStatus('Running');
+            const startBtn = document.getElementById('startButton');
+            if (startBtn) startBtn.disabled = true;
 
             // Start processing loop
             this.processLoop();
@@ -98,11 +97,8 @@ class HandTrackingApp {
         }
 
         // Update UI
-        document.getElementById('startButton').disabled = false;
-        document.getElementById('stopButton').disabled = true;
-
-        this.updateStatus('Stopped');
-        this.updatePerformance(0, 0, 0);
+        const startBtn = document.getElementById('startButton');
+        if (startBtn) startBtn.disabled = false;
     }
 
     /**
@@ -160,16 +156,14 @@ class HandTrackingApp {
      * Set up UI event handlers.
      */
     setupUI() {
-        document.getElementById('startButton').disabled = true;
-        document.getElementById('stopButton').disabled = true;
-
-        document.getElementById('startButton').addEventListener('click', () => {
-            this.start();
-        });
-
-        document.getElementById('stopButton').addEventListener('click', () => {
-            this.stop();
-        });
+        const startBtn = document.getElementById('startButton');
+        if (startBtn) {
+            startBtn.disabled = true;
+            startBtn.addEventListener('click', () => {
+                startBtn.disabled = true;
+                this.start();
+            });
+        }
 
         // Handle window resize
         window.addEventListener('resize', () => {

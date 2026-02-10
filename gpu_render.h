@@ -5,7 +5,7 @@
 #include <SDL2/SDL.h>
 #include "irenderer.h"
 #include "config.h"
-#include "boilerplate.h"
+#include "wgpu_boilerplate.h"
 #include <vector>
 #include <string>
 #include <fstream>

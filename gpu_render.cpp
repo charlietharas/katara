@@ -1,4 +1,4 @@
-#include "boilerplate.h"
+#include "wgpu_boilerplate.h"
 #include "gpu_render.h"
 #include "gpu_sim.h"
 #include <sdl2webgpu.h>

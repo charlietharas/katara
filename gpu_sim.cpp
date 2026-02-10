@@ -1,4 +1,4 @@
-#include "boilerplate.h"
+#include "wgpu_boilerplate.h"
 #include "gpu_sim.h"
 #include <iostream>
 #include <cstring>

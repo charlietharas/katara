@@ -32,10 +32,10 @@ struct UniformData {
 @group(0) @binding(6) var inkTexture: texture_2d<f32>; // RGBA texture for GPU mode
 
 // TODO MAIN -- WIP ^_^
-// still misc tasks/cleaning up a bit
-// then tidy up test program for browser
-// then integrate fully into browser app
-// then more tinkering until release
+// cleaned everything up with a fat commit,
+// now misc. todos and tinkering a little bit
+// also soon compile test program for browser
+// then more tinkering until it's production-rdy
 /*
 // TODO better window layout configuration (e.g. histograms scale with window size)
 

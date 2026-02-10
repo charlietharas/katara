@@ -27,7 +27,7 @@
             "velocity": 0
         },
         "circle": {
-            "radius": 0.02,
+            "radius": 0.05,
             "momentumTransferStrength": 0.5,
             "momentumTransferRadius": 1
         }
