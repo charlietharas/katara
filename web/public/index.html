@@ -3,12 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>katara</title>
+    <title>Katara - Fluid Simulation with Hand Tracking</title>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <main>
+    <div class="container">
         <canvas id="canvas"></canvas>
-    </main>
-    <script type="module" src="katara.js"></script>
+        <div class="info">
+            <h1>Katara</h1>
+            <p>Show your right hand to the camera to control the circle with your index finger</p>
+            <p id="status">Loading...</p>
+        </div>
+    </div>
+    <script src="katara.js"></script>
+    <script type="module" src="app.js"></script>
 </body>
 </html>

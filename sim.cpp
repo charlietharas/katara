@@ -1,7 +1,9 @@
 #include "sim.h"
 #include <cmath>
 #include <algorithm>
+#ifndef __EMSCRIPTEN__
 #include <omp.h>
+#endif
 #include <iostream>
 #include <SDL2/SDL.h>
 

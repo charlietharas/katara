@@ -1,4 +1,4 @@
-#include "wgpu_boilerplate.h"
+#include "boilerplate.h"
 #include "gpu_render.h"
 #include "gpu_sim.h"
 #include <sdl2webgpu.h>
@@ -10,6 +10,9 @@
 #include <cstring>
 #include <cstdint>
 #include <limits>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 
 // CONSTRUCTOR :250
 
@@ -218,7 +221,7 @@ GPURenderer::RenderPipelineResult GPURenderer::createRenderPipelineWithLayout(
     
     // vertex state
     pipelineDesc.vertex.module = vertexShader;
-    pipelineDesc.vertex.entryPoint = "vs_main";
+    pipelineDesc.vertex.entryPoint = WGPU_CSTR("vs_main");
     pipelineDesc.vertex.constantCount = 0;
     pipelineDesc.vertex.constants = nullptr;
     pipelineDesc.vertex.bufferCount = 0;
@@ -243,7 +246,7 @@ GPURenderer::RenderPipelineResult GPURenderer::createRenderPipelineWithLayout(
     
     WGPUFragmentState fragmentState = {};
     fragmentState.module = fragmentShader;
-    fragmentState.entryPoint = fragmentEntry;
+    fragmentState.entryPoint = WGPU_CSTR(fragmentEntry);
     fragmentState.constantCount = 0;
     fragmentState.constants = nullptr;
     fragmentState.targetCount = 1;
@@ -289,7 +292,11 @@ GPURenderer::GPURenderer(SDL_Window* window, const Config& config)
 GPURenderer::~GPURenderer() {
     if (!initialized) return;
 
+#ifdef WEBGPU_BACKEND_EMDAWNWEBGPU
+    if (instance) wgpuInstanceProcessEvents(instance);
+#else
     if (device) wgpuDeviceTick(device);
+#endif
 
     // textures
     RELEASE_TEXTURE_WITH_STORAGE(pressure)
@@ -321,8 +328,13 @@ GPURenderer::~GPURenderer() {
 // MAIN RENDER LOOP
 bool GPURenderer::init(const Config& config) {
     RETURN_FALSE_IF_FAIL(initDevice())
-    
+
+#ifdef __EMSCRIPTEN__
+    // Browser WebGPU prefers rgba8unorm for canvases.
+    surfaceFormat = WGPUTextureFormat_RGBA8Unorm;
+#else
     surfaceFormat = WGPUTextureFormat_BGRA8Unorm;
+#endif
     auto surfaceConfig = createSurfaceConfiguration();
     wgpuSurfaceConfigure(surface, &surfaceConfig);
     
@@ -394,8 +406,10 @@ void GPURenderer::render(const ISimulator& simulator) {
     WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, &cmdBufferDesc);
     wgpuQueueSubmit(queue, 1, &commands);
 
-    // draw
+    // On Emscripten/WebGPU, presentation is handled by the browser frame loop.
+#ifndef __EMSCRIPTEN__
     wgpuSurfacePresent(surface);
+#endif
 
     // release surface texture
     if (surfaceTexture.texture) {
@@ -644,6 +658,29 @@ bool GPURenderer::initDevice() {
 
     UserData userData;
 
+    WGPURequestAdapterOptions adapterOptions = {};
+    adapterOptions.nextInChain = nullptr;
+    adapterOptions.compatibleSurface = surface;
+    adapterOptions.powerPreference = WGPUPowerPreference_HighPerformance;
+
+#ifdef WEBGPU_BACKEND_EMDAWNWEBGPU
+    auto onAdapterRequestEnded = [](WGPURequestAdapterStatus status, WGPUAdapter adapter, WGPUStringView message, void* userdata1, void* userdata2) {
+        (void)userdata2;
+        UserData* userData = static_cast<UserData*>(userdata1);
+        if (status == WGPURequestAdapterStatus_Success) {
+            userData->adapter = adapter;
+        } else {
+            std::cerr << "ERR getting WebGPU adapter: " << std::string(message.data, message.length) << std::endl;
+        }
+        userData->requestEnded = true;
+    };
+
+    WGPURequestAdapterCallbackInfo adapterCallbackInfo = {};
+    adapterCallbackInfo.mode = WGPUCallbackMode_AllowProcessEvents;
+    adapterCallbackInfo.callback = onAdapterRequestEnded;
+    adapterCallbackInfo.userdata1 = &userData;
+    wgpuInstanceRequestAdapter(instance, &adapterOptions, adapterCallbackInfo);
+#else
     auto onAdapterRequestEnded = [](WGPURequestAdapterStatus status, WGPUAdapter adapter, char const* message, void* userdata) {
         UserData* userData = static_cast<UserData*>(userdata);
         if (status == WGPURequestAdapterStatus_Success) {
@@ -654,16 +691,18 @@ bool GPURenderer::initDevice() {
         userData->requestEnded = true;
     };
 
-    WGPURequestAdapterOptions adapterOptions = {};
-    adapterOptions.nextInChain = nullptr;
-    adapterOptions.compatibleSurface = surface;
-    adapterOptions.powerPreference = WGPUPowerPreference_HighPerformance;
-
     wgpuInstanceRequestAdapter(instance, &adapterOptions, onAdapterRequestEnded, &userData);
+#endif
 
     while (!userData.requestEnded) {
-        // wait for adapter request to complete
-        // this is bad :)
+#ifdef WEBGPU_BACKEND_EMDAWNWEBGPU
+        // Keep pumping callback events on web builds while waiting.
+        wgpuInstanceProcessEvents(instance);
+#endif
+#ifdef __EMSCRIPTEN__
+        // Yield so the browser main thread stays responsive.
+        emscripten_sleep(0);
+#endif
     }
 
     if (!userData.adapter) {
@@ -680,6 +719,33 @@ bool GPURenderer::initDevice() {
 
     DeviceData deviceData;
 
+    WGPUDeviceDescriptor deviceDesc = {};
+    deviceDesc.nextInChain = nullptr;
+
+#ifdef WEBGPU_BACKEND_EMDAWNWEBGPU
+    // error callback is part of device descriptor in emdawnwebgpu
+    deviceDesc.uncapturedErrorCallbackInfo.callback = [](WGPUDevice const* dev, WGPUErrorType type, WGPUStringView message, void* userdata1, void* userdata2) {
+        (void)dev; (void)userdata1; (void)userdata2;
+        std::cerr << "WebGPU ERR: " << type << " - " << (message.data ? std::string(message.data, message.length) : "[NO MESSAGE]") << std::endl;
+    };
+
+    auto onDeviceRequestEnded = [](WGPURequestDeviceStatus status, WGPUDevice device, WGPUStringView message, void* userdata1, void* userdata2) {
+        (void)userdata2;
+        DeviceData* deviceData = static_cast<DeviceData*>(userdata1);
+        if (status == WGPURequestDeviceStatus_Success) {
+            deviceData->device = device;
+        } else {
+            std::cerr << "ERR getting WebGPU device: " << std::string(message.data, message.length) << std::endl;
+        }
+        deviceData->requestEnded = true;
+    };
+
+    WGPURequestDeviceCallbackInfo deviceCallbackInfo = {};
+    deviceCallbackInfo.mode = WGPUCallbackMode_AllowProcessEvents;
+    deviceCallbackInfo.callback = onDeviceRequestEnded;
+    deviceCallbackInfo.userdata1 = &deviceData;
+    wgpuAdapterRequestDevice(adapter, &deviceDesc, deviceCallbackInfo);
+#else
     auto onDeviceRequestEnded = [](WGPURequestDeviceStatus status, WGPUDevice device, char const* message, void* userdata) {
         DeviceData* deviceData = static_cast<DeviceData*>(userdata);
         if (status == WGPURequestDeviceStatus_Success) {
@@ -690,14 +756,18 @@ bool GPURenderer::initDevice() {
         deviceData->requestEnded = true;
     };
 
-    WGPUDeviceDescriptor deviceDesc = {};
-    deviceDesc.nextInChain = nullptr;
-
     wgpuAdapterRequestDevice(adapter, &deviceDesc, onDeviceRequestEnded, &deviceData);
+#endif
 
     while (!deviceData.requestEnded) {
-        // wait for device request to complete
-        // still bad :(
+#ifdef WEBGPU_BACKEND_EMDAWNWEBGPU
+        // Keep pumping callback events on web builds while waiting.
+        wgpuInstanceProcessEvents(instance);
+#endif
+#ifdef __EMSCRIPTEN__
+        // Yield so the browser main thread stays responsive.
+        emscripten_sleep(0);
+#endif
     }
 
     if (!deviceData.device) {
@@ -708,11 +778,13 @@ bool GPURenderer::initDevice() {
     device = deviceData.device;
     queue = wgpuDeviceGetQueue(device);
 
-    // error callback required
+#ifndef WEBGPU_BACKEND_EMDAWNWEBGPU
+    // error callback required (in emdawnwebgpu, this is set via device descriptor)
     wgpuDeviceSetUncapturedErrorCallback(device,
         [](WGPUErrorType type, const char* message, void* userdata) {
             std::cerr << "WebGPU ERR: " << type << " - " << (message ? message : "[NO MESSAGE]") << std::endl;
         }, nullptr);
+#endif
 
     return true;
 }

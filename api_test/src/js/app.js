@@ -49,8 +49,7 @@ class HandTrackingApp {
             this.updateStatus('Ready');
 
             // Enable start button
-            const startBtn = document.getElementById('startButton');
-            if (startBtn) startBtn.disabled = false;
+            document.getElementById('startButton').disabled = false;
 
             console.log('HandTrackingApp initialized');
 
@@ -72,8 +71,10 @@ class HandTrackingApp {
             this.lastTime = performance.now();
 
             // Update UI
-            const startBtn = document.getElementById('startButton');
-            if (startBtn) startBtn.disabled = true;
+            document.getElementById('startButton').disabled = true;
+            document.getElementById('stopButton').disabled = false;
+
+            this.updateStatus('Running');
 
             // Start processing loop
             this.processLoop();
@@ -97,8 +98,11 @@ class HandTrackingApp {
         }
 
         // Update UI
-        const startBtn = document.getElementById('startButton');
-        if (startBtn) startBtn.disabled = false;
+        document.getElementById('startButton').disabled = false;
+        document.getElementById('stopButton').disabled = true;
+
+        this.updateStatus('Stopped');
+        this.updatePerformance(0, 0, 0);
     }
 
     /**
@@ -156,14 +160,16 @@ class HandTrackingApp {
      * Set up UI event handlers.
      */
     setupUI() {
-        const startBtn = document.getElementById('startButton');
-        if (startBtn) {
-            startBtn.disabled = true;
-            startBtn.addEventListener('click', () => {
-                startBtn.disabled = true;
-                this.start();
-            });
-        }
+        document.getElementById('startButton').disabled = true;
+        document.getElementById('stopButton').disabled = true;
+
+        document.getElementById('startButton').addEventListener('click', () => {
+            this.start();
+        });
+
+        document.getElementById('stopButton').addEventListener('click', () => {
+            this.stop();
+        });
 
         // Handle window resize
         window.addEventListener('resize', () => {

@@ -129,7 +129,11 @@ CircleConfig ConfigLoader::loadCircleConfig(const json& j) {
 }
 
 std::string ConfigLoader::readFile(const char* filename) {
-    std::string path = std::string("../") + filename; // NOTE assuming run from build/ or debug/ !
+#ifdef __EMSCRIPTEN__
+    std::string path = std::string("/") + filename; // Emscripten virtual FS root
+#else
+    std::string path = std::string("../") + filename; // assuming run from build/ or debug/
+#endif
     std::ifstream file(path);
     if (!file.is_open()) {
         std::cerr << "ERR opening file: " << path << std::endl;

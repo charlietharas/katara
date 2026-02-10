@@ -29,7 +29,7 @@ export class Camera {
 
         try {
             this.stream = await navigator.mediaDevices.getUserMedia(constraints);
-            this.videoElement = document.getElementById('inputVideo');
+            this.videoElement = document.createElement('video');
             this.videoElement.srcObject = this.stream;
             this.videoElement.autoplay = true;
             this.videoElement.playsInline = true;

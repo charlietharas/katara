@@ -1,4 +1,4 @@
-#include "wgpu_boilerplate.h"
+#include "boilerplate.h"
 #include "gpu_sim.h"
 #include <iostream>
 #include <cstring>
@@ -108,7 +108,7 @@ WGPUComputePipeline GPUSimulator::createComputePipeline(const char* shaderFile, 
     WGPUComputePipelineDescriptor pipelineDesc = {};
     pipelineDesc.layout = layout;
     pipelineDesc.compute.module = shaderModule;
-    pipelineDesc.compute.entryPoint = entryPoint;
+    pipelineDesc.compute.entryPoint = WGPU_CSTR(entryPoint);
 
     WGPUComputePipeline pipeline = wgpuDeviceCreateComputePipeline(device, &pipelineDesc);
     wgpuShaderModuleRelease(shaderModule);
@@ -304,7 +304,7 @@ void GPUSimulator::update() {
 
     // submit all commands at once
     WGPUCommandBufferDescriptor cmdDesc = {};
-    cmdDesc.label = "Simulation Update";
+    cmdDesc.label = WGPU_CSTR("Simulation Update");
     WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, &cmdDesc);
     wgpuQueueSubmit(queue, 1, &commands);
 
@@ -470,7 +470,7 @@ void GPUSimulator::dispatchHistogramCompute(const HistogramDispatchDesc& desc) {
 
     // submit commands
     WGPUCommandBufferDescriptor cmdDesc = {};
-    cmdDesc.label = desc.label;
+    cmdDesc.label = WGPU_CSTR(desc.label);
     WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, &cmdDesc);
     wgpuQueueSubmit(queue, 1, &commands);
     wgpuCommandBufferRelease(commands);
@@ -516,6 +516,19 @@ void GPUSimulator::dispatchPressureMinMax(int slotIndex) {
     dispatchHistogramCompute(desc);
 
     // map staging buffer asynchronously with callback
+#ifdef WEBGPU_BACKEND_EMDAWNWEBGPU
+    WGPUBufferMapCallbackInfo mapCallbackInfo = {};
+    mapCallbackInfo.mode = WGPUCallbackMode_AllowProcessEvents;
+    mapCallbackInfo.callback = [](WGPUMapAsyncStatus status, WGPUStringView message, void* userdata1, void* userdata2) {
+        (void)message;
+        GPUSimulator* sim = static_cast<GPUSimulator*>(userdata1);
+        int slotIdx = static_cast<int>(reinterpret_cast<intptr_t>(userdata2));
+        sim->onMinMaxMapped(status, slotIdx);
+    };
+    mapCallbackInfo.userdata1 = this;
+    mapCallbackInfo.userdata2 = reinterpret_cast<void*>(static_cast<intptr_t>(slotIndex));
+    wgpuBufferMapAsync(slot.minMaxStagingBuffer, WGPUMapMode_Read, 0, 4 * sizeof(uint32_t), mapCallbackInfo);
+#else
     WGPUBufferMapCallbackInfo2 mapCallbackInfo = {};
     mapCallbackInfo.mode = WGPUCallbackMode_AllowProcessEvents;
     mapCallbackInfo.callback = [](WGPUMapAsyncStatus status, const char* message, void* userdata1, void* userdata2) {
@@ -527,6 +540,7 @@ void GPUSimulator::dispatchPressureMinMax(int slotIndex) {
     mapCallbackInfo.userdata1 = this;
     mapCallbackInfo.userdata2 = reinterpret_cast<void*>(static_cast<intptr_t>(slotIndex));
     wgpuBufferMapAsync2(slot.minMaxStagingBuffer, WGPUMapMode_Read, 0, 4 * sizeof(uint32_t), mapCallbackInfo);
+#endif
 }
 
 void GPUSimulator::onMinMaxMapped(WGPUMapAsyncStatus status, int slotIndex) {
@@ -599,6 +613,19 @@ void GPUSimulator::dispatchHistogramBins(int slotIndex) {
     dispatchHistogramCompute(desc);
 
     // map staging buffer for bins with callback
+#ifdef WEBGPU_BACKEND_EMDAWNWEBGPU
+    WGPUBufferMapCallbackInfo binMapCallbackInfo = {};
+    binMapCallbackInfo.mode = WGPUCallbackMode_AllowProcessEvents;
+    binMapCallbackInfo.callback = [](WGPUMapAsyncStatus status, WGPUStringView message, void* userdata1, void* userdata2) {
+        (void)message;
+        GPUSimulator* sim = static_cast<GPUSimulator*>(userdata1);
+        int slotIdx = static_cast<int>(reinterpret_cast<intptr_t>(userdata2));
+        sim->onHistogramBinsMapped(status, slotIdx);
+    };
+    binMapCallbackInfo.userdata1 = this;
+    binMapCallbackInfo.userdata2 = reinterpret_cast<void*>(static_cast<intptr_t>(slotIndex));
+    wgpuBufferMapAsync(slot.histogramStagingBuffer, WGPUMapMode_Read, 0, 128 * sizeof(int32_t), binMapCallbackInfo);
+#else
     WGPUBufferMapCallbackInfo2 binMapCallbackInfo = {};
     binMapCallbackInfo.mode = WGPUCallbackMode_AllowProcessEvents;
     binMapCallbackInfo.callback = [](WGPUMapAsyncStatus status, const char* message, void* userdata1, void* userdata2) {
@@ -610,6 +637,7 @@ void GPUSimulator::dispatchHistogramBins(int slotIndex) {
     binMapCallbackInfo.userdata1 = this;
     binMapCallbackInfo.userdata2 = reinterpret_cast<void*>(static_cast<intptr_t>(slotIndex));
     wgpuBufferMapAsync2(slot.histogramStagingBuffer, WGPUMapMode_Read, 0, 128 * sizeof(int32_t), binMapCallbackInfo);
+#endif
 }
 
 void GPUSimulator::onHistogramBinsMapped(WGPUMapAsyncStatus status, int slotIndex) {
@@ -669,8 +697,6 @@ void GPUSimulator::advanceHistogramReadIndex() const {
 // GPU INITIALIZATION _BOILERPLATE_
 bool GPUSimulator::initUniformBuffer() {
     WGPUBufferDescriptor uniformDesc = {};
-    uniformDesc.nextInChain = nullptr;
-    uniformDesc.label = nullptr;
     uniformDesc.size = sizeof(SimParams);
     uniformDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
     uniformDesc.mappedAtCreation = false;

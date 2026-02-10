@@ -6,6 +6,20 @@
 #include <vector>
 #include "config.h"
 
+// Compatibility layer for emdawnwebgpu API differences
+#ifdef WEBGPU_BACKEND_EMDAWNWEBGPU
+typedef WGPUTextureUsage WGPUTextureUsageFlags;
+typedef WGPUBufferUsage WGPUBufferUsageFlags;
+typedef WGPUTexelCopyTextureInfo WGPUImageCopyTexture;
+typedef WGPUTexelCopyBufferLayout WGPUTextureDataLayout;
+inline WGPUStringView wgpuStr(const char* s) {
+    return WGPUStringView{ s, s ? WGPU_STRLEN : 0 };
+}
+#define WGPU_CSTR(s) wgpuStr(s)
+#else
+#define WGPU_CSTR(s) (s)
+#endif
+
 // MACROS
 #define RETURN_FALSE_IF_FAIL(fn) if (!(fn)) { return false; }
 
@@ -125,12 +139,21 @@ public:
             return nullptr;
         }
 
+#ifdef WEBGPU_BACKEND_EMDAWNWEBGPU
+        WGPUShaderSourceWGSL wgslSource = {};
+        wgslSource.chain.sType = WGPUSType_ShaderSourceWGSL;
+        wgslSource.code = WGPU_CSTR(shaderSource.c_str());
+
+        WGPUShaderModuleDescriptor shaderDesc = {};
+        shaderDesc.nextInChain = &wgslSource.chain;
+#else
         WGPUShaderModuleWGSLDescriptor wgslDesc = {};
         wgslDesc.chain.sType = WGPUSType_ShaderModuleWGSLDescriptor;
         wgslDesc.code = shaderSource.c_str();
 
         WGPUShaderModuleDescriptor shaderDesc = {};
         shaderDesc.nextInChain = const_cast<WGPUChainedStruct*>(&wgslDesc.chain);
+#endif
         WGPUShaderModule shaderModule = wgpuDeviceCreateShaderModule(device, &shaderDesc);
         return shaderModule;
     }

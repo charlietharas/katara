@@ -24,21 +24,21 @@
             "side": 0,
             "startPosition": 0.45,
             "endPosition": 0.55,
-            "velocity": 0
+            "velocity": 1
         },
         "circle": {
-            "radius": 0.05,
+            "radius": 0.02,
             "momentumTransferStrength": 0.5,
             "momentumTransferRadius": 1
         }
     },
     "rendering": {
-        "target": 3,
+        "target": 2,
         "showVelocityVectors": false,
         "velocityScale": 0.1,
         "disableHistograms": false
     },
     "ink": {
-        "imagePath": "img1.png"
+        "imagePath": "/img1.png"
     }
 }
