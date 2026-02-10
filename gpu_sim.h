@@ -2,7 +2,7 @@
 #define GPU_SIMULATOR_H
 
 #include <webgpu/webgpu.h>
-#include "wgpu_boilerplate.h"
+#include "boilerplate.h"
 #include "isimulator.h"
 #include "sim.h"
 #include "config.h"
