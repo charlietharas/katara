@@ -156,6 +156,13 @@ int main(int argc, char** argv) {
     SDL_Surface* convertedSurface = nullptr;
     ImageData* imageData = nullptr;
     if (!config.ink.imagePath.empty() && config.rendering.target == 3) {
+        const int imgInitFlags = IMG_INIT_PNG;
+        if ((IMG_Init(imgInitFlags) & imgInitFlags) == 0) {
+            std::cerr << "ERR initializing SDL_image PNG support: " << IMG_GetError() << std::endl;
+            SDL_Quit();
+            return 1;
+        }
+
         // load an image and grab its dimensions for window sizing
         imageSurface = IMG_Load(config.ink.imagePath.c_str());
         if (imageSurface) {

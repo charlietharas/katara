@@ -24,7 +24,7 @@
             "side": 0,
             "startPosition": 0.45,
             "endPosition": 0.55,
-            "velocity": 1
+            "velocity": 0
         },
         "circle": {
             "radius": 0.02,
@@ -33,7 +33,7 @@
         }
     },
     "rendering": {
-        "target": 2,
+        "target": 3,
         "showVelocityVectors": false,
         "velocityScale": 0.1,
         "disableHistograms": false

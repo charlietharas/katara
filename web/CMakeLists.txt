@@ -15,7 +15,9 @@ if(EMSCRIPTEN OR DEFINED EMSCRIPTEN)
     # SDL2_image via Emscripten port
     add_library(SDL2_image INTERFACE IMPORTED)
     target_compile_options(SDL2_image INTERFACE "SHELL:-s USE_SDL_IMAGE=2")
+    target_compile_options(SDL2_image INTERFACE "SHELL:-s SDL2_IMAGE_FORMATS=[\"png\"]")
     target_link_options(SDL2_image INTERFACE "SHELL:-s USE_SDL_IMAGE=2")
+    target_link_options(SDL2_image INTERFACE "SHELL:-s SDL2_IMAGE_FORMATS=[\"png\"]")
 
     # WebGPU via emdawnwebgpu port (provides webgpu/webgpu.h)
     add_library(webgpu INTERFACE IMPORTED)
