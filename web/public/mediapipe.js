@@ -32,7 +32,9 @@ export class MediaPipeHandTracker {
     }
 
     async detectHands() {
-        if (!this.hands || !this.videoElement) return { x: 0, y: 0, present: false };
+        if (!this.hands || !this.videoElement) {
+            return { indexTip: { x: 0, y: 0, present: false }, hands: [] };
+        }
 
         // Send the image and wait for results
         await new Promise(resolve => {
@@ -41,15 +43,28 @@ export class MediaPipeHandTracker {
         });
 
         if (!this.lastResults) {
-            return { x: 0, y: 0, present: false };
+            return { indexTip: { x: 0, y: 0, present: false }, hands: [] };
         }
 
         if (!this.lastResults.multiHandLandmarks || this.lastResults.multiHandLandmarks.length === 0) {
-            return { x: 0, y: 0, present: false };
+            return { indexTip: { x: 0, y: 0, present: false }, hands: [] };
+        }
+
+        // Build hands array with full landmark data
+        const hands = [];
+        const handedness = this.lastResults.multiHandedness || [];
+
+        for (let i = 0; i < this.lastResults.multiHandLandmarks.length; i++) {
+            const landmarks = this.lastResults.multiHandLandmarks[i];
+            const handLabel = handedness[i]?.label ?? 'Unknown';
+            hands.push({
+                landmarks: landmarks.map(lm => ({ x: lm.x, y: lm.y, z: lm.z })),
+                handedness: handLabel,
+                confidence: handedness[i]?.score ?? 1.0
+            });
         }
 
         // Prefer right hand, fallback to first detected hand.
-        const handedness = this.lastResults.multiHandedness || [];
         const rightIdx = handedness.findIndex((h) => {
             const label = h?.label ?? h?.[0]?.label;
             return label === 'Right';
@@ -58,10 +73,10 @@ export class MediaPipeHandTracker {
         const landmarks = this.lastResults.multiHandLandmarks[handIdx];
         const tip = landmarks?.[8]; // Index finger tip
         if (!tip) {
-            return { x: 0, y: 0, present: false };
+            return { indexTip: { x: 0, y: 0, present: false }, hands };
         }
 
-        return { x: tip.x, y: tip.y, present: true };
+        return { indexTip: { x: tip.x, y: tip.y, present: true }, hands };
     }
 
     loadScript(src) {

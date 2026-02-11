@@ -3,16 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="shortcut icon" type="image/x-icon" href="https://charliemax.dev/favicon.ico">
+    <link rel="stylesheet" href="https://charliemax.dev/css/stylesheet.css">
     <title>Katara - Fluid Simulation with Hand Tracking</title>
     <link rel="stylesheet" href="styles.css">
 </head>
+<nav></nav>
+<script src="https://charliemax.dev/js/lightmode.js"></script>
 <body>
-    <div class="container">
-        <canvas id="canvas"></canvas>
-        <div class="info">
-            <h1>Katara</h1>
-            <p>Show your right hand to the camera to control the circle with your index finger</p>
-            <p id="status">Loading...</p>
+    <div id="content">
+        <h1>Katara</h1>
+        <p>Show your right hand to the camera to control the circle with your index finger</p>
+        <p id="status">Loading...</p>
+    </div>
+    <div class="canvas-row">
+        <div class="sim-container">
+            <canvas id="canvas"></canvas>
+        </div>
+        <div class="camera-container">
+            <canvas id="cameraCanvas" width="600" height="400"></canvas>
         </div>
     </div>
     <script src="katara.js"></script>
