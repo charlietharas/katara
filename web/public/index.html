@@ -5,16 +5,51 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="shortcut icon" type="image/x-icon" href="https://charliemax.dev/favicon.ico">
     <link rel="stylesheet" href="https://charliemax.dev/css/stylesheet.css">
-    <title>Katara - Fluid Simulation with Hand Tracking</title>
-    <link rel="stylesheet" href="styles.css">
+    <title>katara</title>
+    <style>
+.canvas-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    width: 100%;
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+.camera-container,
+.sim-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+#cameraCanvas {
+    width: 100%;
+    height: auto;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+
+#canvas {
+    width: 100%;
+    height: auto;
+    max-height: 90vh;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+
+@media (max-width: 900px) {
+    .canvas-row {
+        grid-template-columns: 1fr;
+    }
+}
+    </style>
 </head>
 <nav></nav>
 <script src="https://charliemax.dev/js/lightmode.js"></script>
 <body>
-    <div id="content">
-        <h1>Katara</h1>
-        <p>Show your right hand to the camera to control the circle with your index finger</p>
-        <p id="status">Loading...</p>
+    <div id="content" style="text-align: center">
+        <h1>katara</h1>
     </div>
     <div class="canvas-row">
         <div class="sim-container">

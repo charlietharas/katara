@@ -6,11 +6,11 @@
         "defaultHeight": 800
     },
     "simulation": {
-        "resolution": 600,
+        "resolution": 400,
         "timestep": 0.02,
         "gravity": 0,
         "fluidDensity": 1000.0,
-        "edges": 14,
+        "edges": 15,
         "projection": {
             "overrelaxationCoefficient": 1.0,
             "iterations": 200
@@ -22,14 +22,20 @@
         },
         "windTunnel": {
             "side": 0,
-            "startPosition": 0.45,
-            "endPosition": 0.55,
+            "startPosition": 0.475,
+            "endPosition": 0.525,
             "velocity": 0
         },
         "circle": {
             "radius": 0.02,
-            "momentumTransferStrength": 0.5,
-            "momentumTransferRadius": 1
+            "momentumTransferStrength": 10,
+            "momentumTransferRadius": 2,
+            "zScaling": {
+                "zMin": -0.1,
+                "zMax": 0.1,
+                "scaleMin": 2,
+                "scaleMax": 0.5
+            }
         }
     },
     "rendering": {

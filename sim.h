@@ -4,6 +4,7 @@
 #include <vector>
 #include "isimulator.h"
 #include "config.h"
+#include "circle_state.h"
 
 class Simulator : public ISimulator {
 public:
@@ -13,7 +14,12 @@ public:
     bool init(const Config& config, const ImageData* imageData = nullptr, float aspectRatio = 1.5f) override;
     void update() override;
 
+#ifdef ENABLE_MOUSE_INPUT
     void moveCircle(int newGridX, int newGridY) override;
+#else
+    void updateCircles(const FingertipData* fingertips, int count) override;
+    void updateLineSegments(const FingertipData* landmarks, int count) override;
+#endif
 
     // fields
     const std::vector<float>& getVelocityX() const override { return x; }
@@ -24,7 +30,6 @@ public:
     const std::vector<float>& getRedInk() const override { return inkRed; }
     const std::vector<float>& getGreenInk() const override { return inkGreen; }
     const std::vector<float>& getBlueInk() const override { return inkBlue; }
-
 private:
     // config for reference in init
     const Config* config = nullptr;
@@ -63,7 +68,16 @@ private:
     void updateCircle(int prevX, int prevY, int newX, int newY);
     void enforceBoundaryConditions();
     void circleMomentumTransfer();
-    void updateCircleAreas(int prevX, int prevY, int newX, int newY);
+    void updateCircleAreas(int prevX, int prevY, int newX, int newY, int prevRadius, int newRadius);
+
+#ifndef ENABLE_MOUSE_INPUT
+    int scaleRadiusByZ(float z);
+    void clearCircleArea(int prevX, int prevY, int radius);
+    void updateSingleCircle(CircleState& circle);
+
+    bool isPointNearSegment(int px, int py, int x1, int y1, float r1, int x2, int y2, float r2);
+    void updateLineSegmentSolidField(LineSegment& seg);
+#endif
 
     // image initialization helpers
     void initializeFromImageData(const Config& config, const ImageData* imageData);

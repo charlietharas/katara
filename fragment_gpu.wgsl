@@ -32,19 +32,18 @@ struct UniformData {
 @group(0) @binding(6) var inkTexture: texture_2d<f32>; // RGBA texture for GPU mode
 
 // TODO MAIN -- WIP ^_^
-// still misc tasks/cleaning up a bit
-// then tidy up test program for browser
-// then integrate fully into browser app
-// then more tinkering until release
-/*
-// TODO better window layout configuration (e.g. histograms scale with window size)
+// we in the browser baby
 
-// TODO LATER examine differences in pressure/velocity histograms between GPU/CPU
+// TODO still some opportunities to clean up code
+
+/*
+// TODO examine differences in pressure/velocity histograms between GPU/CPU
 - see plotting script
 - note: it seems like we can get better behavior by cranking Jacobi iterations up (1000)
 // TODO LATER swap to different pressure solver
 
-// TODO LATER -- up/right wind tunnel behaves differently from down/left
+// TODO up/right wind tunnel behaves differently from down/left
+// TODO RELATED BUG WITH GPU HAND TRACKING
 likely because of the forward texture accesses (e.g. asymmetric +1) somewhere
 or it could be something else...
 - there are still some subtle bugs with gpu sim (bot left corner, circle detection)
@@ -54,9 +53,8 @@ or it could be something else...
 
 // TODO WAY LATER - extensions:
 - try to vibrate some obstacle proportional to an audio signal
-- measure system entropy and write a proof that the system does/does not
-  follow laws of fluid entropy
-- by the end, 4 different views: raw camera with model visualization, ink, current pretty view, combined
+- measure system entropy and write a proof that the system does/does not follow laws of fluid entropy
+- 4 different views: raw camera with model visualization, ink, current pretty view, combined
  - combined: camera feed with model visualization rendered behind pretty fluid field
 
 // TODO WAY LATER lots of tiny memory problems in valgrind, investigate if some of these are my fault

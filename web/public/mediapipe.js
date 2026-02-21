@@ -1,6 +1,5 @@
 export class MediaPipeHandTracker {
     async init(videoElement) {
-        // Load MediaPipe Hands dynamically
         await this.loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js');
         await this.loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js');
         await this.loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js');
@@ -33,24 +32,24 @@ export class MediaPipeHandTracker {
 
     async detectHands() {
         if (!this.hands || !this.videoElement) {
-            return { indexTip: { x: 0, y: 0, present: false }, hands: [] };
+            return { fingertips: [], hands: [] };
         }
 
-        // Send the image and wait for results
+        // send the image and wait for results
         await new Promise(resolve => {
             this.resultsReady = resolve;
             this.hands.send({image: this.videoElement});
         });
 
         if (!this.lastResults) {
-            return { indexTip: { x: 0, y: 0, present: false }, hands: [] };
+            return { fingertips: [], hands: [] };
         }
 
         if (!this.lastResults.multiHandLandmarks || this.lastResults.multiHandLandmarks.length === 0) {
-            return { indexTip: { x: 0, y: 0, present: false }, hands: [] };
+            return { fingertips: [], hands: [] };
         }
 
-        // Build hands array with full landmark data
+        // build hands array with full landmark data
         const hands = [];
         const handedness = this.lastResults.multiHandedness || [];
 
@@ -64,24 +63,41 @@ export class MediaPipeHandTracker {
             });
         }
 
-        // Prefer right hand, fallback to first detected hand.
-        const rightIdx = handedness.findIndex((h) => {
-            const label = h?.label ?? h?.[0]?.label;
-            return label === 'Right';
-        });
-        const handIdx = rightIdx >= 0 ? rightIdx : 0;
-        const landmarks = this.lastResults.multiHandLandmarks[handIdx];
-        const tip = landmarks?.[8]; // Index finger tip
-        if (!tip) {
-            return { indexTip: { x: 0, y: 0, present: false }, hands };
+        // line segment mode needs all landmarks as a flat array
+        const landmarks = [];
+
+        for (let handIdx = 0; handIdx < Math.min(hands.length, 2); handIdx++) {
+            const hand = hands[handIdx];
+            if (!hand || !hand.landmarks || hand.landmarks.length === 0) {
+                // add empty landmarks for this hand
+                for (let i = 0; i < 21; i++) {
+                    landmarks.push({ x: 0, y: 0, z: 0, present: false });
+                }
+                continue;
+            }
+
+            // add all 21 landmarks for this hand
+            for (const lm of hand.landmarks) {
+                landmarks.push({
+                    x: lm.x,
+                    y: lm.y,
+                    z: lm.z,
+                    present: true
+                });
+            }
         }
 
-        return { indexTip: { x: tip.x, y: tip.y, present: true }, hands };
+        // pad to 42 landmarks (2 hands * 21 landmarks)
+        while (landmarks.length < 42) {
+            landmarks.push({ x: 0, y: 0, z: 0, present: false });
+        }
+
+        return { landmarks, hands };
     }
 
     loadScript(src) {
         return new Promise((resolve, reject) => {
-            // Check if already loaded
+            // check if already loaded
             if (document.querySelector(`script[src="${src}"]`)) {
                 resolve();
                 return;

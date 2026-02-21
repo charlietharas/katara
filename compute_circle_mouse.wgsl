@@ -2,31 +2,33 @@ struct SimParams {
     gridX: i32,
     gridY: i32,
     cellSize: f32,
+    halfCellSize: f32,
     timestep: f32,
-    gravity: f32,
-    vorticity: f32,
-    vorticityLen: f32,
-    projectionIters: f32,
     density: f32,
+    gravity: f32,
+    projectionIters: f32,
     windTunnelSide: i32,
     windTunnelStart: i32,
     windTunnelEnd: i32,
     windTunnelSpeed: f32,
+    momentumTransferStrength: f32,
+    momentumTransferRadius: f32,
+    vorticity: f32,
+    vorticityLen: f32,
     circleX: i32,
     circleY: i32,
     prevCircleX: i32,
     prevCircleY: i32,
-    circleRadius: i32,
     circleVelX: f32,
     circleVelY: f32,
-    momentumTransferStrength: f32,
-    momentumTransferRadius: f32,
-    circleWasMoved: i32,
-    halfCellSize: f32,
-    pad0: f32,
-    pad1: f32,
-    pad2: f32,
+    circleRadius: i32,
+    pad0: i32,
+    pad1: i32,
+    pad2: i32,
 };
+
+// legacy circle momentum transfer handler
+// dynamically injected into web version when we compile with enable_mouse_input
 
 @group(0) @binding(0) var<uniform> params: SimParams;
 @group(0) @binding(1) var solidTexture: texture_storage_2d<r32float, read_write>;
@@ -55,52 +57,45 @@ fn updateCircle(@builtin(global_invocation_id) id: vec3<u32>) {
     let prevDist = sqrt(prevDx * prevDx + prevDy * prevDy);
     let wasInPrevCircle = prevDist <= f32(params.circleRadius);
 
-    // if a cell exited the circle, reset density to 1 and velocity to 0
-    let exitedCircle = wasInPrevCircle && !isInCircle;
-    if (wasInPrevCircle) {
+    let rawVel = textureLoad(velocityTexture, vec2<i32>(i, j));
+    var vel = rawVel.xy;
+
+    // if a cell exited circle, reset density to 1
+    if (wasInPrevCircle && !isInCircle) {
         textureStore(densityTexture, vec2<i32>(i, j), vec4<f32>(1.0, 0.0, 0.0, 0.0));
     }
 
-    let rawVel = textureLoad(velocityTexture, vec2<i32>(i, j));
-    var vel = rawVel.xy;
     if (wasInPrevCircle) {
         vel = vec2<f32>(0.0, 0.0);
     }
 
-    let densityFactor = textureLoad(densityTexture, vec2<i32>(i, j)).x; // weight velocity imparted by local density
-
-    // apply momentum to fluid cells near the ball surface
-    // (only when circle has velocity and was moved this frame)
-    let hasVelocity = (abs(params.circleVelX) > 0.001 || abs(params.circleVelY) > 0.001);
-    let wasMoved = (params.circleWasMoved != 0);
+    // apply momentum to fluid cells near circle surface
+    let deltaX = f32(params.circleX - params.prevCircleX);
+    let deltaY = f32(params.circleY - params.prevCircleY);
+    let circleMoved = (deltaX != 0.0) || (deltaY != 0.0);
     let effectiveRadius = f32(params.circleRadius) + params.momentumTransferRadius;
 
-    if (hasVelocity && wasMoved && !isInCircle && distance <= effectiveRadius) {
-        // within influence radius but outside ball
-        if (distance > f32(params.circleRadius)) {
-            // falloff is 1/r^2
-            let normalizedDistance = (distance - f32(params.circleRadius)) / params.momentumTransferRadius;
-            var falloff = 1.0 - normalizedDistance * normalizedDistance;
-            falloff = max(0.0, falloff);
+    if (circleMoved && !isInCircle && distance <= effectiveRadius) {
+        let normalizedDistance = (distance - f32(params.circleRadius)) / params.momentumTransferRadius;
+        var falloff = 1.0 - normalizedDistance * normalizedDistance;
+        falloff = max(0.0, falloff);
 
-            let momentumX = params.circleVelX * params.momentumTransferStrength * falloff * densityFactor;
-            let momentumY = params.circleVelY * params.momentumTransferStrength * falloff * densityFactor;
+        let densityFactor = textureLoad(densityTexture, vec2<i32>(i, j)).x;
+        let momentumX = deltaX * params.momentumTransferStrength * falloff * densityFactor;
+        let momentumY = deltaY * params.momentumTransferStrength * falloff * densityFactor;
 
-            let newVel = vec2<f32>(
-                vel.x + momentumX,
-                vel.y + momentumY
-            );
-            
-            // NOTE: max velocity clamping for force imparted by the circle, for stability
-            let maxVel = 8.0; 
-            vel = vec2<f32>(
-                clamp(newVel.x, -maxVel, maxVel),
-                clamp(newVel.y, -maxVel, maxVel)
-            );
-        }
+        let newVel = vec2<f32>(
+            vel.x + momentumX,
+            vel.y + momentumY
+        );
+
+        let maxVel = 8.0;
+        vel = vec2<f32>(
+            clamp(newVel.x, -maxVel, maxVel),
+            clamp(newVel.y, -maxVel, maxVel)
+        );
     }
 
-    // if cell is inside circle, velocity set to 0
     if (isInCircle) {
         vel = vec2<f32>(0.0, 0.0);
     }
@@ -111,6 +106,5 @@ fn updateCircle(@builtin(global_invocation_id) id: vec3<u32>) {
         textureStore(solidTexture, vec2<i32>(i, j), vec4<f32>(1.0, 0.0, 0.0, 0.0));
     }
 
-    // ping pong
     textureStore(newVelocityTexture, vec2<i32>(i, j), vec4<f32>(vel, 0.0, 0.0));
 }

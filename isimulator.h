@@ -5,6 +5,16 @@
 #include <iostream>
 #include <utility>
 #include "config.h"
+#include "circle_state.h"
+
+inline int scaleRadiusByZ(float z, int baseRadius, const CircleConfig& cfg) {
+    if (z != z) z = 0.0f; // nan check
+    float zRange = cfg.zMax - cfg.zMin;
+    float t = (zRange > 0.0001f) ? (z - cfg.zMin) / zRange : 0.5f;
+    t = (t < 0.0f) ? 0.0f : (t > 1.0f ? 1.0f : t);
+    float scale = cfg.scaleMin + t * (cfg.scaleMax - cfg.scaleMin);
+    return static_cast<int>(baseRadius * scale);
+}
 
 struct ImageData {
     void* pixels;
@@ -36,12 +46,18 @@ public:
     float momentumTransferStrength;
     float momentumTransferRadius;
 
-    // circle state (also grid)
+#ifdef ENABLE_MOUSE_INPUT
     int circleX = 0, circleY = 0;
     int prevCircleX = 0, prevCircleY = 0;
     float circleVelX = 0.0f, circleVelY = 0.0f;
     int circleRadius = 0;
     bool isDragging = false;
+#else
+    CircleState circles[HandTracking::MAX_CIRCLES];
+    int baseCircleRadius = 0;
+    LineSegment segments[HandTracking::MAX_SEGMENTS];
+    int numSegments = 0;
+#endif
 
     // wind tunnel state
     float windTunnelStart; // 0-1 (pass this one in)
@@ -80,36 +96,39 @@ public:
     // modes
     virtual bool isUsingGPU() const { return false; }
 
-    // mouse helpers (declared)
+#ifdef ENABLE_MOUSE_INPUT
+    // mouse helpers
     bool isInsideCircle(int i, int j) {
         float dx = (i + 0.5f) - circleX;
         float dy = (j + 0.5f) - circleY;
         return sqrt(dx * dx + dy * dy) <= circleRadius;
     }
-    
+
     void onMouseDown(int mouseX, int mouseY) {
         isDragging = true;
     }
-    
+
     void onMouseUp() {
         isDragging = false;
     }
-    
+
     void onMouseDrag(int mouseX, int mouseY) {
         if (isDragging) {
             // clamp circle to bounds
             int newX = std::max(circleRadius, std::min(mouseX, gridX - circleRadius - 1));
             int newY = std::max(circleRadius, std::min(mouseY, gridY - circleRadius - 1));
-    
             if (newX != circleX || newY != circleY) {
                 moveCircle(newX, newY);
             }
         }
     }
 
-    // this one needs to be implemented by children
-    virtual void moveCircle(int newGridX, int newGridY) =0;
-    
+    virtual void moveCircle(int newGridX, int newGridY) {}
+#else
+    // fingertip mode helpers (fuck it, they're always here. I'm too tired for this)
+    virtual void updateCircles(const FingertipData* fingertips, int count) {}
+    virtual void updateLineSegments(const FingertipData* landmarks, int count) {}
+#endif
 };
 
 #endif

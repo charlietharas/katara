@@ -1,31 +1,8 @@
 struct SimParams {
     gridX: i32,
     gridY: i32,
-    cellSize: f32,
-    timestep: f32,
-    gravity: f32,
-    vorticity: f32,
-    vorticityLen: f32,
-    projectionIters: f32,
-    density: f32,
-    windTunnelSide: i32,
-    windTunnelStart: i32,
-    windTunnelEnd: i32,
-    windTunnelSpeed: f32,
-    circleX: i32,
-    circleY: i32,
-    prevCircleX: i32,
-    prevCircleY: i32,
-    circleRadius: i32,
-    circleVelX: f32,
-    circleVelY: f32,
-    momentumTransferStrength: f32,
-    momentumTransferRadius: f32,
-    circleWasMoved: i32,
-    halfCellSize: f32,
-    pad0: f32,
-    pad1: f32,
-    pad2: f32,
+    pad0: i32,
+    pad1: i32,
 };
 
 struct MinMaxUniform {
@@ -35,7 +12,7 @@ struct MinMaxUniform {
     velMax : atomic<u32>,
 }
 
-@group(0) @binding(0) var<uniform> uniforms : SimParams;
+@group(0) @binding(0) var<uniform> params : SimParams;
 @group(0) @binding(1) var pressureTexture : texture_storage_2d<r32float, read>;
 @group(0) @binding(2) var velocityTexture : texture_storage_2d<rg32float, read>;
 @group(0) @binding(3) var solidTexture : texture_storage_2d<r32float, read>;
@@ -49,8 +26,8 @@ fn floatToOrderedUint(value: f32) -> u32 {
 
 @compute @workgroup_size(16, 16)
 fn computePressureMinMax(@builtin(global_invocation_id) id : vec3<u32>) {
-    let gridX = u32(uniforms.gridX);
-    let gridY = u32(uniforms.gridY);
+    let gridX = u32(params.gridX);
+    let gridY = u32(params.gridY);
     let i = id.x;
     let j = id.y;
 

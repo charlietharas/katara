@@ -51,8 +51,10 @@ bool Simulator::init(const Config& config, const ImageData* imageData, float asp
     xHeight = cellSize * gridX;
     yHeight = cellSize * gridY;
 
+#ifdef ENABLE_MOUSE_INPUT
     // convert circle radius from world units to grid units
     circleRadius = static_cast<int>(config.simulation.circle.radius / cellSize);
+#endif
     
     // simulator fields
     x.resize(totalCells);
@@ -84,9 +86,12 @@ bool Simulator::init(const Config& config, const ImageData* imageData, float asp
         initializeFromImageData(config, imageData);
     }
 
+#ifdef ENABLE_MOUSE_INPUT
     // setup circle
     circleX = gridX / 2;
     circleY = gridY / 2;
+    prevCircleX = circleX;
+    prevCircleY = circleY;
     for (int i = circleX - circleRadius; i < circleX + circleRadius; i++) {
         for (int j = circleY - circleRadius; j < circleY + circleRadius; j++) {
             if (i >= 0 && i < gridX && j >= 0 && j < gridY) {
@@ -98,7 +103,30 @@ bool Simulator::init(const Config& config, const ImageData* imageData, float asp
             }
         }
     }
-    
+#else
+    // initialize everything as not present
+    for (int i = 0; i < HandTracking::MAX_CIRCLES; i++) {
+        circles[i].present = false;
+        circles[i].wasPresent = false;
+        circles[i].x = 0;
+        circles[i].y = 0;
+        circles[i].velX = 0.0f;
+        circles[i].velY = 0.0f;
+    }
+    baseCircleRadius = static_cast<int>(config.simulation.circle.radius / cellSize);
+    for (int i = 0; i < HandTracking::MAX_SEGMENTS; i++) {
+        segments[i].present = false;
+        segments[i].wasPresent = false;
+        segments[i].startX = 0;
+        segments[i].startY = 0;
+        segments[i].endX = 0;
+        segments[i].endY = 0;
+        segments[i].startRadius = 0.0f;
+        segments[i].endRadius = 0.0f;
+    }
+    numSegments = 0;
+#endif
+
     // setup edges
     int cx = gridX / 2;
     int cy = gridY / 2;
@@ -209,6 +237,232 @@ void Simulator::initializeFromImageData(const Config& config, const ImageData* i
 
     inkInitialized = true;
 }
+
+#ifndef ENABLE_MOUSE_INPUT
+// NOTE CPU fingertip input is known to be janky
+// oh well!
+int Simulator::scaleRadiusByZ(float z) {
+    return ::scaleRadiusByZ(z, baseCircleRadius, config->simulation.circle);
+}
+
+void Simulator::updateCircles(const FingertipData* fingertips, int count) {
+    int actualCount = std::min(count, HandTracking::MAX_CIRCLES);
+
+    for (int i = 0; i < actualCount; i++) {
+        CircleState& circle = circles[i];
+        circle.wasPresent = circle.present;
+        circle.prevX = circle.x;
+        circle.prevY = circle.y;
+
+        circle.present = fingertips[i].present;
+        circle.z = fingertips[i].z;
+
+        if (fingertips[i].present) {
+            int newGridX = static_cast<int>((1.0f - fingertips[i].x) * gridX);
+            int newGridY = static_cast<int>((1.0f - fingertips[i].y) * gridY);
+            newGridX = std::max(baseCircleRadius, std::min(newGridX, gridX - baseCircleRadius - 1));
+            newGridY = std::max(baseCircleRadius, std::min(newGridY, gridY - baseCircleRadius - 1));
+
+            circle.x = newGridX;
+            circle.y = newGridY;
+            circle.scaledRadius = scaleRadiusByZ(fingertips[i].z);
+
+            float instantVelX = (circle.x - circle.prevX) / timestep;
+            float instantVelY = (circle.y - circle.prevY) / timestep;
+            float alpha = 0.3f;
+            circle.velX = alpha * instantVelX + (1.0f - alpha) * circle.velX;
+            circle.velY = alpha * instantVelY + (1.0f - alpha) * circle.velY;
+
+            updateSingleCircle(circle);
+        } else {
+            if (circle.wasPresent) {
+                clearCircleArea(circle.prevX, circle.prevY, circle.scaledRadius);
+            }
+            circle.x = 0;
+            circle.y = 0;
+            circle.velX = 0.0f;
+            circle.velY = 0.0f;
+        }
+    }
+
+    for (int i = actualCount; i < HandTracking::MAX_CIRCLES; i++) {
+        if (circles[i].wasPresent) {
+            clearCircleArea(circles[i].prevX, circles[i].prevY, circles[i].scaledRadius);
+            circles[i].present = false;
+            circles[i].wasPresent = false;
+        }
+    }
+}
+
+void Simulator::clearCircleArea(int prevX, int prevY, int radius) {
+    for (int i = prevX - radius; i <= prevX + radius; i++) {
+        for (int j = prevY - radius; j <= prevY + radius; j++) {
+            if (i > 0 && i < gridX-1 && j > 0 && j < gridY-1) {
+                float dx = (i + 0.5f) - prevX;
+                float dy = (j + 0.5f) - prevY;
+                float dist = sqrt(dx * dx + dy * dy);
+                if (dist <= radius) {
+                    s[idx(i, j)] = 1.0f; // make fluid
+                    d[idx(i, j)] = 1.0f;
+                    x[idx(i, j)] = 0.0f;
+                    y[idx(i, j)] = 0.0f;
+                }
+            }
+        }
+    }
+}
+
+void Simulator::updateSingleCircle(CircleState& circle) {
+    updateCircleAreas(circle.prevX, circle.prevY, circle.x, circle.y,
+                    circle.scaledRadius, circle.scaledRadius);
+    circleMomentumTransfer();
+    enforceBoundaryConditions();
+    // reset prev position to current so next frame has zero delta if not moved
+    circle.prevX = circle.x;
+    circle.prevY = circle.y;
+}
+
+void Simulator::updateLineSegments(const FingertipData* landmarks, int count) {
+    int numHands = std::min(2, count / HandTracking::LANDMARKS_PER_HAND);
+
+    // build segments from hand connections
+    numSegments = 0;
+    for (int hand = 0; hand < numHands; hand++) {
+        int offset = hand * HandTracking::LANDMARKS_PER_HAND;
+
+        bool handPresent = false;
+        for (int i = 0; i < HandTracking::LANDMARKS_PER_HAND; i++) {
+            if (landmarks[offset + i].present > 0.5f) {
+                handPresent = true;
+                break;
+            }
+        }
+        if (!handPresent) continue;
+
+        // create segments for each connection
+        for (int conn = 0; conn < HandTracking::MAX_CONNECTIONS && numSegments < HandTracking::MAX_SEGMENTS; conn++) {
+            int idx1 = HandTracking::HAND_CONNECTIONS[conn][0];
+            int idx2 = HandTracking::HAND_CONNECTIONS[conn][1];
+
+            const FingertipData& p1 = landmarks[offset + idx1];
+            const FingertipData& p2 = landmarks[offset + idx2];
+
+            LineSegment& seg = segments[numSegments];
+            seg.wasPresent = seg.present;
+            seg.prevStartX = seg.startX;
+            seg.prevStartY = seg.startY;
+            seg.prevEndX = seg.endX;
+            seg.prevEndY = seg.endY;
+            seg.prevStartRadius = seg.startRadius;
+            seg.prevEndRadius = seg.endRadius;
+
+            seg.present = (p1.present > 0.5f) && (p2.present > 0.5f);
+
+            if (seg.present) {
+                seg.startX = static_cast<int>((1.0f - p1.x) * gridX);
+                seg.startY = static_cast<int>((1.0f - p1.y) * gridY);
+                seg.endX = static_cast<int>((1.0f - p2.x) * gridX);
+                seg.endY = static_cast<int>((1.0f - p2.y) * gridY);
+                seg.startRadius = scaleRadiusByZ(p1.z);
+                seg.endRadius = scaleRadiusByZ(p2.z);
+
+                updateLineSegmentSolidField(seg);
+            } else {
+                if (seg.wasPresent) {
+                    // clear previous segment area
+                    LineSegment tempSeg = seg;
+                    tempSeg.present = false;
+                    tempSeg.startX = 0;
+                    tempSeg.startY = 0;
+                    tempSeg.endX = 0;
+                    tempSeg.endY = 0;
+                    updateLineSegmentSolidField(tempSeg);
+                }
+            }
+
+            numSegments++;
+        }
+    }
+}
+
+bool Simulator::isPointNearSegment(int px, int py, int x1, int y1, float r1, int x2, int y2, float r2) {
+    // vector from p1 to p2
+    float dx = static_cast<float>(x2 - x1);
+    float dy = static_cast<float>(y2 - y1);
+    float length = sqrt(dx * dx + dy * dy);
+
+    if (length < 0.001f) {
+        // point
+        float dist = sqrt(static_cast<float>((px - x1) * (px - x1) + (py - y1) * (py - y1)));
+        return dist <= r1;
+    }
+
+    // normalized direction
+    float nx = dx / length;
+    float ny = dy / length;
+
+    // vector from p1 to test point
+    float tx = static_cast<float>(px - x1);
+    float ty = static_cast<float>(py - y1);
+
+    // project onto line
+    float t = tx * nx + ty * ny;
+    t = std::max(0.0f, std::min(length, t));
+
+    // closest point on segment
+    float cx = x1 + t * nx;
+    float cy = y1 + t * ny;
+
+    // interpolate radius at closest point
+    float radius = r1 + (r2 - r1) * (t / length);
+
+    // distance from closest point
+    float dist = sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy));
+
+    return dist <= radius;
+}
+
+void Simulator::updateLineSegmentSolidField(LineSegment& seg) {
+    // bounding box for optimization
+    int maxX = std::max({seg.startX, seg.endX, seg.prevStartX, seg.prevEndX}) +
+               static_cast<int>(std::max(seg.startRadius, seg.endRadius)) + 2;
+    int minX = std::min({seg.startX, seg.endX, seg.prevStartX, seg.prevEndX}) -
+               static_cast<int>(std::max(seg.startRadius, seg.endRadius)) - 2;
+    int maxY = std::max({seg.startY, seg.endY, seg.prevStartY, seg.prevEndY}) +
+               static_cast<int>(std::max(seg.startRadius, seg.endRadius)) + 2;
+    int minY = std::min({seg.startY, seg.endY, seg.prevStartY, seg.prevEndY}) -
+               static_cast<int>(std::max(seg.startRadius, seg.endRadius)) - 2;
+
+    // clamp to grid bounds
+    minX = std::max(1, minX);
+    maxX = std::min(gridX - 2, maxX);
+    minY = std::max(1, minY);
+    maxY = std::min(gridY - 2, maxY);
+
+    for (int i = minX; i <= maxX; i++) {
+        for (int j = minY; j <= maxY; j++) {
+            // check previous position
+            bool wasInPrev = isPointNearSegment(i, j,
+                seg.prevStartX, seg.prevStartY, seg.prevStartRadius,
+                seg.prevEndX, seg.prevEndY, seg.prevEndRadius);
+
+            // check current position
+            bool isInNew = isPointNearSegment(i, j,
+                seg.startX, seg.startY, seg.startRadius,
+                seg.endX, seg.endY, seg.endRadius);
+
+            if (wasInPrev && !isInNew) {
+                s[idx(i, j)] = 1.0f; // make fluid
+                d[idx(i, j)] = 1.0f;
+                x[idx(i, j)] = 0.0f;
+                y[idx(i, j)] = 0.0f;
+            } else if (!wasInPrev && isInNew) {
+                s[idx(i, j)] = 0.0f; // make solid
+            }
+        }
+    }
+}
+#endif
 
 void Simulator::update() {
     // base steps
@@ -445,6 +699,7 @@ float Simulator::sample(float i, float j, int type) {
 
 
 // CIRCLE HELPERS
+#ifdef ENABLE_MOUSE_INPUT
 void Simulator::moveCircle(int newGridX, int newGridY) {
     prevCircleX = circleX;
     prevCircleY = circleY;
@@ -463,12 +718,15 @@ void Simulator::moveCircle(int newGridX, int newGridY) {
 
     updateCircle(prevCircleX, prevCircleY, circleX, circleY);
 }
+#endif
 
+#ifdef ENABLE_MOUSE_INPUT
 void Simulator::updateCircle(int prevX, int prevY, int newX, int newY) {
-    updateCircleAreas(prevX, prevY, newX, newY);
+    updateCircleAreas(prevX, prevY, newX, newY, circleRadius, circleRadius);
     circleMomentumTransfer();
     enforceBoundaryConditions();
 }
+#endif
 
 void Simulator::enforceBoundaryConditions() {
     // clear velocity in all solid cells and their neighboring velocity components
@@ -531,14 +789,15 @@ void Simulator::enforceBoundaryConditions() {
     }
 }
 
+#ifdef ENABLE_MOUSE_INPUT
 void Simulator::circleMomentumTransfer() {
-    if (fabs(circleVelX) < 0.001f && fabs(circleVelY) < 0.001f) {
-        return;
-    }
+    int deltaX = circleX - prevCircleX;
+    int deltaY = circleY - prevCircleY;
+    if (deltaX == 0 && deltaY == 0) return;
 
     float effectiveRadius = circleRadius + momentumTransferRadius;
 
-    // apply momentum to fluid cells near the ball surface
+    // apply momentum to fluid cells near ball surface
     for (int i = circleX - static_cast<int>(effectiveRadius) - 1;
          i <= circleX + static_cast<int>(effectiveRadius) + 1; i++) {
         for (int j = circleY - static_cast<int>(effectiveRadius) - 1;
@@ -560,13 +819,13 @@ void Simulator::circleMomentumTransfer() {
 
                     float densityFactor = d[idx(i, j)]; // weight velocity imparted by local density
 
-                    float momentumX = circleVelX * momentumTransferStrength * falloff * densityFactor;
-                    float momentumY = circleVelY * momentumTransferStrength * falloff * densityFactor;
+                    float momentumX = deltaX * momentumTransferStrength * falloff * densityFactor;
+                    float momentumY = deltaY * momentumTransferStrength * falloff * densityFactor;
 
                     x[idx(i, j)] += momentumX;
                     y[idx(i, j)] += momentumY;
 
-                    // NOTE: max velocity clamping for force imparted by the circle, for stability
+                    // NOTE: max velocity clamping for force imparted by circle, for stability
                     float maxVel = 8.0f;
                     x[idx(i, j)] = std::max(-maxVel, std::min(maxVel, x[idx(i, j)]));
                     y[idx(i, j)] = std::max(-maxVel, std::min(maxVel, y[idx(i, j)]));
@@ -575,13 +834,64 @@ void Simulator::circleMomentumTransfer() {
         }
     }
 }
+#else
+void Simulator::circleMomentumTransfer() {
+    for (int c = 0; c < HandTracking::MAX_CIRCLES; c++) {
+        const CircleState& circle = circles[c];
+        if (!circle.present) continue;
+        int deltaX = circle.x - circle.prevX;
+        int deltaY = circle.y - circle.prevY;
+        if (deltaX == 0 && deltaY == 0) continue;
 
-void Simulator::updateCircleAreas(int prevX, int prevY, int newX, int newY) {
+        float effectiveRadius = circle.scaledRadius + momentumTransferRadius;
+
+        // apply momentum to fluid cells near ball surface
+        for (int i = circle.x - static_cast<int>(effectiveRadius) - 1;
+             i <= circle.x + static_cast<int>(effectiveRadius) + 1; i++) {
+            for (int j = circle.y - static_cast<int>(effectiveRadius) - 1;
+                 j <= circle.y + static_cast<int>(effectiveRadius) + 1; j++) {
+
+                if (i >= 0 && i < gridX && j >= 0 && j < gridY) {
+                    if (s[idx(i, j)] == 0.0f) continue;
+
+                    float dx = (i + 0.5f) - circle.x;
+                    float dy = (j + 0.5f) - circle.y;
+                    float distance = sqrt(dx * dx + dy * dy);
+
+                    // within influence radius but outside ball
+                    if (distance > circle.scaledRadius && distance <= effectiveRadius) {
+                        // falloff is 1/r^2
+                        float normalizedDistance = (distance - circle.scaledRadius) / momentumTransferRadius;
+                        float falloff = 1.0f - normalizedDistance * normalizedDistance;
+                        falloff = std::max(0.0f, falloff);
+
+                        float densityFactor = d[idx(i, j)]; // weight velocity imparted by local density
+
+                        float momentumX = deltaX * momentumTransferStrength * falloff * densityFactor;
+                        float momentumY = deltaY * momentumTransferStrength * falloff * densityFactor;
+
+                        x[idx(i, j)] += momentumX;
+                        y[idx(i, j)] += momentumY;
+
+                        // NOTE: max velocity clamping for force imparted by circle, for stability
+                        float maxVel = 8.0f;
+                        x[idx(i, j)] = std::max(-maxVel, std::min(maxVel, x[idx(i, j)]));
+                        y[idx(i, j)] = std::max(-maxVel, std::min(maxVel, y[idx(i, j)]));
+                    }
+                }
+            }
+        }
+    }
+}
+#endif
+
+void Simulator::updateCircleAreas(int prevX, int prevY, int newX, int newY,
+                                    int prevRadius, int newRadius) {
     // bounding box surrounding new and old circles
-    int minI = std::min(prevX - circleRadius, newX - circleRadius);
-    int maxI = std::max(prevX + circleRadius, newX + circleRadius);
-    int minJ = std::min(prevY - circleRadius, newY - circleRadius);
-    int maxJ = std::max(prevY + circleRadius, newY + circleRadius);
+    int minI = std::min(prevX - prevRadius, newX - newRadius);
+    int maxI = std::max(prevX + prevRadius, newX + newRadius);
+    int minJ = std::min(prevY - prevRadius, newY - newRadius);
+    int maxJ = std::max(prevY + prevRadius, newY + newRadius);
 
     for (int i = minI; i <= maxI; i++) {
         for (int j = minJ; j <= maxJ; j++) {
@@ -597,8 +907,8 @@ void Simulator::updateCircleAreas(int prevX, int prevY, int newX, int newY) {
                 float newDy = dy - newY;
                 float distNew = sqrt(newDx * newDx + newDy * newDy);
 
-                bool wasInPrevCircle = distPrev <= circleRadius;
-                bool isInNewCircle = distNew <= circleRadius;
+                bool wasInPrevCircle = distPrev <= prevRadius;
+                bool isInNewCircle = distNew <= newRadius;
 
                 if (wasInPrevCircle && !isInNewCircle) {
                     s[idx(i, j)] = 1.0f; // make it fluid again

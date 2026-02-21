@@ -125,12 +125,21 @@ CircleConfig ConfigLoader::loadCircleConfig(const json& j) {
     config.radius = j.value("radius", 0.1f);
     config.momentumTransferStrength = j.value("momentumTransferStrength", 0.25f);
     config.momentumTransferRadius = j.value("momentumTransferRadius", 1.0f);
+
+    if (j.contains("zScaling")) {
+        json zScaling = j["zScaling"];
+        config.zMin = zScaling.value("zMin", -0.1f);
+        config.zMax = zScaling.value("zMax", 0.1f);
+        config.scaleMin = zScaling.value("scaleMin", 2.0f);
+        config.scaleMax = zScaling.value("scaleMax", 0.5f);
+    }
+
     return config;
 }
 
 std::string ConfigLoader::readFile(const char* filename) {
 #ifdef __EMSCRIPTEN__
-    std::string path = std::string("/") + filename; // Emscripten virtual FS root
+    std::string path = std::string("/") + filename; // emscripten virtual FS root
 #else
     std::string path = std::string("../") + filename; // assuming run from build/ or debug/
 #endif

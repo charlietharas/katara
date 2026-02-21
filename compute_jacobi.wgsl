@@ -1,33 +1,9 @@
 struct SimParams {
     gridX: i32,
     gridY: i32,
-    cellSize: f32,
-    timestep: f32,
-    gravity: f32,
-    vorticity: f32,
-    vorticityLen: f32,
-    projectionIters: f32,
-    density: f32,
-    windTunnelSide: i32,
-    windTunnelStart: i32,
-    windTunnelEnd: i32,
-    windTunnelSpeed: f32,
-    circleX: i32,
-    circleY: i32,
-    prevCircleX: i32,
-    prevCircleY: i32,
-    circleRadius: i32,
-    circleVelX: f32,
-    circleVelY: f32,
-    momentumTransferStrength: f32,
-    momentumTransferRadius: f32,
-    circleWasMoved: i32,
-    halfCellSize: f32,
-    pad0: f32,
-    pad1: f32,
-    pad2: f32,
+    pad0: i32,
+    pad1: i32,
 };
-
 
 @group(0) @binding(0) var<uniform> params: SimParams;
 @group(0) @binding(1) var divergenceTexture: texture_storage_2d<r32float, read>;
@@ -57,7 +33,9 @@ fn jacobiIteration(@builtin(global_invocation_id) id: vec3<u32>) {
     let sy1 = textureLoad(solidTexture, vec2<i32>(i, j-1), 0).r;
     let b = sx0 + sx1 + sy0 + sy1;
 
-    if (b == 0.0) {
+    // stability
+    let EPSILON = 0.001;
+    if (b < EPSILON) {
         textureStore(newPressureTexture, vec2<i32>(i, j), vec4<f32>(0.0));
         return;
     }
@@ -69,7 +47,14 @@ fn jacobiIteration(@builtin(global_invocation_id) id: vec3<u32>) {
 
     let divergence = textureLoad(divergenceTexture, vec2<i32>(i, j)).r;
 
-    let newPressure = (pRight + pLeft + pTop + pBottom - divergence) / b;
+    var newPressure = (pRight + pLeft + pTop + pBottom - divergence) / b;
+
+    // clamp to prevent nan propagation
+    if (newPressure == newPressure) {  // nan != nan
+        newPressure = clamp(newPressure, -1000.0, 1000.0);
+    } else {
+        newPressure = 0.0;
+    }
 
     textureStore(newPressureTexture, vec2<i32>(i, j), vec4<f32>(newPressure));
 }

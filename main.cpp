@@ -14,6 +14,7 @@
 #include "irenderer.h"
 #include "isimulator.h"
 #include "config.h"
+#include "circle_state.h"
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -56,6 +57,7 @@ void mainLoopCallback(void* arg) {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         if (event.type == SDL_QUIT) *(s->running) = false;
+#ifdef ENABLE_MOUSE_INPUT
         else if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
             auto coords = s->simulator->screenToGridCoords(event.button.x, event.button.y, s->windowWidth, s->windowHeight);
             if (s->simulator->isInsideCircle(coords.first, coords.second))
@@ -67,74 +69,52 @@ void mainLoopCallback(void* arg) {
             auto coords = s->simulator->screenToGridCoords(event.motion.x, event.motion.y, s->windowWidth, s->windowHeight);
             s->simulator->onMouseDrag(coords.first, coords.second);
         }
+#endif
     }
 
     s->simulator->update();
     s->renderer->render(*s->simulator);
 }
 
-struct HandTrackingState {
-    ISimulator* simulator = nullptr;
-    int windowWidth = 0;
-    int windowHeight = 0;
-    bool isTracking = false;
-    bool wasInside = false;
-};
-
-static HandTrackingState g_handState;
-
 extern "C" {
-    EMSCRIPTEN_KEEPALIVE
-    void initHandTracking(int w, int h) {
-        g_handState.windowWidth = w;
-        g_handState.windowHeight = h;
-    }
+#ifndef ENABLE_MOUSE_INPUT
+    static ISimulator* g_simulator = nullptr;
 
     EMSCRIPTEN_KEEPALIVE
     void setSimulatorPointer(void* ptr) {
-        g_handState.simulator = static_cast<ISimulator*>(ptr);
+        g_simulator = static_cast<ISimulator*>(ptr);
     }
 
     EMSCRIPTEN_KEEPALIVE
-    void updateHandPosition(float nx, float ny, bool present) {
-        if (!g_handState.simulator || !present) {
-            if (g_handState.isTracking) g_handState.simulator->onMouseUp();
-            g_handState.isTracking = false;
-            g_handState.wasInside = false;
-            return;
-        }
-
-        // Convert normalized coords to screen (flip Y for MediaPipe)
-        int sx = static_cast<int>(nx * g_handState.windowWidth);
-        int sy = static_cast<int>((1.0f - ny) * g_handState.windowHeight);
-        auto coords = g_handState.simulator->screenToGridCoords(sx, sy, g_handState.windowWidth, g_handState.windowHeight);
-        bool inside = g_handState.simulator->isInsideCircle(coords.first, coords.second);
-
-        if (inside) {
-            if (!g_handState.isTracking && !g_handState.wasInside) {
-                g_handState.simulator->onMouseDown(coords.first, coords.second);
-                g_handState.isTracking = true;
-            } else if (g_handState.isTracking) {
-                g_handState.simulator->onMouseDrag(coords.first, coords.second);
-            }
-            g_handState.wasInside = true;
-        } else {
-            if (g_handState.isTracking) {
-                g_handState.simulator->onMouseUp();
-                g_handState.isTracking = false;
-            }
-            g_handState.wasInside = false;
+    void updateFingertips(const FingertipData* fingertips, int count) {
+        if (g_simulator) {
+            g_simulator->updateCircles(fingertips, count);
         }
     }
+
+    EMSCRIPTEN_KEEPALIVE
+    void updateLineSegments(const FingertipData* landmarks, int count) {
+        if (g_simulator) {
+            g_simulator->updateLineSegments(landmarks, count);
+        }
+    }
+
+    EMSCRIPTEN_KEEPALIVE
+    void update() {
+        if (g_simulator) {
+            g_simulator->update();
+        }
+    }
+#endif
 }
 #endif
 
 int main(int argc, char** argv) {
     // load config from default path if none specified
 #ifdef __EMSCRIPTEN__
-    std::string configPath = "/config.json";  // Emscripten virtual FS root
+    std::string configPath = "/config.json";  // emscripten virtual FS root
 #else
-    std::string configPath = "../config.json";  // Native build
+    std::string configPath = "../config.json";  // desktop build
 #endif
     if (argc > 1) {
         configPath = argv[1];
@@ -261,6 +241,9 @@ int main(int argc, char** argv) {
     uint delay = config.simulation.timestep * 1000;
 
 #ifdef __EMSCRIPTEN__
+#ifndef ENABLE_MOUSE_INPUT
+    setSimulatorPointer(simulator.get());
+#endif
     MainLoopState state{simulator.get(), renderer.get(), window, &running, windowWidth, windowHeight};
     emscripten_set_main_loop_arg(mainLoopCallback, &state, 0, true);
 #else
@@ -269,6 +252,7 @@ int main(int argc, char** argv) {
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
                 running = false;
+#ifdef ENABLE_MOUSE_INPUT
             } else if (event.type == SDL_MOUSEBUTTONDOWN and event.button.button == SDL_BUTTON_LEFT) {
                 std::pair<int, int> gridCoords = simulator->screenToGridCoords(event.button.x, event.button.y, windowWidth, windowHeight);
                 if (simulator->isInsideCircle(gridCoords.first, gridCoords.second)) {
@@ -280,6 +264,7 @@ int main(int argc, char** argv) {
                 std::pair<int, int> gridCoords = simulator->screenToGridCoords(event.motion.x, event.motion.y, windowWidth, windowHeight);
                 simulator->onMouseDrag(gridCoords.first, gridCoords.second);
             }
+#endif
         }
 
         simulator->update();

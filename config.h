@@ -5,6 +5,7 @@
 #include <fstream>
 #include <sstream>
 #include "json.hpp"
+#include "circle_state.h"
 
 using json = nlohmann::json;
 
@@ -36,6 +37,12 @@ struct CircleConfig {
     float radius = 0.1f;
     float momentumTransferStrength = 0.25f;
     float momentumTransferRadius = 1.0f;
+
+    // z-coordinate scaling for depth-based radius
+    float zMin = -0.1f;      // closest hand
+    float zMax = 0.1f;       // farthest hand
+    float scaleMin = 2.0f;   // max scale when closest
+    float scaleMax = 0.5f;   // min scale when furthest
 };
 
 enum class PipelineType {

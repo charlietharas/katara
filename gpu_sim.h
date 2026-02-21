@@ -6,37 +6,62 @@
 #include "isimulator.h"
 #include "sim.h"
 #include "config.h"
+#include "circle_state.h"
+
+struct MinMaxUniform {
+    float pressMin, pressMax, velMin, velMax;
+};
 
 // SIM PARAMS UNIFORM
 struct alignas(16) SimParams {
     int gridX;
     int gridY;
     float cellSize;
+    float halfCellSize;
     float timestep;
-    float gravity;
-    float vorticity;
-    float vorticityLen;
-    float projectionIters;
     float density;
+    float gravity;
+    float projectionIters;
     int windTunnelSide;
     int windTunnelStart;
     int windTunnelEnd;
     float windTunnelSpeed;
-    int circleX;
-    int circleY;
-    int prevCircleX;
-    int prevCircleY;
-    int circleRadius;
-    float circleVelX;
-    float circleVelY;
     float momentumTransferStrength;
     float momentumTransferRadius;
-    int circleWasMoved;
-    float halfCellSize;
-    float pad0;
-    float pad1;
-    float pad2;
+    float vorticity;
+    float vorticityLen;
+#ifdef ENABLE_MOUSE_INPUT
+    // we only need to track single circle state
+    int circleX, circleY, prevCircleX, prevCircleY;
+    float circleVelX, circleVelY;
+    int circleRadius;
+    int pad0, pad1, pad2;
+#else
+    // track 21 landmarks per hand
+    int circleX[HandTracking::MAX_CIRCLES], circleY[HandTracking::MAX_CIRCLES];
+    int prevCircleX[HandTracking::MAX_CIRCLES], prevCircleY[HandTracking::MAX_CIRCLES];
+    float circleVelX[HandTracking::MAX_CIRCLES], circleVelY[HandTracking::MAX_CIRCLES];
+    float circleZ[HandTracking::MAX_CIRCLES]; // we use this to scale radii by distance to wrist
+    int circleScaledRadius[HandTracking::MAX_CIRCLES]; // pre-scaled
+    int circlePresent[HandTracking::MAX_CIRCLES];
+    int circleWasPresent[HandTracking::MAX_CIRCLES];
+    int numCircles;
+    int baseCircleRadius; // base radius from config
+
+    // hand skeleton connections (23 per hand)
+    int segmentStartX[HandTracking::MAX_SEGMENTS], segmentStartY[HandTracking::MAX_SEGMENTS];
+    int segmentEndX[HandTracking::MAX_SEGMENTS], segmentEndY[HandTracking::MAX_SEGMENTS];
+    int segmentPrevStartX[HandTracking::MAX_SEGMENTS], segmentPrevStartY[HandTracking::MAX_SEGMENTS];
+    int segmentPrevEndX[HandTracking::MAX_SEGMENTS], segmentPrevEndY[HandTracking::MAX_SEGMENTS];
+    float segmentStartRadius[HandTracking::MAX_SEGMENTS], segmentEndRadius[HandTracking::MAX_SEGMENTS];
+    float segmentPrevStartRadius[HandTracking::MAX_SEGMENTS], segmentPrevEndRadius[HandTracking::MAX_SEGMENTS];
+    int segmentPresent[HandTracking::MAX_SEGMENTS];
+    int segmentWasPresent[HandTracking::MAX_SEGMENTS];
+    int numSegments;
+    int pad0;
+#endif
 };
+static_assert(sizeof(SimParams) % 16 == 0, "SimParams invalid alignment");
 
 // ring buffer histogram slots
 enum HistogramSlotState {
@@ -71,7 +96,7 @@ public:
     void update() override;
 
     // fields
-    // TODO add shitty slow cpu callback (test: would this work with CPU/GPU rendering/sim?)
+    // TODO LATER add shitty slow cpu callback (test: would this work with CPU/GPU rendering/sim?)
     CPU_SIM_GETTER(getVelocityX)
     CPU_SIM_GETTER(getVelocityY)
     CPU_SIM_GETTER(getPressure)
@@ -104,8 +129,11 @@ private:
     // workgroup size (initialized to ceil(gridDim / 16))
     uint32_t workgroupX = 0, workgroupY = 0;
 
-    // circle state
-    bool circleWasMoved = false; // workaround for CPU sim; passed into uniform buffer
+#ifndef ENABLE_MOUSE_INPUT
+    int numCircles = 0;
+#endif
+    float momentumTransferStrength;
+    float momentumTransferRadius;
 
     // histogram state
     mutable HistogramSlot histogramSlots[HISTOGRAM_RING_SIZE];
@@ -122,6 +150,7 @@ private:
     DECLARE_TEXTURE_AND_VIEW(pressure)
     DECLARE_TEXTURE_AND_VIEW(density)
     DECLARE_TEXTURE_AND_VIEW(solid)
+    DECLARE_TEXTURE_AND_VIEW(solidStaging)
     DECLARE_TEXTURE_AND_VIEW(ink)
     DECLARE_TEXTURE_AND_VIEW(divergence)
     DECLARE_TEXTURE_AND_VIEW(curl)
@@ -144,6 +173,9 @@ private:
     DECLARE_PIPELINE_RESOURCES(vorticityCompute)
     DECLARE_PIPELINE_RESOURCES(vorticityApply)
     DECLARE_PIPELINE_RESOURCES(circle)
+#ifndef ENABLE_MOUSE_INPUT
+    DECLARE_PIPELINE_RESOURCES(lineSegment)
+#endif
     DECLARE_PIPELINE_RESOURCES(pressureMinMax)
     DECLARE_PIPELINE_RESOURCES(histogramBins)
 
@@ -159,16 +191,25 @@ private:
     void dispatchBoundaryConditions(WGPUCommandEncoder encoder);
     void dispatchVorticity(WGPUCommandEncoder encoder);
     void dispatchCircle(WGPUCommandEncoder encoder);
+#ifndef ENABLE_MOUSE_INPUT
+    void dispatchLineSegments(WGPUCommandEncoder encoder);
+#endif
     void dispatchPressureMinMax(int slotIndex);
     void dispatchHistogramBins(int slotIndex);
     void dispatchHistogramCompute(const struct HistogramDispatchDesc& desc); // async helper
+
+    int scaleRadiusByZ(float z, int baseRadius);
 
     // histogram async callbacks
     void onMinMaxMapped(WGPUMapAsyncStatus status, int slotIndex);
     void onHistogramBinsMapped(WGPUMapAsyncStatus status, int slotIndex);
 
-    // circle movement
+#ifdef ENABLE_MOUSE_INPUT
     void moveCircle(int newGridX, int newGridY) override;
+#else
+    void updateCircles(const FingertipData* fingertips, int count) override;
+    void updateLineSegments(const FingertipData* landmarks, int count) override;
+#endif
 
     // gpu resource initialization helpers
     bool createTexture(const TextureDesc& desc, WGPUTexture& texture, WGPUTextureView& view);

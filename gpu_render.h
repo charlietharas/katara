@@ -39,6 +39,7 @@ struct alignas(16) UniformData {
     Vec4Int densityHistogramBins[16];
     Vec4Int velocityHistogramBins[16];
 };
+static_assert(sizeof(UniformData) % 16 == 0, "UniformData invalid alignment");
 
 class GPURenderer : public WGPUBoilerplate, public IRenderer {
 public:

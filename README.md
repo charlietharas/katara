@@ -2,6 +2,12 @@
 
 Modular fluid simulation. Inspired by a [lovely video](https://www.youtube.com/watch?v=iKAVRgIrUOU) by 10 Minute Physics.
 
+## TODO
+
+Currently still dotting the i's and crossing the t's on code tidying, clean build options, etc.
+
+But will soon support Emscripten builds so that we can host the WASM-compiled binaries on GitHub pages and deploy to web!
+
 ## Build Instructions (Linux)
 Dependencies:
 
@@ -70,6 +76,10 @@ Parameters will either change fluid behavior, simulation components (e.g. fluid 
 | sim.circle     | radius                    | Radius of interactive circle obstacle in normalized world coords (0-1); 0 to disable                                                 |
 |                | momentumTransferStrength     | Strength with which circle imparts velocity on nearby fluid when moved (scaling factor)                                                 |
 |                | momentumTransferRadius    | Distance around the circle center around which velocity is imparted (with quadratic falloff); proportional to radius                              |
+| sim.circle.zScaling | zMin                    | Hand z-coordinate treated as closest (depth); used for radius scaling in hand-tracking mode                                                 |
+|                | zMax                    | Hand z-coordinate treated as farthest; used for radius scaling in hand-tracking mode                                                 |
+|                | scaleMin                | Radius scale factor when hand is closest (z=zMin); larger = bigger circle when near camera                                                 |
+|                | scaleMax                | Radius scale factor when hand is farthest (z=zMax); smaller = smaller circle when far from camera                                                 |
 | rendering      | target                    | `0`=colored density grid, `1`=greyscale smoke grid, `2`=combined smoke/density grid, `3`=ink mode (requires `imagePath` set)             |
 |                | showVelocityVectors       | Enable/disable rendering velocity grid as white lines                                                                   |
 |                | velocityScale             | Controls the length of displayed velocity vectors                                                                       |

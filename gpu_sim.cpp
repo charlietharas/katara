@@ -27,6 +27,7 @@ void GPUSimulator::updateUniformBufferSim() {
     params.windTunnelEnd = windTunnelEndCell;
     params.windTunnelSpeed = config->simulation.windTunnel.velocity;
 
+#ifdef ENABLE_MOUSE_INPUT
     params.circleX = circleX;
     params.circleY = circleY;
     params.prevCircleX = prevCircleX;
@@ -34,9 +35,46 @@ void GPUSimulator::updateUniformBufferSim() {
     params.circleRadius = circleRadius;
     params.circleVelX = circleVelX;
     params.circleVelY = circleVelY;
+#else
+    static int uniformFrameCount = 0;
+
+    for (int i = 0; i < 10; i++) {
+        params.circleX[i] = circles[i].x;
+        params.circleY[i] = circles[i].y;
+        params.prevCircleX[i] = circles[i].prevX;
+        params.prevCircleY[i] = circles[i].prevY;
+        params.circleVelX[i] = circles[i].velX;
+        params.circleVelY[i] = circles[i].velY;
+        params.circleZ[i] = circles[i].z;
+        params.circleScaledRadius[i] = circles[i].scaledRadius;
+        params.circlePresent[i] = circles[i].present ? 1 : 0;
+        params.circleWasPresent[i] = circles[i].wasPresent ? 1 : 0;
+    }
+    params.numCircles = numCircles;
+    params.baseCircleRadius = baseCircleRadius;
+    uniformFrameCount++;
+
+    // blahhh
+    for (int i = 0; i < HandTracking::MAX_SEGMENTS; i++) {
+        params.segmentStartX[i] = segments[i].startX;
+        params.segmentStartY[i] = segments[i].startY;
+        params.segmentEndX[i] = segments[i].endX;
+        params.segmentEndY[i] = segments[i].endY;
+        params.segmentPrevStartX[i] = segments[i].prevStartX;
+        params.segmentPrevStartY[i] = segments[i].prevStartY;
+        params.segmentPrevEndX[i] = segments[i].prevEndX;
+        params.segmentPrevEndY[i] = segments[i].prevEndY;
+        params.segmentStartRadius[i] = segments[i].startRadius;
+        params.segmentEndRadius[i] = segments[i].endRadius;
+        params.segmentPrevStartRadius[i] = segments[i].prevStartRadius;
+        params.segmentPrevEndRadius[i] = segments[i].prevEndRadius;
+        params.segmentPresent[i] = segments[i].present ? 1 : 0;
+        params.segmentWasPresent[i] = segments[i].wasPresent ? 1 : 0;
+    }
+    params.numSegments = numSegments;
+#endif
     params.momentumTransferStrength = momentumTransferStrength;
     params.momentumTransferRadius = momentumTransferRadius;
-    params.circleWasMoved = circleWasMoved;
     params.halfCellSize = cellSize * 0.5f;
 
     wgpuQueueWriteBuffer(queue, uniformBuffer, 0, &params, sizeof(SimParams));
@@ -150,6 +188,21 @@ GPUSimulator::GPUSimulator(const Config& config)
 {
     momentumTransferStrength = config.simulation.circle.momentumTransferStrength;
     momentumTransferRadius = config.simulation.circle.momentumTransferRadius;
+#ifndef ENABLE_MOUSE_INPUT
+    baseCircleRadius = static_cast<int>(config.simulation.circle.radius / cpuSimulator.cellSize);
+    for (int i = 0; i < HandTracking::MAX_CIRCLES; i++) {
+        circles[i].x = 0;
+        circles[i].y = 0;
+        circles[i].prevX = 0;
+        circles[i].prevY = 0;
+        circles[i].velX = 0.0f;
+        circles[i].velY = 0.0f;
+        circles[i].z = 0.0f;
+        circles[i].scaledRadius = 0;
+        circles[i].present = false;
+        circles[i].wasPresent = false;
+    }
+#endif
 }
 
 GPUSimulator::~GPUSimulator() {
@@ -179,6 +232,7 @@ GPUSimulator::~GPUSimulator() {
     RELEASE_TEXTURE(pressure)
     RELEASE_TEXTURE(density)
     RELEASE_TEXTURE(solid)
+    RELEASE_TEXTURE(solidStaging)
     RELEASE_TEXTURE(ink)
     RELEASE_TEXTURE(divergence)
     RELEASE_TEXTURE(curl)
@@ -217,7 +271,7 @@ void GPUSimulator::copyInitialDataToGPU() {
 
     // texture size is grid size
     WGPUExtent3D size = {static_cast<uint32_t>(gridX), static_cast<uint32_t>(gridY), 1};
-    
+
     // combine velocity data so we can write as single RG32Float texture
     std::vector<float> velocityData(gridX * gridY * 2);
     for (int j = 0; j < gridY; j++) {
@@ -236,21 +290,34 @@ void GPUSimulator::copyInitialDataToGPU() {
 
     WGPUTextureDataLayout layout = {};
     layout.offset = 0;
-    layout.bytesPerRow = gridX * 8; // 2 floats * 4 bytes
+    layout.bytesPerRow = gridX * 8;
     layout.rowsPerImage = gridY;
 
     copy.texture = velocityTexture;
+    wgpuQueueWriteTexture(queue, &copy, velocityData.data(), velocityData.size() * sizeof(float), &layout, &size);
+    copy.texture = newVelocityTexture;
     wgpuQueueWriteTexture(queue, &copy, velocityData.data(), velocityData.size() * sizeof(float), &layout, &size);
 
     // write density data
     layout.bytesPerRow = gridX * 4; // 1 float * 4 bytes
     copy.texture = densityTexture;
     wgpuQueueWriteTexture(queue, &copy, density.data(), density.size() * sizeof(float), &layout, &size);
-    
-    // write solid data
-    copy.texture = solidTexture;
-    layout.bytesPerRow = gridX * 4; // 1 float * 4 bytes
+    copy.texture = newDensityTexture;
+    wgpuQueueWriteTexture(queue, &copy, density.data(), density.size() * sizeof(float), &layout, &size);
+
+    // write solid data to staging texture
+    layout.bytesPerRow = gridX * 4;
+    copy.texture = solidStagingTexture;
     wgpuQueueWriteTexture(queue, &copy, solid.data(), solid.size() * sizeof(float), &layout, &size);
+
+    // copy from staging texture to storage texture
+    WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(device, nullptr);
+    copyTextureDeviceToDevice(encoder, solidStagingTexture, solidTexture);
+    WGPUCommandBufferDescriptor cmdDesc = {};
+    WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, &cmdDesc);
+    wgpuQueueSubmit(queue, 1, &commands);
+    wgpuCommandBufferRelease(commands);
+    wgpuCommandEncoderRelease(encoder);
 
     // copy ink data if available
     if (inkInitialized) {
@@ -271,7 +338,9 @@ void GPUSimulator::copyInitialDataToGPU() {
         }
 
         copy.texture = inkTexture;
-        layout.bytesPerRow = gridX * 16; // 4 floats * 4 bytes
+        layout.bytesPerRow = gridX * 16;
+        wgpuQueueWriteTexture(queue, &copy, inkData.data(), inkData.size() * sizeof(float), &layout, &size);
+        copy.texture = newInkTexture;
         wgpuQueueWriteTexture(queue, &copy, inkData.data(), inkData.size() * sizeof(float), &layout, &size);
     }
 
@@ -281,9 +350,6 @@ void GPUSimulator::copyInitialDataToGPU() {
 void GPUSimulator::update() {
     updateUniformBufferSim();
 
-    // by default, circle was not moved
-    circleWasMoved = false;
-
     // encoder for the entire update
     WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(device, nullptr);
 
@@ -291,9 +357,30 @@ void GPUSimulator::update() {
     if (gravity != 0.0f) {
         dispatchIntegrate(encoder);
     }
+    #ifndef ENABLE_MOUSE_INPUT
+    // only dispatch line segments if there are segments present
+    if (numSegments > 0) {
+        dispatchLineSegments(encoder);
+    }
+    #endif
+    #ifndef ENABLE_MOUSE_INPUT
+    // only dispatch circle if there are circles present (after line segments so momentum is not wiped)
+    if (numCircles > 0) {
+        dispatchCircle(encoder);
+        // reset prev positions to current so next frame has zero delta if not moved
+        for (int i = 0; i < numCircles; i++) {
+            circles[i].prevX = circles[i].x;
+            circles[i].prevY = circles[i].y;
+        }
+    }
+    #else
     dispatchCircle(encoder); // called every frame for pipeline consistency
-    // ^ this is also possible because this is the only shader to not need access to other
-    // pixels, so it is fully parallelizable with read-write and so just one compute pass is chill
+    prevCircleX = circleX; // reset prev position to current so next frame has zero delta if not moved
+    prevCircleY = circleY;
+    #endif
+    // ^ fun fact, this is the only shader to not need access to other pixels (e.g. neighbors),
+    // so it is fully parallelizable with read-write and so just one compute pass is chill
+
     dispatchBoundaryConditions(encoder);
     dispatchProjection(encoder);
     dispatchExtrapolate(encoder);
@@ -331,6 +418,7 @@ void GPUSimulator::update() {
 
 
 // MOUSE HELPERS
+#ifdef ENABLE_MOUSE_INPUT
 void GPUSimulator::moveCircle(int newGridX, int newGridY) {
     prevCircleX = circleX;
     prevCircleY = circleY;
@@ -346,13 +434,156 @@ void GPUSimulator::moveCircle(int newGridX, int newGridY) {
     circleX = newGridX;
     circleY = newGridY;
 
-    // so this fixed a bug with laid over velocity from the momentum transfer
-    // failing to dissipate and just spewing out from the ball after it stopped moving
-    circleWasMoved = true;
-
     // the CPU version calls updateCircle here, but instead we call dispatchCircle() every frame
     // to make the pipeline consistent
 }
+#else
+int GPUSimulator::scaleRadiusByZ(float z, int baseRadius) {
+    return ::scaleRadiusByZ(z, baseRadius, config->simulation.circle);
+}
+
+void GPUSimulator::updateCircles(const FingertipData* fingertips, int count) {
+    int updateCount = count < HandTracking::MAX_CIRCLES ? count : HandTracking::MAX_CIRCLES;
+    numCircles = updateCount;
+
+    static int frameCount = 0;
+
+    for (int i = 0; i < updateCount; i++) {
+        int newGridX = static_cast<int>((1.0f - fingertips[i].x) * gridX);
+        int newGridY = static_cast<int>((1.0f - fingertips[i].y) * gridY);
+
+        circles[i].prevX = circles[i].x;
+        circles[i].prevY = circles[i].y;
+        circles[i].x = newGridX;
+        circles[i].y = newGridY;
+        circles[i].z = fingertips[i].z;
+        circles[i].scaledRadius = scaleRadiusByZ(fingertips[i].z, baseCircleRadius);
+        circles[i].present = (fingertips[i].present > 0.5f);
+        // wasPresent is preserved from previous frame
+
+        if (fingertips[i].present <= 0.5f) {
+            circles[i].velX = 0.0f;
+            circles[i].velY = 0.0f;
+            circles[i].wasPresent = false;
+        } else if (circles[i].wasPresent) {
+            float timestep = config->simulation.timestep;
+            float instantVelX = (newGridX - circles[i].prevX) / timestep;
+            float instantVelY = (newGridY - circles[i].prevY) / timestep;
+
+            // filter out sub-pixel jitter
+            float posDelta = sqrt(float(newGridX - circles[i].prevX) * float(newGridX - circles[i].prevX) +
+                                  float(newGridY - circles[i].prevY) * float(newGridY - circles[i].prevY));
+            float movementThreshold = 1.0f;
+
+            float alpha;
+            if (posDelta < movementThreshold) {
+                // aggressive velocity decay and no velocity addition
+                alpha = 0.8f;
+                instantVelX = 0.0f;
+                instantVelY = 0.0f;
+            } else {
+                // apply normal smoothing
+                alpha = 0.3f;
+            }
+
+            circles[i].velX = alpha * instantVelX + (1.0f - alpha) * circles[i].velX;
+            circles[i].velY = alpha * instantVelY + (1.0f - alpha) * circles[i].velY;
+            circles[i].wasPresent = true;
+        } else {
+            // first frame this circle appears
+            circles[i].velX = 0.0f;
+            circles[i].velY = 0.0f;
+            circles[i].wasPresent = true;
+        }
+    }
+    frameCount++;
+
+    // clear any circles that are no longer present
+    for (int i = updateCount; i < HandTracking::MAX_CIRCLES; i++) {
+        circles[i].present = false;
+        circles[i].wasPresent = false;
+        circles[i].x = 0;
+        circles[i].y = 0;
+        circles[i].prevX = 0;
+        circles[i].prevY = 0;
+        circles[i].velX = 0.0f;
+        circles[i].velY = 0.0f;
+        circles[i].z = 0.0f;
+        circles[i].scaledRadius = 0;
+    }
+}
+
+void GPUSimulator::updateLineSegments(const FingertipData* landmarks, int count) {
+    // build segments from hand connections
+    numSegments = 0;
+    int numHands = std::min(2, count / HandTracking::LANDMARKS_PER_HAND);
+
+    for (int hand = 0; hand < numHands; hand++) {
+        int offset = hand * HandTracking::LANDMARKS_PER_HAND;
+
+        // check if hand is present
+        bool handPresent = false;
+        for (int i = 0; i < HandTracking::LANDMARKS_PER_HAND; i++) {
+            if (landmarks[offset + i].present > 0.5f) {
+                handPresent = true;
+                break;
+            }
+        }
+        if (!handPresent) continue;
+
+        // create segments for each connection
+        for (int conn = 0; conn < HandTracking::MAX_CONNECTIONS && numSegments < HandTracking::MAX_SEGMENTS; conn++) {
+            int idx1 = HandTracking::HAND_CONNECTIONS[conn][0];
+            int idx2 = HandTracking::HAND_CONNECTIONS[conn][1];
+
+            const FingertipData& p1 = landmarks[offset + idx1];
+            const FingertipData& p2 = landmarks[offset + idx2];
+
+            LineSegment& seg = segments[numSegments];
+            seg.wasPresent = seg.present;
+            seg.prevStartX = seg.startX;
+            seg.prevStartY = seg.startY;
+            seg.prevEndX = seg.endX;
+            seg.prevEndY = seg.endY;
+            seg.prevStartRadius = seg.startRadius;
+            seg.prevEndRadius = seg.endRadius;
+
+            seg.present = (p1.present > 0.5f) && (p2.present > 0.5f);
+
+            if (seg.present) {
+                seg.startX = static_cast<int>((1.0f - p1.x) * gridX);
+                seg.startY = static_cast<int>((1.0f - p1.y) * gridY);
+                seg.endX = static_cast<int>((1.0f - p2.x) * gridX);
+                seg.endY = static_cast<int>((1.0f - p2.y) * gridY);
+                seg.startRadius = static_cast<float>(scaleRadiusByZ(p1.z, baseCircleRadius));
+                seg.endRadius = static_cast<float>(scaleRadiusByZ(p2.z, baseCircleRadius));
+            } else {
+                if (seg.wasPresent) {
+                    // clear previous segment
+                    seg.startX = 0;
+                    seg.startY = 0;
+                    seg.endX = 0;
+                    seg.endY = 0;
+                }
+            }
+
+            numSegments++;
+        }
+    }
+
+    // clear remaining segments
+    for (int i = numSegments; i < HandTracking::MAX_SEGMENTS; i++) {
+        segments[i].present = false;
+        segments[i].wasPresent = false;
+        segments[i].startX = 0;
+        segments[i].startY = 0;
+        segments[i].endX = 0;
+        segments[i].endY = 0;
+        segments[i].startRadius = 0.0f;
+        segments[i].endRadius = 0.0f;
+    }
+}
+#endif
 
 // DISPATCH COMPUTE SHADERS
 void GPUSimulator::dispatchIntegrate(WGPUCommandEncoder encoder) {
@@ -364,6 +595,13 @@ void GPUSimulator::dispatchCircle(WGPUCommandEncoder encoder) {
     dispatchComputePass(encoder, circlePipeline, circleBindGroup);
     copyTextureDeviceToDevice(encoder, newVelocityTexture, velocityTexture);
 }
+
+#ifndef ENABLE_MOUSE_INPUT
+void GPUSimulator::dispatchLineSegments(WGPUCommandEncoder encoder) {
+    dispatchComputePass(encoder, lineSegmentPipeline, lineSegmentBindGroup);
+    copyTextureDeviceToDevice(encoder, newVelocityTexture, velocityTexture);
+}
+#endif
 
 void GPUSimulator::dispatchBoundaryConditions(WGPUCommandEncoder encoder) {
     dispatchComputePass(encoder, boundaryPipeline, boundaryBindGroup);
@@ -579,17 +817,17 @@ void GPUSimulator::dispatchHistogramBins(int slotIndex) {
     wgpuQueueWriteBuffer(queue, slot.histogramBinBuffer, 0, zeroBins, sizeof(zeroBins));
 
     // update min/max uniform buffer with unified min/max data from slot
-    float minMaxUniform[4] = {
+    MinMaxUniform minMaxUniform = {
         slot.pendingPressureMinMax[0],
         slot.pendingPressureMinMax[1],
         slot.pendingVelocityMinMax[0],
         slot.pendingVelocityMinMax[1]
     };
-    wgpuQueueWriteBuffer(queue, slot.minMaxUniformBuffer, 0, minMaxUniform, sizeof(minMaxUniform));
+    wgpuQueueWriteBuffer(queue, slot.minMaxUniformBuffer, 0, &minMaxUniform, sizeof(MinMaxUniform));
 
     WGPUBindGroupEntry histBinsEntries[6] = {};
     histBinsEntries[0] = createUniformBufferBindGroupEntry(0, uniformBuffer, sizeof(SimParams));
-    histBinsEntries[1] = createUniformBufferBindGroupEntry(1, slot.minMaxUniformBuffer, 4 * sizeof(float));
+    histBinsEntries[1] = createUniformBufferBindGroupEntry(1, slot.minMaxUniformBuffer, sizeof(MinMaxUniform));
     histBinsEntries[2] = createTextureViewBindGroupEntry(2, pressureTextureView);
     histBinsEntries[3] = createTextureViewBindGroupEntry(3, velocityTextureView);
     histBinsEntries[4] = createTextureViewBindGroupEntry(4, solidTextureView);
@@ -721,9 +959,34 @@ bool GPUSimulator::initSimData(const Config& cfg, const ImageData* imageData, fl
     workgroupY = (gridY + 15) / 16;
     windTunnelStartCell = cpuSimulator.windTunnelStartCell;
     windTunnelEndCell = cpuSimulator.windTunnelEndCell;
+    
+#ifdef ENABLE_MOUSE_INPUT
     circleX = gridX / 2;
     circleY = gridY / 2;
+    prevCircleX = circleX;
+    prevCircleY = circleY;
+    circleVelX = 0.0f;
+    circleVelY = 0.0f;
     circleRadius = cpuSimulator.circleRadius;
+#else
+    baseCircleRadius = cpuSimulator.baseCircleRadius;
+    numCircles = 0;
+
+    // initialize all circles to defaults
+    for (int i = 0; i < HandTracking::MAX_CIRCLES; i++) {
+        circles[i].x = 0;
+        circles[i].y = 0;
+        circles[i].prevX = 0;
+        circles[i].prevY = 0;
+        circles[i].velX = 0.0f;
+        circles[i].velY = 0.0f;
+        circles[i].z = 0.0f;
+        circles[i].scaledRadius = baseCircleRadius;
+        circles[i].present = false;
+        circles[i].wasPresent = false;
+    }
+#endif
+    
     inkInitialized = cpuSimulator.inkInitialized;
     gravity = cpuSimulator.gravity;
     return true;
@@ -742,6 +1005,13 @@ bool GPUSimulator::initTextures() {
 
     // stored as a float because WebGPU is shit
     CREATE_STORAGE_TEXTURE(solid, R32Float);
+
+    // staging texture for solid data initialization
+    TextureDesc solidStagingDesc = {"solidStaging", WGPUTextureFormat_R32Float,
+        WGPUTextureUsage_CopySrc | WGPUTextureUsage_CopyDst | WGPUTextureUsage_TextureBinding};
+    solidStagingTexture = createTextureView(gridX, gridY, solidStagingDesc.format,
+        solidStagingDesc.usage, solidStagingTextureView);
+    RETURN_FALSE_IF_FAIL(solidStagingTexture);
 
     // RGBA32Float to store all 3 channels (r,g,b) together
     CREATE_STORAGE_TEXTURE(ink, RGBA32Float);
@@ -782,7 +1052,7 @@ bool GPUSimulator::initTextures() {
         slot.histogramStagingBuffer = createBuffer(128 * sizeof(int32_t), WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst);
         RETURN_FALSE_IF_FAIL(slot.histogramStagingBuffer);
 
-        slot.minMaxUniformBuffer = createBuffer(4 * sizeof(float), WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
+        slot.minMaxUniformBuffer = createBuffer(sizeof(MinMaxUniform), WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst);
         RETURN_FALSE_IF_FAIL(slot.minMaxUniformBuffer);
 
         // initialize state
@@ -1006,6 +1276,26 @@ bool GPUSimulator::initPipelineLayouts() {
     circlePipelineLayout = createPipelineLayout(&circleBindGroupLayout);
     RETURN_FALSE_IF_FAIL(circlePipelineLayout);
 
+#ifndef ENABLE_MOUSE_INPUT
+    // line segment update [5]:
+    // uniform
+    // solid (read-write)
+    // velocity (read)
+    // new velocity (write)
+    // density (read-write)
+    WGPUBindGroupLayoutEntry lineSegmentLayoutEntries[5] = {};
+    createUniformBufferPipelineLayoutEntry(lineSegmentLayoutEntries);
+    lineSegmentLayoutEntries[1] = createStorageTextureLayoutEntry(1, WGPUStorageTextureAccess_ReadWrite, WGPUTextureFormat_R32Float);
+    lineSegmentLayoutEntries[2] = createStorageTextureLayoutEntry(2, WGPUStorageTextureAccess_ReadOnly, WGPUTextureFormat_RG32Float);
+    lineSegmentLayoutEntries[3] = createStorageTextureLayoutEntry(3, WGPUStorageTextureAccess_WriteOnly, WGPUTextureFormat_RG32Float);
+    lineSegmentLayoutEntries[4] = createStorageTextureLayoutEntry(4, WGPUStorageTextureAccess_ReadWrite, WGPUTextureFormat_R32Float);
+
+    lineSegmentBindGroupLayout = createBindGroupLayout(5, lineSegmentLayoutEntries);
+    RETURN_FALSE_IF_FAIL(lineSegmentBindGroupLayout);
+    lineSegmentPipelineLayout = createPipelineLayout(&lineSegmentBindGroupLayout);
+    RETURN_FALSE_IF_FAIL(lineSegmentPipelineLayout);
+#endif
+
     // pressure minmax [5]:
     // uniform
     // pressure (read)
@@ -1033,7 +1323,7 @@ bool GPUSimulator::initPipelineLayouts() {
     // histogram bins storage buffer
     WGPUBindGroupLayoutEntry histogramBinsEntries[6] = {};
     createUniformBufferPipelineLayoutEntry(histogramBinsEntries);
-    histogramBinsEntries[1] = createUniformBufferLayoutEntry(1, 4 * sizeof(float));
+    histogramBinsEntries[1] = createUniformBufferLayoutEntry(1, sizeof(MinMaxUniform));
     histogramBinsEntries[2] = createStorageTextureLayoutEntry(2, WGPUStorageTextureAccess_ReadOnly, WGPUTextureFormat_R32Float);
     histogramBinsEntries[3] = createStorageTextureLayoutEntry(3, WGPUStorageTextureAccess_ReadOnly, WGPUTextureFormat_RG32Float);
     histogramBinsEntries[4] = createStorageTextureLayoutEntry(4, WGPUStorageTextureAccess_ReadOnly, WGPUTextureFormat_R32Float);
@@ -1186,6 +1476,19 @@ bool GPUSimulator::initBindGroups() {
     circleBindGroup = createBindGroup(5, circleEntries, circleBindGroupLayout);
     RETURN_FALSE_IF_FAIL(circleBindGroup);
 
+#ifndef ENABLE_MOUSE_INPUT
+    // line segment bind group
+    WGPUBindGroupEntry lineSegmentEntries[5] = {};
+    lineSegmentEntries[0] = createUniformBufferBindGroupEntry(0, uniformBuffer, sizeof(SimParams));
+    lineSegmentEntries[1] = createTextureViewBindGroupEntry(1, solidTextureView);
+    lineSegmentEntries[2] = createTextureViewBindGroupEntry(2, velocityTextureView);
+    lineSegmentEntries[3] = createTextureViewBindGroupEntry(3, newVelocityTextureView);
+    lineSegmentEntries[4] = createTextureViewBindGroupEntry(4, densityTextureView);
+
+    lineSegmentBindGroup = createBindGroup(5, lineSegmentEntries, lineSegmentBindGroupLayout);
+    RETURN_FALSE_IF_FAIL(lineSegmentBindGroup);
+#endif
+
     // histogram bind groups are created dynamically per-slot in dispatch methods
 
     return true;
@@ -1224,6 +1527,11 @@ bool GPUSimulator::initPipelines() {
 
     circlePipeline = createComputePipeline("compute_circle.wgsl", "updateCircle", circlePipelineLayout);
     RETURN_FALSE_IF_FAIL(circlePipeline);
+
+#ifndef ENABLE_MOUSE_INPUT
+    lineSegmentPipeline = createComputePipeline("compute_line_segment.wgsl", "updateLineSegments", lineSegmentPipelineLayout);
+    RETURN_FALSE_IF_FAIL(lineSegmentPipeline);
+#endif
 
     pressureMinMaxPipeline = createComputePipeline("compute_pressure_minmax.wgsl", "computePressureMinMax", pressureMinMaxPipelineLayout);
     RETURN_FALSE_IF_FAIL(pressureMinMaxPipeline);
