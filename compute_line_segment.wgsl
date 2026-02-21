@@ -19,8 +19,6 @@ struct SimParams {
     circleY: array<i32, 42>,
     prevCircleX: array<i32, 42>,
     prevCircleY: array<i32, 42>,
-    circleVelX: array<f32, 42>,
-    circleVelY: array<f32, 42>,
     circleZ: array<f32, 42>,
     circleScaledRadius: array<i32, 42>,
     circlePresent: array<i32, 42>,
@@ -43,6 +41,8 @@ struct SimParams {
     segmentWasPresent: array<i32, 46>,
     numSegments: i32,
     pad0: i32,
+    pad1: i32,
+    pad2: i32,
 };
 
 @group(0) @binding(0) var<uniform> params: SimParams;

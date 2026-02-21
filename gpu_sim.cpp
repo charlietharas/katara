@@ -33,8 +33,6 @@ void GPUSimulator::updateUniformBufferSim() {
     params.prevCircleX = prevCircleX;
     params.prevCircleY = prevCircleY;
     params.circleRadius = circleRadius;
-    params.circleVelX = circleVelX;
-    params.circleVelY = circleVelY;
 #else
     static int uniformFrameCount = 0;
 
@@ -43,8 +41,6 @@ void GPUSimulator::updateUniformBufferSim() {
         params.circleY[i] = circles[i].y;
         params.prevCircleX[i] = circles[i].prevX;
         params.prevCircleY[i] = circles[i].prevY;
-        params.circleVelX[i] = circles[i].velX;
-        params.circleVelY[i] = circles[i].velY;
         params.circleZ[i] = circles[i].z;
         params.circleScaledRadius[i] = circles[i].scaledRadius;
         params.circlePresent[i] = circles[i].present ? 1 : 0;
@@ -195,8 +191,6 @@ GPUSimulator::GPUSimulator(const Config& config)
         circles[i].y = 0;
         circles[i].prevX = 0;
         circles[i].prevY = 0;
-        circles[i].velX = 0.0f;
-        circles[i].velY = 0.0f;
         circles[i].z = 0.0f;
         circles[i].scaledRadius = 0;
         circles[i].present = false;
@@ -423,14 +417,6 @@ void GPUSimulator::moveCircle(int newGridX, int newGridY) {
     prevCircleX = circleX;
     prevCircleY = circleY;
 
-    float timestep = config->simulation.timestep;
-    float instantVelX = (newGridX - circleX) / timestep;
-    float instantVelY = (newGridY - circleY) / timestep;
-
-    float alpha = 0.3f; // smoothing factor
-    circleVelX = alpha * instantVelX + (1.0f - alpha) * circleVelX;
-    circleVelY = alpha * instantVelY + (1.0f - alpha) * circleVelY;
-
     circleX = newGridX;
     circleY = newGridY;
 
@@ -462,37 +448,11 @@ void GPUSimulator::updateCircles(const FingertipData* fingertips, int count) {
         // wasPresent is preserved from previous frame
 
         if (fingertips[i].present <= 0.5f) {
-            circles[i].velX = 0.0f;
-            circles[i].velY = 0.0f;
             circles[i].wasPresent = false;
         } else if (circles[i].wasPresent) {
-            float timestep = config->simulation.timestep;
-            float instantVelX = (newGridX - circles[i].prevX) / timestep;
-            float instantVelY = (newGridY - circles[i].prevY) / timestep;
-
-            // filter out sub-pixel jitter
-            float posDelta = sqrt(float(newGridX - circles[i].prevX) * float(newGridX - circles[i].prevX) +
-                                  float(newGridY - circles[i].prevY) * float(newGridY - circles[i].prevY));
-            float movementThreshold = 1.0f;
-
-            float alpha;
-            if (posDelta < movementThreshold) {
-                // aggressive velocity decay and no velocity addition
-                alpha = 0.8f;
-                instantVelX = 0.0f;
-                instantVelY = 0.0f;
-            } else {
-                // apply normal smoothing
-                alpha = 0.3f;
-            }
-
-            circles[i].velX = alpha * instantVelX + (1.0f - alpha) * circles[i].velX;
-            circles[i].velY = alpha * instantVelY + (1.0f - alpha) * circles[i].velY;
             circles[i].wasPresent = true;
         } else {
             // first frame this circle appears
-            circles[i].velX = 0.0f;
-            circles[i].velY = 0.0f;
             circles[i].wasPresent = true;
         }
     }
@@ -506,8 +466,6 @@ void GPUSimulator::updateCircles(const FingertipData* fingertips, int count) {
         circles[i].y = 0;
         circles[i].prevX = 0;
         circles[i].prevY = 0;
-        circles[i].velX = 0.0f;
-        circles[i].velY = 0.0f;
         circles[i].z = 0.0f;
         circles[i].scaledRadius = 0;
     }
@@ -965,8 +923,6 @@ bool GPUSimulator::initSimData(const Config& cfg, const ImageData* imageData, fl
     circleY = gridY / 2;
     prevCircleX = circleX;
     prevCircleY = circleY;
-    circleVelX = 0.0f;
-    circleVelY = 0.0f;
     circleRadius = cpuSimulator.circleRadius;
 #else
     baseCircleRadius = cpuSimulator.baseCircleRadius;
@@ -978,8 +934,6 @@ bool GPUSimulator::initSimData(const Config& cfg, const ImageData* imageData, fl
         circles[i].y = 0;
         circles[i].prevX = 0;
         circles[i].prevY = 0;
-        circles[i].velX = 0.0f;
-        circles[i].velY = 0.0f;
         circles[i].z = 0.0f;
         circles[i].scaledRadius = baseCircleRadius;
         circles[i].present = false;

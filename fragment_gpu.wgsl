@@ -43,7 +43,6 @@ struct UniformData {
 // TODO LATER swap to different pressure solver
 
 // TODO up/right wind tunnel behaves differently from down/left
-// TODO RELATED BUG WITH GPU HAND TRACKING
 likely because of the forward texture accesses (e.g. asymmetric +1) somewhere
 or it could be something else...
 - there are still some subtle bugs with gpu sim (bot left corner, circle detection)

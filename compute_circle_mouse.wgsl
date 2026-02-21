@@ -19,8 +19,6 @@ struct SimParams {
     circleY: i32,
     prevCircleX: i32,
     prevCircleY: i32,
-    circleVelX: f32,
-    circleVelY: f32,
     circleRadius: i32,
     pad0: i32,
     pad1: i32,

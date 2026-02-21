@@ -33,14 +33,12 @@ struct alignas(16) SimParams {
 #ifdef ENABLE_MOUSE_INPUT
     // we only need to track single circle state
     int circleX, circleY, prevCircleX, prevCircleY;
-    float circleVelX, circleVelY;
     int circleRadius;
     int pad0, pad1, pad2;
 #else
     // track 21 landmarks per hand
     int circleX[HandTracking::MAX_CIRCLES], circleY[HandTracking::MAX_CIRCLES];
     int prevCircleX[HandTracking::MAX_CIRCLES], prevCircleY[HandTracking::MAX_CIRCLES];
-    float circleVelX[HandTracking::MAX_CIRCLES], circleVelY[HandTracking::MAX_CIRCLES];
     float circleZ[HandTracking::MAX_CIRCLES]; // we use this to scale radii by distance to wrist
     int circleScaledRadius[HandTracking::MAX_CIRCLES]; // pre-scaled
     int circlePresent[HandTracking::MAX_CIRCLES];
@@ -58,7 +56,7 @@ struct alignas(16) SimParams {
     int segmentPresent[HandTracking::MAX_SEGMENTS];
     int segmentWasPresent[HandTracking::MAX_SEGMENTS];
     int numSegments;
-    int pad0;
+    int pad0, pad1, pad2;
 #endif
 };
 static_assert(sizeof(SimParams) % 16 == 0, "SimParams invalid alignment");

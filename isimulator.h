@@ -49,7 +49,7 @@ public:
 #ifdef ENABLE_MOUSE_INPUT
     int circleX = 0, circleY = 0;
     int prevCircleX = 0, prevCircleY = 0;
-    float circleVelX = 0.0f, circleVelY = 0.0f;
+    float circleVelX = 0.0f, circleVelY = 0.0f; // only used by CPU simulator
     int circleRadius = 0;
     bool isDragging = false;
 #else

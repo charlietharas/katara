@@ -40,30 +40,27 @@ fn sampleField(x: f32, y: f32, x_offset: f32, y_offset: f32) -> vec2<f32> {
     return mix(v0, v1, fy);
 }
 
+// TODO stencil problems
 fn neighborhoodX(i: i32, j: i32) -> f32 {
-    let i_min = max(0, i - 1);
-    let i_max = min(params.gridX - 1, i + 1);
-    let j_min = max(0, j - 1);
-    let j_max = min(params.gridY - 1, j + 1);
+    let i_next = min(i + 1, params.gridX - 1);
+    let j_prev = max(0, j - 1);
 
-    let v00 = textureLoad(velocityTexture, vec2<i32>(i_min, j_min)).x;
-    let v10 = textureLoad(velocityTexture, vec2<i32>(i_max, j_min)).x;
-    let v01 = textureLoad(velocityTexture, vec2<i32>(i_min, j_max)).x;
-    let v11 = textureLoad(velocityTexture, vec2<i32>(i_max, j_max)).x;
+    let v00 = textureLoad(velocityTexture, vec2<i32>(i, j_prev)).x;
+    let v10 = textureLoad(velocityTexture, vec2<i32>(i_next, j_prev)).x;
+    let v01 = textureLoad(velocityTexture, vec2<i32>(i, j)).x;
+    let v11 = textureLoad(velocityTexture, vec2<i32>(i_next, j)).x;
 
     return (v00 + v10 + v01 + v11) * 0.25;
 }
 
 fn neighborhoodY(i: i32, j: i32) -> f32 {
-    let i_min = max(0, i - 1);
-    let i_max = min(params.gridX - 1, i + 1);
-    let j_min = max(0, j - 1);
-    let j_max = min(params.gridY - 1, j + 1);
+    let i_prev = max(0, i - 1);
+    let j_next = min(j + 1, params.gridY - 1);
 
-    let v00 = textureLoad(velocityTexture, vec2<i32>(i_min, j_min)).y;
-    let v10 = textureLoad(velocityTexture, vec2<i32>(i_max, j_min)).y;
-    let v01 = textureLoad(velocityTexture, vec2<i32>(i_min, j_max)).y;
-    let v11 = textureLoad(velocityTexture, vec2<i32>(i_max, j_max)).y;
+    let v00 = textureLoad(velocityTexture, vec2<i32>(i_prev, j)).y;
+    let v10 = textureLoad(velocityTexture, vec2<i32>(i, j)).y;
+    let v01 = textureLoad(velocityTexture, vec2<i32>(i_prev, j_next)).y;
+    let v11 = textureLoad(velocityTexture, vec2<i32>(i, j_next)).y;
 
     return (v00 + v10 + v01 + v11) * 0.25;
 }

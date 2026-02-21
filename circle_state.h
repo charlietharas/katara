@@ -21,7 +21,7 @@ namespace HandTracking {
 struct CircleState {
     int x, y;
     int prevX, prevY;
-    float velX, velY;
+    float velX = 0.0f, velY = 0.0f; // only used by CPU simulator
     float z;
     int scaledRadius;
     bool present;

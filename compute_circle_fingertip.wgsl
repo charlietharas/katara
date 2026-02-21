@@ -19,8 +19,6 @@ struct SimParams {
     circleY: array<i32, 42>,
     prevCircleX: array<i32, 42>,
     prevCircleY: array<i32, 42>,
-    circleVelX: array<f32, 42>,
-    circleVelY: array<f32, 42>,
     circleZ: array<f32, 42>,
     circleScaledRadius: array<i32, 42>,
     circlePresent: array<i32, 42>,
@@ -43,6 +41,8 @@ struct SimParams {
     segmentWasPresent: array<i32, 46>,
     numSegments: i32,
     pad0: i32,
+    pad1: i32,
+    pad2: i32,
 };
 
 // new momentum transfer handler for multiple circles
@@ -82,8 +82,6 @@ fn updateCircle(@builtin(global_invocation_id) id: vec3<u32>) {
         let prevCircleX = params.prevCircleX[c];
         let prevCircleY = params.prevCircleY[c];
         let radius = params.circleScaledRadius[c];
-        let velX = params.circleVelX[c];
-        let velY = params.circleVelY[c];
 
         // distance to current and previous circle positions
         let dx = f32(i) + 0.5 - f32(circleX);
