@@ -70,6 +70,7 @@ fn updateCircle(@builtin(global_invocation_id) id: vec3<u32>) {
     let currentSolid = textureLoad(solidTexture, vec2<i32>(i, j)).r;
     var isInAnyCircle = false;
     var wasInAnyPrevCircle = false;
+    var momentumWasApplied = false;
 
     // process all circles
     for (var c = 0; c < params.numCircles; c = c + 1) {
@@ -99,8 +100,8 @@ fn updateCircle(@builtin(global_invocation_id) id: vec3<u32>) {
             textureStore(densityTexture, vec2<i32>(i, j), vec4<f32>(1.0, 0.0, 0.0, 0.0));
         }
 
+        // track if cell was in any previous circle position (for zeroing at end)
         if (wasInPrevCircle) {
-            vel = vec2<f32>(0.0, 0.0);
             wasInAnyPrevCircle = true;
         }
 
@@ -135,11 +136,19 @@ fn updateCircle(@builtin(global_invocation_id) id: vec3<u32>) {
                 clamp(newVel.x, -maxVel, maxVel),
                 clamp(newVel.y, -maxVel, maxVel)
             );
+            momentumWasApplied = true;
         }
     }
 
-    // if cell is inside any circle, velocity set to 0
-    if (isInAnyCircle) {
+    // zero velocity for cells that were in previous circle positions,
+    // unless momentum was just applied by a moving circle
+    if (wasInAnyPrevCircle && !momentumWasApplied) {
+        vel = vec2<f32>(0.0, 0.0);
+    }
+
+    // also zero velocity for cells that are currently inside circles
+    // (unless they just received momentum from a circle moving into them)
+    if (isInAnyCircle && !momentumWasApplied) {
         vel = vec2<f32>(0.0, 0.0);
     }
 

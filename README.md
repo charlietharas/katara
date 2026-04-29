@@ -2,7 +2,7 @@
 
 Modular fluid simulation. Inspired by a [lovely video](https://www.youtube.com/watch?v=iKAVRgIrUOU) by 10 Minute Physics.
 
-## TODO
+## TODO update readme after build options, fixes complete
 
 Currently still dotting the i's and crossing the t's on code tidying, clean build options, etc.
 

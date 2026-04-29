@@ -36,7 +36,7 @@ void GPUSimulator::updateUniformBufferSim() {
 #else
     static int uniformFrameCount = 0;
 
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < HandTracking::MAX_CIRCLES; i++) {
         params.circleX[i] = circles[i].x;
         params.circleY[i] = circles[i].y;
         params.prevCircleX[i] = circles[i].prevX;

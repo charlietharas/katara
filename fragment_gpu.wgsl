@@ -36,6 +36,24 @@ struct UniformData {
 
 // TODO still some opportunities to clean up code
 
+// TODO add "combined" visualization (overlay fluid over camera canvas); generally more aesthetic and diverse visualization (options?)
+
+// TODO integrate gravity with gyroscope on the phone
+
+// TODO cleaner better build options for many different configs/slightly tweaked versions
+
+// TODO plan made web interface for config manipulation
+
+// TODO histogram jankiness when camera in-frame (related to velocity perturbation issue)
+
+// TODO incorporate audio perturbation somehow? examine the visualizer idea as a side note?
+
+// TODO facepush: load in the image from webcam on init, then user can manipulate it
+// (consider live refreshes of some kind? find something visually appealing)
+
+// TODO new two handed control system (with left-handed toggle)
+// TODO design full interface with control panel, several views, live view changing (e.g. pretty/smoke/density), config refreshing, etc.
+
 /*
 // TODO examine differences in pressure/velocity histograms between GPU/CPU
 - see plotting script
@@ -49,12 +67,6 @@ or it could be something else...
 - and ofc the velocity field perturbations affecting the histogram limits when the circle is moved
 - and general poor behavior at high magnitudes (e.g. of velocity)--are we correctly checking fluids at boundaries
   and is there any undefined behavior during advection?
-
-// TODO WAY LATER - extensions:
-- try to vibrate some obstacle proportional to an audio signal
-- measure system entropy and write a proof that the system does/does not follow laws of fluid entropy
-- 4 different views: raw camera with model visualization, ink, current pretty view, combined
- - combined: camera feed with model visualization rendered behind pretty fluid field
 
 // TODO WAY LATER lots of tiny memory problems in valgrind, investigate if some of these are my fault
 */

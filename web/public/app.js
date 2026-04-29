@@ -6,10 +6,57 @@ class KataraWebApp {
         simCanvas.width = 1200;
         simCanvas.height = 800;
 
-        // load WASM module and tell it to use the simulation canvas
-        this.module = await createKataraModule({
-            canvas: simCanvas
+        // Check if we need to restore persisted data (images, config)
+        const needsRestore = localStorage.getItem('katara_needs_restore') === 'true';
+
+        const module = await createKataraModule({
+            canvas: simCanvas,
+            noInitialRun: true // prevent main() from running automatically
         });
+
+        this.module = module;
+        const FS = module.FS;
+
+        // Create /persist directory and mount IDBFS
+        FS.mkdir('/persist');
+        try {
+            FS.mount(module.IDBFS, {}, '/persist');
+            this.idbfsAvailable = true;
+            console.log('IDBFS mounted at /persist');
+        } catch (e) {
+            console.error('IDBFS mount failed:', e);
+            this.idbfsAvailable = false;
+        }
+
+        // Sync from IndexedDB and restore files if needed
+        if (this.idbfsAvailable && needsRestore) {
+            console.log('Syncing from IndexedDB...');
+            await new Promise((resolve) => {
+                FS.syncfs(true, (err) => {
+                    if (err) console.error('syncfs failed:', err);
+                    else console.log('syncfs completed');
+                    resolve();
+                });
+            });
+
+            // Check what's in /persist
+            const contents = FS.readdir('/persist');
+
+            // Restore files to /
+            if (contents.includes('config.json')) {
+                const persistedConfig = FS.readFile('/persist/config.json', { encoding: 'utf8' });
+                FS.writeFile('/config.json', persistedConfig);
+            }
+            if (contents.includes('uploaded.png')) {
+                const img = FS.readFile('/persist/uploaded.png');
+                FS.writeFile('/uploaded.png', img);
+            }
+
+            // Clear the flag
+            localStorage.setItem('katara_needs_restore', 'false');
+        }
+
+        module.callMain([]);
 
         // 2D context for camera + keypoints
         this.cameraCanvas = document.querySelector('#cameraCanvas');
@@ -22,6 +69,7 @@ class KataraWebApp {
         }
 
         await this.setupCamera();
+        this.setupInkUpload();
 
         // mediapipe
         this.handTracker = new MediaPipeHandTracker();
@@ -45,6 +93,73 @@ class KataraWebApp {
         document.body.appendChild(this.videoElement);
         this.videoElement.play();
         await new Promise(resolve => this.videoElement.onloadeddata = resolve);
+    }
+
+    setupInkUpload() {
+        const uploadBtn = document.getElementById('uploadInkBtn');
+        const fileInput = document.getElementById('inkImageInput');
+
+        uploadBtn.addEventListener('click', () => fileInput.click());
+
+        fileInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            if (!file.name.toLowerCase().endsWith('.png')) {
+                alert('Please select a PNG image file.');
+                return;
+            }
+
+            await this.handleImageUpload(file);
+            fileInput.value = ''; // Reset for next upload
+        });
+    }
+
+    async handleImageUpload(file) {
+        const FS = this.module.FS;
+
+        try {
+            // Read file as ArrayBuffer
+            const arrayBuffer = await file.arrayBuffer();
+            const uint8Array = new Uint8Array(arrayBuffer);
+            console.log('Image loaded: ' + uint8Array.length + ' bytes');
+
+            // Write to /persist
+            FS.writeFile('/persist/uploaded.png', uint8Array);
+
+            // Update config to use uploaded image and enable ink mode
+            const configText = FS.readFile('/config.json', { encoding: 'utf8' });
+            const config = JSON.parse(configText);
+            config.ink.imagePath = '/uploaded.png';
+            config.rendering.target = 3;
+            const newConfigText = JSON.stringify(config, null, 4);
+
+            // Write config to /persist and /
+            FS.writeFile('/persist/config.json', newConfigText);
+            FS.writeFile('/config.json', newConfigText);
+
+            console.log('Files written to /persist, syncing to IndexedDB...');
+
+            // Sync to IndexedDB
+            await new Promise((resolve) => {
+                FS.syncfs(false, (err) => {
+                    if (err) console.error('syncfs failed:', err);
+                    else console.log('syncfs completed - data persisted to IndexedDB');
+                    resolve();
+                });
+            });
+
+            // Set flag so on reload we restore from /persist
+            localStorage.setItem('katara_needs_restore', 'true');
+
+            // Reload page to apply changes
+            console.log('Ink image uploaded. Reloading...');
+            location.reload();
+
+        } catch (err) {
+            console.error('Failed to upload image:', err);
+            alert('Failed to upload image: ' + err.message);
+        }
     }
 
     // hand skeleton connections (MediaPipe topology)
@@ -131,7 +246,7 @@ class KataraWebApp {
                     heap[offset++] = 1.0 - lm.x;  // horizontal reflection
                     heap[offset++] = lm.y;
                     heap[offset++] = lm.z;
-                    heap[offset++] = 1.0; // always present
+                    heap[offset++] = lm.present ? 1.0 : 0.0;  // use actual presence
                 }
 
                 // C++ calls

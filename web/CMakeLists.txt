@@ -73,9 +73,11 @@ target_link_options(katara PUBLIC
     "SHELL:-s MAXIMUM_MEMORY=4GB"
     "SHELL:-s ASYNCIFY"
     "SHELL:-s EXPORTED_FUNCTIONS=[${EXPORTED_FUNCTIONS}]"
-    "SHELL:-s EXPORTED_RUNTIME_METHODS=[\"ccall\",\"cwrap\",\"HEAPF32\"]"
+    "SHELL:-s EXPORTED_RUNTIME_METHODS=[\"ccall\",\"cwrap\",\"HEAPF32\",\"FS\",\"IDBFS\",\"callMain\"]"
     "SHELL:-s MODULARIZE=1"
     "SHELL:-s EXPORT_NAME=\"createKataraModule\""
+    "SHELL:-s FORCE_FILESYSTEM=1"
+    "-lidbfs.js"
 )
 
 # stage shader and config files for embedding

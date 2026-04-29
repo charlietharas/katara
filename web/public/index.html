@@ -18,9 +18,38 @@
 
 .camera-container,
 .sim-container {
+    position: relative;
     display: flex;
     justify-content: center;
     align-items: center;
+}
+
+.sim-controls {
+    position: absolute;
+    bottom: 16px;
+    right: 16px;
+    display: flex;
+    gap: 8px;
+    z-index: 10;
+}
+
+.control-btn {
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s;
+}
+
+.control-btn:hover {
+    background: rgba(0, 0, 0, 0.85);
+    border-color: rgba(255, 255, 255, 0.5);
 }
 
 #cameraCanvas {
@@ -54,6 +83,17 @@
     <div class="canvas-row">
         <div class="sim-container">
             <canvas id="canvas"></canvas>
+            <div class="sim-controls">
+                <button id="uploadInkBtn" class="control-btn" title="Upload PNG image for ink mode">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                    Upload Ink
+                </button>
+                <input type="file" id="inkImageInput" accept="image/png" hidden>
+            </div>
         </div>
         <div class="camera-container">
             <canvas id="cameraCanvas" width="600" height="400"></canvas>
