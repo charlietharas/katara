@@ -35,13 +35,17 @@
                 "zMax": 0.1,
                 "scaleMin": 2,
                 "scaleMax": 0.5
-            }
+            },
+            "handSmoothingAlphaLow": 0.15,
+            "handSmoothingAlphaHigh": 0.7,
+            "handSpeedThreshold": 5.0,
+            "momentumTransferDeadZone": 5.0
         }
     },
     "rendering": {
         "target": 3,
         "showVelocityVectors": false,
-        "velocityScale": 0.1,
+        "velocityScale": 0.04,
         "disableHistograms": false
     },
     "ink": {

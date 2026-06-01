@@ -4,8 +4,50 @@
 #include <vector>
 #include <iostream>
 #include <utility>
+#include <cmath>
 #include "config.h"
 #include "circle_state.h"
+
+inline void applyHandSmoothing(
+    int rawGridX, int rawGridY,
+    float& smoothedX, float& smoothedY,
+    int& outX, int& outY,
+    bool wasPresent,
+    const CircleConfig& cfg,
+    float timestep)
+{
+    if (wasPresent) {
+        float dx = static_cast<float>(rawGridX) - smoothedX;
+        float dy = static_cast<float>(rawGridY) - smoothedY;
+        float speed = std::sqrt(dx * dx + dy * dy) / timestep;
+
+        float adaptiveAlpha = cfg.handSmoothingAlphaLow;
+        if (speed > cfg.handSpeedThreshold) {
+            adaptiveAlpha = cfg.handSmoothingAlphaHigh;
+        } else {
+            adaptiveAlpha = cfg.handSmoothingAlphaLow +
+                (cfg.handSmoothingAlphaHigh - cfg.handSmoothingAlphaLow) * (speed / cfg.handSpeedThreshold);
+        }
+
+        smoothedX = adaptiveAlpha * static_cast<float>(rawGridX) + (1.0f - adaptiveAlpha) * smoothedX;
+        smoothedY = adaptiveAlpha * static_cast<float>(rawGridY) + (1.0f - adaptiveAlpha) * smoothedY;
+        outX = static_cast<int>(smoothedX);
+        outY = static_cast<int>(smoothedY);
+    } else {
+        smoothedX = static_cast<float>(rawGridX);
+        smoothedY = static_cast<float>(rawGridY);
+        outX = rawGridX;
+        outY = rawGridY;
+    }
+}
+
+inline bool shouldApplyMomentumTransfer(int deltaX, int deltaY, float deadZone) {
+    if (deltaX == 0 && deltaY == 0) return false;
+    if (deadZone <= 0.0f) return true;
+    float dx = static_cast<float>(deltaX);
+    float dy = static_cast<float>(deltaY);
+    return dx * dx + dy * dy >= deadZone * deadZone;
+}
 
 inline int scaleRadiusByZ(float z, int baseRadius, const CircleConfig& cfg) {
     if (z != z) z = 0.0f; // nan check

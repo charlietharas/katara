@@ -6,6 +6,7 @@
 #include <sstream>
 #include <vector>
 #include <limits>
+#include <cmath>
 
 // CONSTRUCTOR :150
 
@@ -71,6 +72,7 @@ void GPUSimulator::updateUniformBufferSim() {
 #endif
     params.momentumTransferStrength = momentumTransferStrength;
     params.momentumTransferRadius = momentumTransferRadius;
+    params.momentumTransferDeadZone = momentumTransferDeadZone;
     params.halfCellSize = cellSize * 0.5f;
 
     wgpuQueueWriteBuffer(queue, uniformBuffer, 0, &params, sizeof(SimParams));
@@ -184,6 +186,7 @@ GPUSimulator::GPUSimulator(const Config& config)
 {
     momentumTransferStrength = config.simulation.circle.momentumTransferStrength;
     momentumTransferRadius = config.simulation.circle.momentumTransferRadius;
+    momentumTransferDeadZone = config.simulation.circle.momentumTransferDeadZone;
 #ifndef ENABLE_MOUSE_INPUT
     baseCircleRadius = static_cast<int>(config.simulation.circle.radius / cpuSimulator.cellSize);
     for (int i = 0; i < HandTracking::MAX_CIRCLES; i++) {
@@ -433,6 +436,7 @@ void GPUSimulator::updateCircles(const FingertipData* fingertips, int count) {
     numCircles = updateCount;
 
     static int frameCount = 0;
+    const float timestep = config->simulation.timestep;
 
     for (int i = 0; i < updateCount; i++) {
         int newGridX = static_cast<int>((1.0f - fingertips[i].x) * gridX);
@@ -440,19 +444,20 @@ void GPUSimulator::updateCircles(const FingertipData* fingertips, int count) {
 
         circles[i].prevX = circles[i].x;
         circles[i].prevY = circles[i].y;
-        circles[i].x = newGridX;
-        circles[i].y = newGridY;
-        circles[i].z = fingertips[i].z;
-        circles[i].scaledRadius = scaleRadiusByZ(fingertips[i].z, baseCircleRadius);
-        circles[i].present = (fingertips[i].present > 0.5f);
-        // wasPresent is preserved from previous frame
 
         if (fingertips[i].present <= 0.5f) {
             circles[i].wasPresent = false;
-        } else if (circles[i].wasPresent) {
-            circles[i].wasPresent = true;
+            circles[i].x = 0;
+            circles[i].y = 0;
+            circles[i].smoothedX = 0.0f;
+            circles[i].smoothedY = 0.0f;
         } else {
-            // first frame this circle appears
+            applyHandSmoothing(newGridX, newGridY, circles[i].smoothedX, circles[i].smoothedY,
+                               circles[i].x, circles[i].y, circles[i].wasPresent,
+                               config->simulation.circle, timestep);
+            circles[i].z = fingertips[i].z;
+            circles[i].scaledRadius = scaleRadiusByZ(fingertips[i].z, baseCircleRadius);
+            circles[i].present = true;
             circles[i].wasPresent = true;
         }
     }
@@ -466,13 +471,15 @@ void GPUSimulator::updateCircles(const FingertipData* fingertips, int count) {
         circles[i].y = 0;
         circles[i].prevX = 0;
         circles[i].prevY = 0;
+        circles[i].smoothedX = 0.0f;
+        circles[i].smoothedY = 0.0f;
         circles[i].z = 0.0f;
         circles[i].scaledRadius = 0;
     }
 }
 
 void GPUSimulator::updateLineSegments(const FingertipData* landmarks, int count) {
-    // build segments from hand connections
+    // requires updateCircles to have run first
     numSegments = 0;
     int numHands = std::min(2, count / HandTracking::LANDMARKS_PER_HAND);
 
@@ -509,10 +516,12 @@ void GPUSimulator::updateLineSegments(const FingertipData* landmarks, int count)
             seg.present = (p1.present > 0.5f) && (p2.present > 0.5f);
 
             if (seg.present) {
-                seg.startX = static_cast<int>((1.0f - p1.x) * gridX);
-                seg.startY = static_cast<int>((1.0f - p1.y) * gridY);
-                seg.endX = static_cast<int>((1.0f - p2.x) * gridX);
-                seg.endY = static_cast<int>((1.0f - p2.y) * gridY);
+                int startIdx = offset + idx1;
+                int endIdx = offset + idx2;
+                seg.startX = circles[startIdx].x;
+                seg.startY = circles[startIdx].y;
+                seg.endX = circles[endIdx].x;
+                seg.endY = circles[endIdx].y;
                 seg.startRadius = static_cast<float>(scaleRadiusByZ(p1.z, baseCircleRadius));
                 seg.endRadius = static_cast<float>(scaleRadiusByZ(p2.z, baseCircleRadius));
             } else {
@@ -1511,6 +1520,7 @@ void GPUSimulator::updateSimParams(const Config& config) {
     windTunnelSpeed = config.simulation.windTunnel.velocity;
     momentumTransferStrength = config.simulation.circle.momentumTransferStrength;
     momentumTransferRadius = config.simulation.circle.momentumTransferRadius;
+    momentumTransferDeadZone = config.simulation.circle.momentumTransferDeadZone;
     // Update stored config pointer — updateUniformBufferSim() reads from this each frame
     this->config = &config;
 }

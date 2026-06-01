@@ -17,7 +17,8 @@ Simulator::Simulator(const Config& config)
       vorticity(config.simulation.vorticity.strength),
       vorticityLen(config.simulation.vorticity.lengthScale),
       momentumTransferStrength(config.simulation.circle.momentumTransferStrength),
-      momentumTransferRadius(config.simulation.circle.momentumTransferRadius)
+      momentumTransferRadius(config.simulation.circle.momentumTransferRadius),
+      momentumTransferDeadZone(config.simulation.circle.momentumTransferDeadZone)
 {
     windTunnelSide = config.simulation.windTunnel.side;
     windTunnelSpeed = config.simulation.windTunnel.velocity;
@@ -263,8 +264,10 @@ void Simulator::updateCircles(const FingertipData* fingertips, int count) {
             newGridX = std::max(baseCircleRadius, std::min(newGridX, gridX - baseCircleRadius - 1));
             newGridY = std::max(baseCircleRadius, std::min(newGridY, gridY - baseCircleRadius - 1));
 
-            circle.x = newGridX;
-            circle.y = newGridY;
+            applyHandSmoothing(newGridX, newGridY, circle.smoothedX, circle.smoothedY,
+                               circle.x, circle.y, circle.wasPresent,
+                               config->simulation.circle, timestep);
+
             circle.scaledRadius = scaleRadiusByZ(fingertips[i].z);
 
             float instantVelX = (circle.x - circle.prevX) / timestep;
@@ -280,6 +283,8 @@ void Simulator::updateCircles(const FingertipData* fingertips, int count) {
             }
             circle.x = 0;
             circle.y = 0;
+            circle.smoothedX = 0.0f;
+            circle.smoothedY = 0.0f;
             circle.velX = 0.0f;
             circle.velY = 0.0f;
         }
@@ -290,6 +295,8 @@ void Simulator::updateCircles(const FingertipData* fingertips, int count) {
             clearCircleArea(circles[i].prevX, circles[i].prevY, circles[i].scaledRadius);
             circles[i].present = false;
             circles[i].wasPresent = false;
+            circles[i].smoothedX = 0.0f;
+            circles[i].smoothedY = 0.0f;
         }
     }
 }
@@ -323,6 +330,7 @@ void Simulator::updateSingleCircle(CircleState& circle) {
 }
 
 void Simulator::updateLineSegments(const FingertipData* landmarks, int count) {
+    // requires updateCircles to have run first (segment endpoints use smoothed circle positions)
     int numHands = std::min(2, count / HandTracking::LANDMARKS_PER_HAND);
 
     // build segments from hand connections
@@ -359,10 +367,12 @@ void Simulator::updateLineSegments(const FingertipData* landmarks, int count) {
             seg.present = (p1.present > 0.5f) && (p2.present > 0.5f);
 
             if (seg.present) {
-                seg.startX = static_cast<int>((1.0f - p1.x) * gridX);
-                seg.startY = static_cast<int>((1.0f - p1.y) * gridY);
-                seg.endX = static_cast<int>((1.0f - p2.x) * gridX);
-                seg.endY = static_cast<int>((1.0f - p2.y) * gridY);
+                int startIdx = offset + idx1;
+                int endIdx = offset + idx2;
+                seg.startX = circles[startIdx].x;
+                seg.startY = circles[startIdx].y;
+                seg.endX = circles[endIdx].x;
+                seg.endY = circles[endIdx].y;
                 seg.startRadius = scaleRadiusByZ(p1.z);
                 seg.endRadius = scaleRadiusByZ(p2.z);
 
@@ -793,7 +803,7 @@ void Simulator::enforceBoundaryConditions() {
 void Simulator::circleMomentumTransfer() {
     int deltaX = circleX - prevCircleX;
     int deltaY = circleY - prevCircleY;
-    if (deltaX == 0 && deltaY == 0) return;
+    if (!shouldApplyMomentumTransfer(deltaX, deltaY, momentumTransferDeadZone)) return;
 
     float effectiveRadius = circleRadius + momentumTransferRadius;
 
@@ -841,7 +851,7 @@ void Simulator::circleMomentumTransfer() {
         if (!circle.present) continue;
         int deltaX = circle.x - circle.prevX;
         int deltaY = circle.y - circle.prevY;
-        if (deltaX == 0 && deltaY == 0) continue;
+        if (!shouldApplyMomentumTransfer(deltaX, deltaY, momentumTransferDeadZone)) continue;
 
         float effectiveRadius = circle.scaledRadius + momentumTransferRadius;
 
@@ -937,6 +947,7 @@ void Simulator::updateSimParams(const Config& config) {
     windTunnelSpeed = config.simulation.windTunnel.velocity;
     momentumTransferStrength = config.simulation.circle.momentumTransferStrength;
     momentumTransferRadius = config.simulation.circle.momentumTransferRadius;
+    momentumTransferDeadZone = config.simulation.circle.momentumTransferDeadZone;
     // Update stored config pointer to g_config
     this->config = &config;
 }

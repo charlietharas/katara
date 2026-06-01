@@ -55,6 +55,7 @@ private:
     // momentum transfer parameters
     float momentumTransferStrength;
     float momentumTransferRadius;
+    float momentumTransferDeadZone;
 
     std::vector<float> x; // x vel field
     std::vector<float> y; // y vel field

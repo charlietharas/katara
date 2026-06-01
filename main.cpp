@@ -98,6 +98,8 @@ LoadedImage loadImage(const std::string& path) {
 
 #ifdef __EMSCRIPTEN__
 
+static bool g_simulationPaused = false;
+
 struct MainLoopState {
     ISimulator* simulator;
     IRenderer* renderer;
@@ -132,7 +134,9 @@ void mainLoopCallback(void* arg) {
 #endif
     }
 
-    s->simulator->update();
+    if (!g_simulationPaused) {
+        s->simulator->update();
+    }
     s->renderer->render(*s->simulator);
 }
 
@@ -147,25 +151,30 @@ extern "C" {
 
     EMSCRIPTEN_KEEPALIVE
     void updateFingertips(const FingertipData* fingertips, int count) {
-        if (g_simulator) {
+        if (g_simulator && !g_simulationPaused) {
             g_simulator->updateCircles(fingertips, count);
         }
     }
 
     EMSCRIPTEN_KEEPALIVE
     void updateLineSegments(const FingertipData* landmarks, int count) {
-        if (g_simulator) {
+        if (g_simulator && !g_simulationPaused) {
             g_simulator->updateLineSegments(landmarks, count);
         }
     }
 
     EMSCRIPTEN_KEEPALIVE
     void update() {
-        if (g_simulator) {
+        if (g_simulator && !g_simulationPaused) {
             g_simulator->update();
         }
     }
 #endif
+
+    EMSCRIPTEN_KEEPALIVE
+    void setSimulationPaused(int paused) {
+        g_simulationPaused = (paused != 0);
+    }
 
     EMSCRIPTEN_KEEPALIVE
     void initLayout(int canvasW, int canvasH, float inkAspectRatio, float cameraAspectRatio) {
@@ -223,13 +232,26 @@ extern "C" {
         std::cout << "Config reload complete (flags=" << flags << ")" << std::endl;
     }
 
-    // Reset fluid field (clear velocity, pressure, density; reapply wind tunnel; preserve ink)
+    // Reset fluid field and restore ink from config image when available
     EMSCRIPTEN_KEEPALIVE
     void resetFluidField() {
-        if (g_simulator) {
-            g_simulator->resetFluidState(false);  // false = don't clear ink
-            std::cout << "Fluid field reset (ink preserved)" << std::endl;
+        if (!g_simulator) {
+            return;
         }
+
+        if (!g_config.ink.imagePath.empty()) {
+            LoadedImage img = loadImage(g_config.ink.imagePath);
+            if (img.imageData) {
+                g_simulator->reinitInk(img.imageData);
+                img.cleanup();
+                std::cout << "Fluid field and ink reset from: " << g_config.ink.imagePath << std::endl;
+                return;
+            }
+            img.cleanup();
+        }
+
+        g_simulator->resetFluidState(true);
+        std::cout << "Fluid field reset" << std::endl;
     }
 
     // Set viewport target by index (0=viewport_1, 1=viewport_2, 2=viewport_3)

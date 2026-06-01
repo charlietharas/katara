@@ -13,6 +13,7 @@ struct SimParams {
     windTunnelSpeed: f32,
     momentumTransferStrength: f32,
     momentumTransferRadius: f32,
+    momentumTransferDeadZone: f32,
     vorticity: f32,
     vorticityLen: f32,
     circleX: array<i32, 42>,

@@ -60,7 +60,6 @@ struct UniformData {
 
 // TODO WIP design full interface with control panel, several views, live view changing (e.g. pretty/smoke/density), config refreshing, etc.
 // - config editing
-// ? pause
 // - more visualization options (consider combined overlay of fluid over camera canvas, etc.)
 
 // TODO overall hand stability just not giving the UX I want, want smoother displacement of fluid

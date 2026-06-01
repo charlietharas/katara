@@ -44,6 +44,12 @@ struct CircleConfig {
     float zMax = 0.1f;       // farthest hand
     float scaleMin = 2.0f;   // max scale when closest
     float scaleMax = 0.5f;   // min scale when furthest
+
+    // velocity-adaptive smoothing for hand jitter reduction
+    float handSmoothingAlphaLow = 0.05f;
+    float handSmoothingAlphaHigh = 0.5f;
+    float handSpeedThreshold = 5.0f;
+    float momentumTransferDeadZone = 1.0f;
 };
 
 enum class PipelineType {

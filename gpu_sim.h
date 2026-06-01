@@ -28,6 +28,7 @@ struct alignas(16) SimParams {
     float windTunnelSpeed;
     float momentumTransferStrength;
     float momentumTransferRadius;
+    float momentumTransferDeadZone;
     float vorticity;
     float vorticityLen;
 #ifdef ENABLE_MOUSE_INPUT
@@ -133,6 +134,7 @@ private:
 #endif
     float momentumTransferStrength;
     float momentumTransferRadius;
+    float momentumTransferDeadZone;
 
     // histogram state
     mutable HistogramSlot histogramSlots[HISTOGRAM_RING_SIZE];

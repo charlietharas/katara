@@ -180,6 +180,7 @@ class KataraWebApp {
         this.setupInkUpload();
         this.setupCameraCapture();
         this.setupResetButton();
+        this.setupPauseButton();
         this.setupViewportButtons();
         this.updateViewportButtons();
 
@@ -480,6 +481,48 @@ class KataraWebApp {
         });
     }
 
+    setupPauseButton() {
+        this.simulationPaused = false;
+        const pauseBtn = document.getElementById('pauseBtn');
+        const pauseBtnIcon = document.getElementById('pauseBtnIcon');
+        const pauseBtnLabel = document.getElementById('pauseBtnLabel');
+        if (!pauseBtn || !pauseBtnIcon || !pauseBtnLabel) {
+            console.error('Pause button not found');
+            return;
+        }
+
+        pauseBtn.addEventListener('click', () => {
+            this.simulationPaused = !this.simulationPaused;
+
+            if (this.module && this.module._setSimulationPaused) {
+                this.module._setSimulationPaused(this.simulationPaused ? 1 : 0);
+            } else {
+                console.error('setSimulationPaused not available');
+            }
+
+            if (this.simulationPaused) {
+                if (this.module) {
+                    this.module._updateFingertips(0, 0);
+                    this.module._updateLineSegments(0, 0);
+                }
+                pauseBtnIcon.innerHTML = '<polygon points="8,5 19,12 8,19"></polygon>';
+                pauseBtnIcon.setAttribute('fill', 'currentColor');
+                pauseBtnIcon.setAttribute('stroke', 'currentColor');
+                pauseBtnIcon.setAttribute('stroke-width', '2');
+                pauseBtnIcon.setAttribute('stroke-linejoin', 'round');
+                pauseBtnLabel.textContent = 'Resume';
+                pauseBtn.title = 'Resume simulation';
+            } else {
+                pauseBtnIcon.innerHTML = '<rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect>';
+                pauseBtnIcon.removeAttribute('stroke');
+                pauseBtnIcon.removeAttribute('stroke-width');
+                pauseBtnIcon.removeAttribute('stroke-linejoin');
+                pauseBtnLabel.textContent = 'Pause';
+                pauseBtn.title = 'Pause simulation';
+            }
+        });
+    }
+
     setupViewportButtons() {
         const viewportNames = ['viewport_1', 'viewport_2', 'viewport_3'];
         viewportNames.forEach((name, index) => {
@@ -574,6 +617,11 @@ class KataraWebApp {
 
     async processLoop() {
         try {
+            if (this.simulationPaused) {
+                requestAnimationFrame(() => this.processLoop());
+                return;
+            }
+
             const video = this.videoElement;
             if (!(video instanceof HTMLVideoElement) || video.readyState < 2 || video.videoWidth === 0) {
                 requestAnimationFrame(() => this.processLoop());

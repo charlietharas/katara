@@ -4,6 +4,7 @@
 #include <iostream>
 #include <sstream>
 #include <algorithm>
+#include <vector>
 
 using json = nlohmann::json;
 
@@ -245,12 +246,20 @@ std::string ConfigLoader::computeLayout(const LayoutConfig& config,
 
         // top-left quadrant contains the funky stuff
         const float histogramAspectRatio = 1.5f;
-        const bool hasDensityHistogram = (config.components.find("density_histogram") != config.components.end());
-        const bool hasVelocityHistogram = (config.components.find("velocity_histogram") != config.components.end());
+        std::vector<std::string> histogramNames;
+        if (config.components.find("density_histogram") != config.components.end()) {
+            histogramNames.push_back("density_histogram");
+        }
+        if (config.components.find("velocity_histogram") != config.components.end()) {
+            histogramNames.push_back("velocity_histogram");
+        }
+        if (config.components.find("entropy_histogram") != config.components.end()) {
+            histogramNames.push_back("entropy_histogram");
+        }
 
         int histogramBandHeight = 0;
-        if (hasDensityHistogram || hasVelocityHistogram) {
-            const int histogramCount = (hasDensityHistogram ? 1 : 0) + (hasVelocityHistogram ? 1 : 0);
+        if (!histogramNames.empty()) {
+            const int histogramCount = static_cast<int>(histogramNames.size());
             const int slotWidth = topLeft.width / std::max(1, histogramCount);
             int eachHeight = std::max(0, static_cast<int>(slotWidth / histogramAspectRatio));
             const int maxBandHeight = std::max(0, topLeft.height / 2);
@@ -261,33 +270,13 @@ std::string ConfigLoader::computeLayout(const LayoutConfig& config,
             const int startX = topLeft.x;
             const int startY = topLeft.y;
             histogramBandHeight = eachHeight;
-
-            if (hasDensityHistogram && hasVelocityHistogram) {
-                // right histogram right-anchored to quadrant left
-                // left histogram right-anchored to right-histogram left
-                const int rightX = startX + topLeft.width - eachWidth;
-                const int leftX = rightX - eachWidth;
-
-                {
-                    const auto& cfg = config.components.at("density_histogram");
-                    PixelRect base = {leftX, startY, eachWidth, eachHeight};
-                    g_layoutPixels.components["density_histogram"] = insetRect(base, cfg.px, cfg.py);
-                }
-                {
-                    const auto& cfg = config.components.at("velocity_histogram");
-                    PixelRect base = {rightX, startY, eachWidth, eachHeight};
-                    g_layoutPixels.components["velocity_histogram"] = insetRect(base, cfg.px, cfg.py);
-                }
-            } else if (hasDensityHistogram) {
-                const auto& cfg = config.components.at("density_histogram");
-                const int histX = startX + topLeft.width - eachWidth;
+            const int rightEdge = startX + topLeft.width;
+            for (int i = 0; i < histogramCount; i++) {
+                const std::string& name = histogramNames[histogramCount - 1 - i];
+                const auto& cfg = config.components.at(name);
+                const int histX = rightEdge - ((i + 1) * eachWidth);
                 PixelRect base = {histX, startY, eachWidth, eachHeight};
-                g_layoutPixels.components["density_histogram"] = insetRect(base, cfg.px, cfg.py);
-            } else if (hasVelocityHistogram) {
-                const auto& cfg = config.components.at("velocity_histogram");
-                const int histX = startX + topLeft.width - eachWidth;
-                PixelRect base = {histX, startY, eachWidth, eachHeight};
-                g_layoutPixels.components["velocity_histogram"] = insetRect(base, cfg.px, cfg.py);
+                g_layoutPixels.components[name] = insetRect(base, cfg.px, cfg.py);
             }
         }
 
@@ -361,6 +350,11 @@ CircleConfig ConfigLoader::loadCircleConfig(const json& j) {
         config.scaleMin = zScaling.value("scaleMin", 2.0f);
         config.scaleMax = zScaling.value("scaleMax", 0.5f);
     }
+
+    config.handSmoothingAlphaLow = j.value("handSmoothingAlphaLow", 0.05f);
+    config.handSmoothingAlphaHigh = j.value("handSmoothingAlphaHigh", 0.5f);
+    config.handSpeedThreshold = j.value("handSpeedThreshold", 5.0f);
+    config.momentumTransferDeadZone = j.value("momentumTransferDeadZone", 1.0f);
 
     return config;
 }

@@ -13,6 +13,7 @@ struct SimParams {
     windTunnelSpeed: f32,
     momentumTransferStrength: f32,
     momentumTransferRadius: f32,
+    momentumTransferDeadZone: f32,
     vorticity: f32,
     vorticityLen: f32,
     circleX: i32,
@@ -70,7 +71,9 @@ fn updateCircle(@builtin(global_invocation_id) id: vec3<u32>) {
     // apply momentum to fluid cells near circle surface
     let deltaX = f32(params.circleX - params.prevCircleX);
     let deltaY = f32(params.circleY - params.prevCircleY);
-    let circleMoved = (deltaX != 0.0) || (deltaY != 0.0);
+    let movementSq = deltaX * deltaX + deltaY * deltaY;
+    let deadZone = params.momentumTransferDeadZone;
+    let circleMoved = movementSq > 0.0 && (deadZone <= 0.0 || movementSq >= deadZone * deadZone);
     let effectiveRadius = f32(params.circleRadius) + params.momentumTransferRadius;
 
     if (circleMoved && !isInCircle && distance <= effectiveRadius) {
