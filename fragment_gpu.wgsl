@@ -58,18 +58,20 @@ struct UniformData {
 // we in the browser baby
 
 // TODO WIP design full interface with control panel, several views, live view changing (e.g. pretty/smoke/density), config refreshing, etc.
+// - live view changing
+// - config editing
+// - more visualization options (velocity vectors, consider combined overlay of fluid over camera canvas, etc.)
 
-// TODO add "combined" visualization (overlay fluid over camera canvas); generally more aesthetic and diverse visualization (options?)
-
-// TODO plan made web interface for config manipulation
-
-// TODO big cleanup: broadly unify and document codebase, particularly build steps + config (& generally simplify flow of data/modularize)
-// TODO unify cpu and gpu stuff
-// TODO python script for modifying simParams struct uniformly
+// TODO overall hand stability just not giving the UX I want, want smoother displacement of fluid
 
 // TODO new two handed control system (with left-handed toggle)
+// - control panel
 
-// TODO histogram jankiness when hands in-frame (related to velocity perturbation issue; probably need to examine plotting more and introduce some sort of regularization)
+// TODO gravity basically broken
+
+// TODO big cleanup: test, unify, and document codebase, particularly build steps + config (& generally simplify flow of data/modularize)
+// TODO unify cpu and gpu stuff
+// TODO python script for modifying simParams struct uniformly
 
 /*
 // TODO examine differences in pressure/velocity histograms between GPU/CPU
@@ -81,11 +83,8 @@ struct UniformData {
 likely because of the forward texture accesses (e.g. asymmetric +1) somewhere
 or it could be something else...
 - there are still some subtle bugs with gpu sim (bot left corner, circle detection)
-- and ofc the velocity field perturbations affecting the histogram limits when the circle is moved
 - and general poor behavior at high magnitudes (e.g. of velocity)--are we correctly checking fluids at boundaries
   and is there any undefined behavior during advection?
-
-// TODO later overall hand stability just not giving the UX I want, want smoother displacement of fluid
 
 // TODO LATER integrate gravity with gyroscope on the phone
 

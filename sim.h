@@ -24,7 +24,7 @@ public:
     // Runtime config reload
     void updateSimParams(const Config& config) override;
     void reinitInk(const ImageData* imageData) override;
-    void resetFluidState() override;
+    void resetFluidState(bool clearInk = true) override;
 
     // fields
     const std::vector<float>& getVelocityX() const override { return x; }

@@ -951,7 +951,7 @@ void Simulator::reinitInk(const ImageData* imageData) {
     inkInitialized = (imageData != nullptr);
 }
 
-void Simulator::resetFluidState() {
+void Simulator::resetFluidState(bool clearInk) {
     // Zero velocity/density/pressure arrays
     std::fill(x.begin(), x.end(), 0.0f);
     std::fill(y.begin(), y.end(), 0.0f);
@@ -959,8 +959,8 @@ void Simulator::resetFluidState() {
     std::fill(p.begin(), p.end(), 0.0f);
     // Note: s (solid) is NOT zeroed - boundaries must be preserved
 
-    // Zero ink arrays if they exist
-    if (!inkRed.empty()) {
+    // Zero ink arrays if they exist and clearInk is true
+    if (clearInk && !inkRed.empty()) {
         std::fill(inkRed.begin(), inkRed.end(), 0.0f);
         std::fill(inkGreen.begin(), inkGreen.end(), 0.0f);
         std::fill(inkBlue.begin(), inkBlue.end(), 0.0f);

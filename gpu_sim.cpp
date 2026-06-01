@@ -1556,9 +1556,9 @@ void GPUSimulator::reinitInk(const ImageData* imageData) {
     }
 }
 
-void GPUSimulator::resetFluidState() {
+void GPUSimulator::resetFluidState(bool clearInk) {
     // Reset CPU simulator state
-    cpuSimulator.resetFluidState();
+    cpuSimulator.resetFluidState(clearInk);
 
     // Re-upload zeroed data to GPU textures
     const auto& velX = cpuSimulator.getVelocityX();
@@ -1586,6 +1586,7 @@ void GPUSimulator::resetFluidState() {
 
     WGPUTextureDataLayout layout = {};
     layout.offset = 0;
+    layout.rowsPerImage = gridY;
 
     // Velocity (RG32Float)
     layout.bytesPerRow = gridX * 8;
@@ -1614,8 +1615,8 @@ void GPUSimulator::resetFluidState() {
     wgpuCommandBufferRelease(commands);
     wgpuCommandEncoderRelease(encoder);
 
-    // Zero ink textures if ink was initialized
-    if (inkInitialized) {
+    // Zero ink textures if ink was initialized and clearInk is true
+    if (clearInk && inkInitialized) {
         std::vector<float> zeroInk(gridX * gridY * 4, 0.0f);
         layout.bytesPerRow = gridX * 16;
         copy.texture = inkTexture;

@@ -212,7 +212,7 @@ private:
     // Runtime config reload
     void updateSimParams(const Config& config) override;
     void reinitInk(const ImageData* imageData) override;
-    void resetFluidState() override;
+    void resetFluidState(bool clearInk = true) override;
 
     // gpu resource initialization helpers
     bool createTexture(const TextureDesc& desc, WGPUTexture& texture, WGPUTextureView& view);

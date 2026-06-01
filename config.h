@@ -114,8 +114,13 @@ public:
     static Config loadConfig(const std::string& filename = "../config.json");
     static std::string readFile(const char* filename);
 
-    // Compute pixel layout from normalized config + canvas dimensions
-    static std::string computeLayout(const LayoutConfig& config, int canvasW, int canvasH);
+    // compute pixel layout from normalized config + canvas dimensions
+    static std::string computeLayout(const LayoutConfig& config,
+                                     int canvasW,
+                                     int canvasH,
+                                     bool isInkMode = false,
+                                     float inkAspectRatio = 1.0f,
+                                     float cameraAspectRatio = (4.0f / 3.0f));
 
 private:
     static PipelineType stringToPipelineType(const std::string& type);

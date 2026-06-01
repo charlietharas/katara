@@ -2,6 +2,10 @@ import { MediaPipeHandTracker } from './mediapipe.js';
 
 class KataraWebApp {
     async init() {
+        this.isInkMode = false;
+        this.inkAspectRatio = 1.0;
+        this.cameraAspectRatio = 4.0 / 3.0;
+
         // Show loading overlay
         const loadingOverlay = document.getElementById('loadingOverlay');
         if (loadingOverlay) {
@@ -75,12 +79,15 @@ class KataraWebApp {
         // Clean up the callback
         window.kataraOnReady = null;
 
+        this.syncLayoutStateFromConfig();
+        await this.updateInkAspectRatioFromConfig();
+
         // Now canvas size matches the (possibly resized) window
         simCanvas.width = window.innerWidth;
         simCanvas.height = window.innerHeight - 40;
         console.log('After C++ init: canvas size', simCanvas.width, 'x', simCanvas.height);
         console.log('Window AR:', (window.innerWidth / window.innerHeight).toFixed(3));
-        const layout = this.initLayoutFromCpp();
+        this.initLayoutFromCpp();
         this.configured = true;
 
         // 2D context for camera + keypoints
@@ -115,11 +122,13 @@ class KataraWebApp {
 
         await this.setupCamera();
 
-        // Position camera panel from C++ layout
-        this.positionCameraPanel(layout);
+        // Recompute after camera metadata is ready so camera frame can use stream AR.
+        const cameraAlignedLayout = this.initLayoutFromCpp();
+        this.positionCameraPanel(cameraAlignedLayout);
 
         this.setupInkUpload();
         this.setupCameraCapture();
+        this.setupResetButton();
 
         // mediapipe
         this.handTracker = new MediaPipeHandTracker();
@@ -131,6 +140,7 @@ class KataraWebApp {
                 const simCanvas = document.querySelector('#canvas');
                 simCanvas.width = window.innerWidth;
                 simCanvas.height = window.innerHeight - 40;
+                this.syncLayoutStateFromConfig();
                 const layout = this.initLayoutFromCpp();
                 this.positionCameraPanel(layout);
             }
@@ -170,17 +180,75 @@ class KataraWebApp {
         if (videoWidth && videoHeight) {
             this.cameraCanvas.width = videoWidth;
             this.cameraCanvas.height = videoHeight;
+            this.cameraAspectRatio = videoWidth / videoHeight;
         }
     }
 
     initLayoutFromCpp() {
         const canvasW = window.innerWidth;
         const canvasH = window.innerHeight - 40;
-        this.module._initLayout(canvasW, canvasH);
+        this.module._initLayout(canvasW, canvasH, this.inkAspectRatio, this.cameraAspectRatio);
         const jsonStr = this.module.FS.readFile('/layout_pixels.json', { encoding: 'utf8' });
         this.layoutPixels = JSON.parse(jsonStr);
         console.log('Layout from C++:', canvasW, 'x', canvasH, this.layoutPixels);
         return this.layoutPixels;
+    }
+
+    syncLayoutStateFromConfig() {
+        if (!this.module || !this.module.FS) return;
+
+        try {
+            const configText = this.module.FS.readFile('/config.json', { encoding: 'utf8' });
+            const config = JSON.parse(configText);
+            this.isInkMode = config?.rendering?.target === 3;
+        } catch (err) {
+            console.warn('Could not read /config.json for layout mode:', err);
+        }
+    }
+
+    async updateInkAspectRatioFromConfig() {
+        if (!this.module || !this.module.FS) return;
+
+        let config;
+        try {
+            const configText = this.module.FS.readFile('/config.json', { encoding: 'utf8' });
+            config = JSON.parse(configText);
+        } catch (err) {
+            console.warn('Could not parse /config.json for ink AR:', err);
+            return;
+        }
+
+        if (config?.rendering?.target !== 3) return;
+
+        const imagePath = config?.ink?.imagePath;
+        if (!imagePath) return;
+
+        try {
+            const exists = this.module.FS.analyzePath(imagePath).exists;
+            if (!exists) return;
+            const imageBytes = this.module.FS.readFile(imagePath);
+            const imageBlob = new Blob([imageBytes], { type: 'image/png' });
+            const imageAspectRatio = await this.getImageAspectRatio(imageBlob);
+            if (imageAspectRatio > 0) {
+                this.inkAspectRatio = imageAspectRatio;
+            }
+        } catch (err) {
+            console.warn('Could not read ink image for AR:', err);
+        }
+    }
+
+    async getImageAspectRatio(imageSource) {
+        try {
+            const bitmap = await createImageBitmap(imageSource);
+            const imageAspectRatio = bitmap.width > 0 && bitmap.height > 0
+                ? bitmap.width / bitmap.height
+                : 0;
+            bitmap.close();
+            return imageAspectRatio;
+        } catch (err) {
+            console.warn('Could not decode image for AR:', err);
+            return 0;
+        }
     }
 
     positionCameraPanel(layout) {
@@ -229,6 +297,11 @@ class KataraWebApp {
         const FS = this.module.FS;
 
         try {
+            const uploadedAspectRatio = await this.getImageAspectRatio(file);
+            if (uploadedAspectRatio > 0) {
+                this.inkAspectRatio = uploadedAspectRatio;
+            }
+
             // Read file as ArrayBuffer
             const arrayBuffer = await file.arrayBuffer();
             const uint8Array = new Uint8Array(arrayBuffer);
@@ -266,6 +339,9 @@ class KataraWebApp {
             // Reload config without page reload (INK + RENDER flags)
             console.log('Reloading config...');
             this.module._reloadConfig(1 | 4);
+            this.syncLayoutStateFromConfig();
+            const layout = this.initLayoutFromCpp();
+            this.positionCameraPanel(layout);
 
         } catch (err) {
             console.error('Failed to upload image:', err);
@@ -281,6 +357,22 @@ class KataraWebApp {
         }
 
         cheeseBtn.addEventListener('click', () => this.captureFromCamera());
+    }
+
+    setupResetButton() {
+        const resetBtn = document.getElementById('resetBtn');
+        if (!resetBtn) {
+            console.error('Reset button not found');
+            return;
+        }
+
+        resetBtn.addEventListener('click', () => {
+            if (this.module && this.module._resetFluidField) {
+                this.module._resetFluidField();
+            } else {
+                console.error('resetFluidField not available');
+            }
+        });
     }
 
     async captureFromCamera() {

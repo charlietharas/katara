@@ -168,8 +168,16 @@ extern "C" {
 #endif
 
     EMSCRIPTEN_KEEPALIVE
-    void initLayout(int canvasW, int canvasH) {
-        std::string json = ConfigLoader::computeLayout(g_config.layout, canvasW, canvasH);
+    void initLayout(int canvasW, int canvasH, float inkAspectRatio, float cameraAspectRatio) {
+        const bool isInkMode = (g_config.rendering.target == 3);
+        std::string json = ConfigLoader::computeLayout(
+            g_config.layout,
+            canvasW,
+            canvasH,
+            isInkMode,
+            inkAspectRatio,
+            cameraAspectRatio
+        );
         // Write to virtual FS for JS to read
         FILE* f = fopen("/layout_pixels.json", "w");
         if (f) {
@@ -213,6 +221,15 @@ extern "C" {
 
         // LAYOUT (8): handled by JS calling initLayout() separately after
         std::cout << "Config reload complete (flags=" << flags << ")" << std::endl;
+    }
+
+    // Reset fluid field (clear velocity, pressure, density; reapply wind tunnel; preserve ink)
+    EMSCRIPTEN_KEEPALIVE
+    void resetFluidField() {
+        if (g_simulator) {
+            g_simulator->resetFluidState(false);  // false = don't clear ink
+            std::cout << "Fluid field reset (ink preserved)" << std::endl;
+        }
     }
 }
 #endif
@@ -315,7 +332,16 @@ int main(int argc, char** argv) {
 
     // Compute pixel layout from window dimensions (desktop path)
 #ifndef __EMSCRIPTEN__
-    ConfigLoader::computeLayout(g_config.layout, windowWidth, windowHeight);
+    const bool isInkMode = (g_config.rendering.target == 3);
+    const float inkAspectRatio = isInkMode ? aspectRatio : 1.0f;
+    ConfigLoader::computeLayout(
+        g_config.layout,
+        windowWidth,
+        windowHeight,
+        isInkMode,
+        inkAspectRatio,
+        4.0f / 3.0f
+    );
 #endif
 
     auto renderer = createRenderer(window, config);

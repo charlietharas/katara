@@ -99,7 +99,7 @@ public:
     // Runtime config reload
     virtual void updateSimParams(const Config& config) {}
     virtual void reinitInk(const ImageData* imageData) {}
-    virtual void resetFluidState() {}
+    virtual void resetFluidState(bool clearInk = true) {}
 
 #ifdef ENABLE_MOUSE_INPUT
     // mouse helpers

@@ -7,6 +7,67 @@
 
 using json = nlohmann::json;
 
+namespace {
+bool hasPrefix(const std::string& value, const std::string& prefix) {
+    return value.rfind(prefix, 0) == 0;
+}
+
+PixelRect insetRect(const PixelRect& rect, int padX, int padY) {
+    PixelRect inset = rect;
+    inset.x += padX;
+    inset.y += padY;
+    inset.width = std::max(0, rect.width - 2 * padX);
+    inset.height = std::max(0, rect.height - 2 * padY);
+    return inset;
+}
+
+PixelRect fitRectToAspectCentered(const PixelRect& slot, float targetAspectRatio) {
+    if (slot.width <= 0 || slot.height <= 0 || targetAspectRatio <= 0.0f) {
+        return slot;
+    }
+
+    PixelRect fitted = slot;
+    const float slotAspectRatio = static_cast<float>(slot.width) / static_cast<float>(slot.height);
+
+    if (slotAspectRatio > targetAspectRatio) {
+        fitted.width = std::max(0, static_cast<int>(slot.height * targetAspectRatio));
+        fitted.height = slot.height;
+        fitted.x = slot.x + (slot.width - fitted.width) / 2;
+        fitted.y = slot.y;
+    } else {
+        fitted.width = slot.width;
+        fitted.height = std::max(0, static_cast<int>(slot.width / targetAspectRatio));
+        fitted.x = slot.x;
+        fitted.y = slot.y + (slot.height - fitted.height) / 2;
+    }
+
+    return fitted;
+}
+
+PixelRect fitRectToAspectBottomRight(const PixelRect& slot, float targetAspectRatio) {
+    if (slot.width <= 0 || slot.height <= 0 || targetAspectRatio <= 0.0f) {
+        return slot;
+    }
+
+    PixelRect fitted = slot;
+    const float slotAspectRatio = static_cast<float>(slot.width) / static_cast<float>(slot.height);
+
+    if (slotAspectRatio > targetAspectRatio) {
+        fitted.width = std::max(0, static_cast<int>(slot.height * targetAspectRatio));
+        fitted.height = slot.height;
+        fitted.x = slot.x + (slot.width - fitted.width);
+        fitted.y = slot.y;
+    } else {
+        fitted.width = slot.width;
+        fitted.height = std::max(0, static_cast<int>(slot.width / targetAspectRatio));
+        fitted.x = slot.x;
+        fitted.y = slot.y + (slot.height - fitted.height);
+    }
+
+    return fitted;
+}
+}  // namespace
+
 Config ConfigLoader::loadConfig(const std::string& filename) {
     std::ifstream file(filename);
     if (!file.is_open()) {
@@ -124,16 +185,123 @@ LayoutConfig ConfigLoader::loadLayoutConfig(const json& j) {
 // Global pixel layout
 LayoutPixels g_layoutPixels;
 
-std::string ConfigLoader::computeLayout(const LayoutConfig& config, int canvasW, int canvasH) {
+std::string ConfigLoader::computeLayout(const LayoutConfig& config,
+                                        int canvasW,
+                                        int canvasH,
+                                        bool isInkMode,
+                                        float inkAspectRatio,
+                                        float cameraAspectRatio) {
     g_layoutPixels.components.clear();
 
+    // default component layout
     for (const auto& [name, bbox] : config.components) {
-        PixelRect pr;
-        pr.x = static_cast<int>(bbox.x * canvasW) + bbox.px;
-        pr.y = static_cast<int>(bbox.y * canvasH) + bbox.py;
-        pr.width = std::max(0, static_cast<int>(bbox.w * canvasW) - 2 * bbox.px);
-        pr.height = std::max(0, static_cast<int>(bbox.h * canvasH) - 2 * bbox.py);
-        g_layoutPixels.components[name] = pr;
+        PixelRect rect;
+        rect.x = static_cast<int>(bbox.x * canvasW) + bbox.px;
+        rect.y = static_cast<int>(bbox.y * canvasH) + bbox.py;
+        rect.width = std::max(0, static_cast<int>(bbox.w * canvasW) - 2 * bbox.px);
+        rect.height = std::max(0, static_cast<int>(bbox.h * canvasH) - 2 * bbox.py);
+        g_layoutPixels.components[name] = rect;
+    }
+
+    if (isInkMode && canvasW > 0 && canvasH > 0) {
+        const float viewportAspectRatio = inkAspectRatio > 0.0f ? inkAspectRatio : 1.0f;
+        const float safeCameraAspectRatio = cameraAspectRatio > 0.0f ? cameraAspectRatio : (4.0f / 3.0f);
+
+        // quadtree layout matches image aspect ratio
+        int cellWidth = 0;
+        int cellHeight = 0;
+        const float canvasAspectRatio = static_cast<float>(canvasW) / static_cast<float>(canvasH);
+        if (canvasAspectRatio > viewportAspectRatio) {
+            cellHeight = canvasH / 2;
+            cellWidth = std::max(0, static_cast<int>(cellHeight * viewportAspectRatio));
+        } else {
+            cellWidth = canvasW / 2;
+            cellHeight = std::max(0, static_cast<int>(cellWidth / viewportAspectRatio));
+        }
+
+        const int quadtreeWidth = cellWidth * 2;
+        const int quadtreeHeight = cellHeight * 2;
+        const int quadtreeX = (canvasW - quadtreeWidth) / 2;
+        const int quadtreeY = (canvasH - quadtreeHeight) / 2;
+
+        PixelRect topLeft = {quadtreeX, quadtreeY, cellWidth, cellHeight};
+        PixelRect topRight = {quadtreeX + cellWidth, quadtreeY, cellWidth, cellHeight};
+        PixelRect bottomLeft = {quadtreeX, quadtreeY + cellHeight, cellWidth, cellHeight};
+        PixelRect bottomRight = {quadtreeX + cellWidth, quadtreeY + cellHeight, cellWidth, cellHeight};
+
+        auto applyViewport = [&](const std::string& name, const PixelRect& quadrant) {
+            auto cfgIt = config.components.find(name);
+            if (cfgIt == config.components.end()) {
+                return;
+            }
+            PixelRect fitted = fitRectToAspectCentered(quadrant, viewportAspectRatio);
+            g_layoutPixels.components[name] = insetRect(fitted, cfgIt->second.px, cfgIt->second.py);
+        };
+
+        // viewports
+        applyViewport("viewport_1", topRight);
+        applyViewport("viewport_2", bottomRight);
+        applyViewport("viewport_3", bottomLeft);
+
+        // top-left quadrant contains the funky stuff
+        const float histogramAspectRatio = 1.5f;
+        const bool hasDensityHistogram = (config.components.find("density_histogram") != config.components.end());
+        const bool hasVelocityHistogram = (config.components.find("velocity_histogram") != config.components.end());
+
+        int histogramBandHeight = 0;
+        if (hasDensityHistogram || hasVelocityHistogram) {
+            const int histogramCount = (hasDensityHistogram ? 1 : 0) + (hasVelocityHistogram ? 1 : 0);
+            const int slotWidth = topLeft.width / std::max(1, histogramCount);
+            int eachHeight = std::max(0, static_cast<int>(slotWidth / histogramAspectRatio));
+            const int maxBandHeight = std::max(0, topLeft.height / 2);
+            if (eachHeight > maxBandHeight) {
+                eachHeight = maxBandHeight;
+            }
+            const int eachWidth = std::min(slotWidth, std::max(0, static_cast<int>(eachHeight * histogramAspectRatio)));
+            const int startX = topLeft.x;
+            const int startY = topLeft.y;
+            histogramBandHeight = eachHeight;
+
+            if (hasDensityHistogram && hasVelocityHistogram) {
+                // right histogram right-anchored to quadrant left
+                // left histogram right-anchored to right-histogram left
+                const int rightX = startX + topLeft.width - eachWidth;
+                const int leftX = rightX - eachWidth;
+
+                {
+                    const auto& cfg = config.components.at("density_histogram");
+                    PixelRect base = {leftX, startY, eachWidth, eachHeight};
+                    g_layoutPixels.components["density_histogram"] = insetRect(base, cfg.px, cfg.py);
+                }
+                {
+                    const auto& cfg = config.components.at("velocity_histogram");
+                    PixelRect base = {rightX, startY, eachWidth, eachHeight};
+                    g_layoutPixels.components["velocity_histogram"] = insetRect(base, cfg.px, cfg.py);
+                }
+            } else if (hasDensityHistogram) {
+                const auto& cfg = config.components.at("density_histogram");
+                const int histX = startX + topLeft.width - eachWidth;
+                PixelRect base = {histX, startY, eachWidth, eachHeight};
+                g_layoutPixels.components["density_histogram"] = insetRect(base, cfg.px, cfg.py);
+            } else if (hasVelocityHistogram) {
+                const auto& cfg = config.components.at("velocity_histogram");
+                const int histX = startX + topLeft.width - eachWidth;
+                PixelRect base = {histX, startY, eachWidth, eachHeight};
+                g_layoutPixels.components["velocity_histogram"] = insetRect(base, cfg.px, cfg.py);
+            }
+        }
+
+        auto cameraIt = config.components.find("camera_frame");
+        if (cameraIt != config.components.end()) {
+            PixelRect availableCameraArea = topLeft;
+            if (histogramBandHeight > 0) {
+                availableCameraArea.y += histogramBandHeight;
+                availableCameraArea.height = std::max(0, availableCameraArea.height - histogramBandHeight);
+            }
+
+            PixelRect fitted = fitRectToAspectBottomRight(availableCameraArea, safeCameraAspectRatio);
+            g_layoutPixels.components["camera_frame"] = insetRect(fitted, cameraIt->second.px, cameraIt->second.py);
+        }
     }
 
     // Build JSON response
