@@ -7,35 +7,51 @@
     <link rel="stylesheet" href="https://charliemax.dev/css/stylesheet.css">
     <title>katara</title>
     <style>
-* {
+.sim-viewport,
+.sim-viewport * {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
 }
 
 body {
-    background: #0a0a0a;
+    background-color: var(--offblack);
     min-height: 100vh;
-    padding-top: 40px;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: stretch;
 }
 
-nav {
-    position: fixed;
-    top: 0;
-    left: 0;
+body.light-mode {
+    background-color: var(--offwhite);
+}
+
+.content.page-title {
     width: 100%;
-    height: 40px;
-    z-index: 100;
+    max-width: none;
+    text-align: center;
+    padding: 0;
+    margin: 0;
+}
+
+.content.page-title h1 {
+    margin: 0;
+    text-align: center;
+}
+
+.sim-viewport {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
 }
 
 .loading-overlay {
-    position: fixed;
-    top: 40px;
-    left: 0;
-    width: 100vw;
-    height: calc(100vh - 40px);
-    background: #0a0a0a;
+    position: absolute;
+    inset: 0;
+    background-color: var(--offblack);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -46,6 +62,10 @@ nav {
 .loading-overlay.hidden {
     opacity: 0;
     pointer-events: none;
+}
+
+body.light-mode .loading-overlay {
+    background-color: var(--offwhite);
 }
 
 .loading-overlay h2 {
@@ -64,11 +84,10 @@ nav {
 }
 
 #canvas {
-    position: fixed;
-    top: 40px;
-    left: 0;
-    width: 100vw;
-    height: calc(100vh - 40px);
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
     z-index: 0;
 }
 
@@ -124,40 +143,45 @@ video {
 }
     </style>
 </head>
+<nav></nav>
+<script src="https://charliemax.dev/js/lightmode.js"></script>
 <body>
-    <nav></nav>
-    <script src="https://charliemax.dev/js/lightmode.js"></script>
-    <div class="loading-overlay" id="loadingOverlay">
-        <h2>Loading...</h2>
+    <div class="content page-title">
+        <h1>katara</h1>
     </div>
-    <canvas id="canvas"></canvas>
-    <div class="camera-panel"></div>
-    <div class="sim-controls">
-        <button id="uploadInkBtn" class="control-btn" title="Upload PNG image for ink mode">
+    <div class="sim-viewport">
+        <div class="loading-overlay" id="loadingOverlay">
+            <h2>Loading...</h2>
+        </div>
+        <canvas id="canvas"></canvas>
+        <div class="camera-panel"></div>
+        <div class="sim-controls">
+            <button id="uploadInkBtn" class="control-btn" title="Upload PNG image for ink mode">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                 <polyline points="17 8 12 3 7 8"></polyline>
                 <line x1="12" y1="3" x2="12" y2="15"></line>
             </svg>
             Upload Background
-        </button>
-        <button id="cheeseBtn" class="control-btn" title="Take picture from webcam">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"></path>
-                <circle cx="12" cy="13" r="3"></circle>
-            </svg>
-            Cheese
-        </button>
-        <button id="resetBtn" class="control-btn" title="Reset fluid field">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
-                <path d="M21 3v5h-5"></path>
-                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
-                <path d="M3 21v-5h5"></path>
-            </svg>
-            Reset
-        </button>
-        <input type="file" id="inkImageInput" accept="image/png" hidden>
+            </button>
+            <button id="cheeseBtn" class="control-btn" title="Take picture from webcam">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"></path>
+                    <circle cx="12" cy="13" r="3"></circle>
+                </svg>
+                Cheese
+            </button>
+            <button id="resetBtn" class="control-btn" title="Reset fluid field">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+                    <path d="M21 3v5h-5"></path>
+                    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+                    <path d="M3 21v-5h5"></path>
+                </svg>
+                Reset
+            </button>
+            <input type="file" id="inkImageInput" accept="image/png" hidden>
+        </div>
     </div>
     <script src="katara.js"></script>
     <script type="module" src="app.js"></script>

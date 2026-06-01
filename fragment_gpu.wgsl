@@ -63,6 +63,8 @@ struct UniformData {
 // - more visualization options (velocity vectors, consider combined overlay of fluid over camera canvas, etc.)
 
 // TODO overall hand stability just not giving the UX I want, want smoother displacement of fluid
+// - finish EMA & visual smoothing
+// - can we use velocity to "eject" existing fluid out of the way? can we manually override and "teleport" fluid out of the way? investigate momentum transfer?
 
 // TODO new two handed control system (with left-handed toggle)
 // - control panel
@@ -423,8 +425,8 @@ fn fs_main(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
             }
         }
     } else {
-        // No viewport defined - render background (dark grey)
-        finalColor = vec3<f32>(0.1, 0.1, 0.1);
+        // background (matches charliemax.dev --offblack)
+        finalColor = vec3<f32>(5.0 / 255.0);
     }
 
     return vec4<f32>(finalColor, 1.0);

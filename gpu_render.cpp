@@ -408,7 +408,7 @@ void GPURenderer::render(const ISimulator& simulator) {
         nextTexture,
         WGPULoadOp_Clear,
         WGPUStoreOp_Store,
-        {0.0f, 0.0f, 0.0f, 1.0f}
+        {5.0f / 255.0f, 5.0f / 255.0f, 5.0f / 255.0f, 1.0f}
     );
     auto renderPassDesc = createRenderPassDescriptor(&colorAttachment);
 

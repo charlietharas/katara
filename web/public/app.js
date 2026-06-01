@@ -1,6 +1,49 @@
 import { MediaPipeHandTracker } from './mediapipe.js';
 
 class KataraWebApp {
+    getSimViewportSize() {
+        const viewport = document.querySelector('.sim-viewport');
+        if (!viewport) {
+            throw new Error('Sim viewport not found');
+        }
+        return {
+            width: viewport.clientWidth,
+            height: viewport.clientHeight
+        };
+    }
+
+    async waitForNav() {
+        if (document.querySelector('nav h2')) return;
+
+        const nav = document.querySelector('nav');
+        if (!nav) return;
+
+        await new Promise(resolve => {
+            const observer = new MutationObserver(() => {
+                if (document.querySelector('nav h2')) {
+                    observer.disconnect();
+                    resolve();
+                }
+            });
+            observer.observe(nav, { childList: true, subtree: true });
+            setTimeout(() => {
+                observer.disconnect();
+                resolve();
+            }, 5000);
+        });
+    }
+
+    refreshSimLayout() {
+        const simCanvas = document.querySelector('#canvas');
+        const size = this.getSimViewportSize();
+        simCanvas.width = size.width;
+        simCanvas.height = size.height;
+        this.syncLayoutStateFromConfig();
+        const layout = this.initLayoutFromCpp();
+        this.positionCameraPanel(layout);
+        this.positionControls(layout);
+    }
+
     async init() {
         this.isInkMode = false;
         this.inkAspectRatio = 1.0;
@@ -12,10 +55,13 @@ class KataraWebApp {
             loadingOverlay.classList.remove('hidden');
         }
 
+        await this.waitForNav();
+
         // Canvas size will be updated after C++ resizes window
         const simCanvas = document.querySelector('#canvas');
-        simCanvas.width = window.innerWidth;
-        simCanvas.height = window.innerHeight - 40;
+        const initialSize = this.getSimViewportSize();
+        simCanvas.width = initialSize.width;
+        simCanvas.height = initialSize.height;
 
         // Check if we need to restore persisted data (images, config)
         const needsRestore = localStorage.getItem('katara_needs_restore') === 'true';
@@ -83,11 +129,13 @@ class KataraWebApp {
         await this.updateInkAspectRatioFromConfig();
 
         // Now canvas size matches the (possibly resized) window
-        simCanvas.width = window.innerWidth;
-        simCanvas.height = window.innerHeight - 40;
+        const settledSize = this.getSimViewportSize();
+        simCanvas.width = settledSize.width;
+        simCanvas.height = settledSize.height;
         console.log('After C++ init: canvas size', simCanvas.width, 'x', simCanvas.height);
-        console.log('Window AR:', (window.innerWidth / window.innerHeight).toFixed(3));
-        this.initLayoutFromCpp();
+        console.log('Window AR:', (settledSize.width / settledSize.height).toFixed(3));
+        const initialLayout = this.initLayoutFromCpp();
+        this.positionControls(initialLayout);
         this.configured = true;
 
         // 2D context for camera + keypoints
@@ -125,6 +173,7 @@ class KataraWebApp {
         // Recompute after camera metadata is ready so camera frame can use stream AR.
         const cameraAlignedLayout = this.initLayoutFromCpp();
         this.positionCameraPanel(cameraAlignedLayout);
+        this.positionControls(cameraAlignedLayout);
 
         this.setupInkUpload();
         this.setupCameraCapture();
@@ -137,14 +186,19 @@ class KataraWebApp {
         // Handle window resize (C++ might resize window based on image)
         window.addEventListener('resize', () => {
             if (this.configured) {
-                const simCanvas = document.querySelector('#canvas');
-                simCanvas.width = window.innerWidth;
-                simCanvas.height = window.innerHeight - 40;
-                this.syncLayoutStateFromConfig();
-                const layout = this.initLayoutFromCpp();
-                this.positionCameraPanel(layout);
+                this.refreshSimLayout();
             }
         });
+
+        const viewport = document.querySelector('.sim-viewport');
+        if (viewport) {
+            this.viewportObserver = new ResizeObserver(() => {
+                if (this.configured) {
+                    this.refreshSimLayout();
+                }
+            });
+            this.viewportObserver.observe(viewport);
+        }
 
         // Hide loading overlay - everything is already configured
         if (loadingOverlay) {
@@ -185,8 +239,7 @@ class KataraWebApp {
     }
 
     initLayoutFromCpp() {
-        const canvasW = window.innerWidth;
-        const canvasH = window.innerHeight - 40;
+        const { width: canvasW, height: canvasH } = this.getSimViewportSize();
         this.module._initLayout(canvasW, canvasH, this.inkAspectRatio, this.cameraAspectRatio);
         const jsonStr = this.module.FS.readFile('/layout_pixels.json', { encoding: 'utf8' });
         this.layoutPixels = JSON.parse(jsonStr);
@@ -254,10 +307,10 @@ class KataraWebApp {
     positionCameraPanel(layout) {
         const camFrame = layout.camera_frame;
         const camPanel = document.querySelector('.camera-panel');
-        if (camFrame && camPanel) {
+        if (camFrame && camPanel && this.cameraCanvas) {
             camPanel.style.position = 'absolute';
             camPanel.style.left = camFrame.x + 'px';
-            camPanel.style.top = (camFrame.y + 40) + 'px'; // +40 for nav bar
+            camPanel.style.top = camFrame.y + 'px';
             camPanel.style.width = camFrame.width + 'px';
             camPanel.style.height = camFrame.height + 'px';
 
@@ -266,6 +319,52 @@ class KataraWebApp {
             this.cameraCanvas.style.maxWidth = 'none';
             console.log('Camera positioned from layout:', camFrame.x, camFrame.y, camFrame.width, 'x', camFrame.height);
         }
+    }
+
+    getGridBounds(layout) {
+        if (!layout) return null;
+
+        const viewportNames = ['viewport_1', 'viewport_2', 'viewport_3'];
+        const viewportRects = viewportNames
+            .map(name => layout[name])
+            .filter(rect => rect && Number.isFinite(rect.x) && Number.isFinite(rect.y) &&
+                Number.isFinite(rect.width) && Number.isFinite(rect.height));
+
+        const candidateRects = viewportRects.length > 0
+            ? viewportRects
+            : Object.values(layout).filter(rect =>
+                rect && Number.isFinite(rect.x) && Number.isFinite(rect.y) &&
+                Number.isFinite(rect.width) && Number.isFinite(rect.height));
+
+        if (candidateRects.length === 0) return null;
+
+        const minX = Math.min(...candidateRects.map(rect => rect.x));
+        const minY = Math.min(...candidateRects.map(rect => rect.y));
+        const maxX = Math.max(...candidateRects.map(rect => rect.x + rect.width));
+        const maxY = Math.max(...candidateRects.map(rect => rect.y + rect.height));
+
+        return {
+            x: minX,
+            y: minY,
+            width: Math.max(0, maxX - minX),
+            height: Math.max(0, maxY - minY)
+        };
+    }
+
+    positionControls(layout) {
+        const controls = document.querySelector('.sim-controls');
+        const bounds = this.getGridBounds(layout);
+        if (!controls || !bounds) return;
+
+        const margin = 16;
+        const targetLeft = bounds.x + bounds.width - controls.offsetWidth - margin;
+        const targetTop = bounds.y + bounds.height - controls.offsetHeight - margin;
+
+        controls.style.position = 'absolute';
+        controls.style.left = `${Math.max(bounds.x, targetLeft)}px`;
+        controls.style.top = `${Math.max(bounds.y, targetTop)}px`;
+        controls.style.right = 'auto';
+        controls.style.bottom = 'auto';
     }
 
     setupInkUpload() {
@@ -342,6 +441,7 @@ class KataraWebApp {
             this.syncLayoutStateFromConfig();
             const layout = this.initLayoutFromCpp();
             this.positionCameraPanel(layout);
+            this.positionControls(layout);
 
         } catch (err) {
             console.error('Failed to upload image:', err);

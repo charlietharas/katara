@@ -398,8 +398,8 @@ fn fs_main(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
             }
         }
     } else {
-        // No viewport defined - render background (dark grey)
-        finalColor = vec3<f32>(0.1, 0.1, 0.1);
+        // background (charliemax.dev --offblack)
+        finalColor = vec3<f32>(5.0 / 255.0);
     }
 
     return vec4<f32>(finalColor, 1.0);

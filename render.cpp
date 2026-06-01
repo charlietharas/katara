@@ -71,7 +71,7 @@ void Renderer::render(const ISimulator& simulator) {
     canvasScale = std::min(scaleX, scaleY);
 
     // clear bg
-    std::fill(pixels, pixels + windowWidth * windowHeight, 0xFF000000);
+    std::fill(pixels, pixels + windowWidth * windowHeight, 0xFF050505);
 
     drawFluidField(simulator, drawTarget);
     if (drawVelocities) {
