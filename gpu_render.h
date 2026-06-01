@@ -37,6 +37,7 @@ struct alignas(16) UniformData {
     int viewportWidth[4];
     int viewportHeight[4];
     int viewportRenderTarget[4];
+    int viewportRenderVelocity[4];
     int pad1[3]; // alignment padding
 
     // Histogram configuration

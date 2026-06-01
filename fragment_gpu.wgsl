@@ -20,6 +20,7 @@ struct UniformData {
     viewportWidth: array<i32, 4>,
     viewportHeight: array<i32, 4>,
     viewportRenderTarget: array<i32, 4>,
+    viewportRenderVelocity: array<i32, 4>,
     pad1: array<i32, 3>,
 
     // Histogram configuration
@@ -58,13 +59,13 @@ struct UniformData {
 // we in the browser baby
 
 // TODO WIP design full interface with control panel, several views, live view changing (e.g. pretty/smoke/density), config refreshing, etc.
-// - live view changing
 // - config editing
-// - more visualization options (velocity vectors, consider combined overlay of fluid over camera canvas, etc.)
+// ? pause
+// - more visualization options (consider combined overlay of fluid over camera canvas, etc.)
 
 // TODO overall hand stability just not giving the UX I want, want smoother displacement of fluid
-// - finish EMA & visual smoothing
 // - can we use velocity to "eject" existing fluid out of the way? can we manually override and "teleport" fluid out of the way? investigate momentum transfer?
+// - !! can we just nullify all keypoint movements below a certain threshold? [NEXT]
 
 // TODO new two handed control system (with left-handed toggle)
 // - control panel
@@ -417,8 +418,8 @@ fn fs_main(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
             finalColor = vec3<f32>(0.47);
         }
 
-        // Draw velocity field if enabled
-        if (uniforms.drawVelocities != 0) {
+        // Draw velocity field if enabled for this viewport
+        if (uniforms.viewportRenderVelocity[viewportIndex] != 0) {
             var velColor = drawVelocityField(worldCoord, texCoord.x, texCoord.y);
             if (velColor.a > 0.0) {
                 finalColor = velColor.rgb * velColor.a + finalColor * (1.0 - velColor.a);

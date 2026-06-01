@@ -10,6 +10,8 @@ struct MinMaxUniform {
     pressMax : atomic<u32>,
     velMin : atomic<u32>,
     velMax : atomic<u32>,
+    densityMin : atomic<u32>,
+    densityMax : atomic<u32>,
 }
 
 @group(0) @binding(0) var<uniform> params : SimParams;
@@ -17,6 +19,7 @@ struct MinMaxUniform {
 @group(0) @binding(2) var velocityTexture : texture_storage_2d<rg32float, read>;
 @group(0) @binding(3) var solidTexture : texture_storage_2d<r32float, read>;
 @group(0) @binding(4) var<storage, read_write> result : MinMaxUniform;
+@group(0) @binding(5) var densityTexture : texture_storage_2d<r32float, read>;
 
 fn floatToOrderedUint(value: f32) -> u32 {
     let bits = bitcast<u32>(value);
@@ -50,4 +53,9 @@ fn computePressureMinMax(@builtin(global_invocation_id) id : vec3<u32>) {
     let velBits = floatToOrderedUint(velMagnitude);
     atomicMin(&result.velMin, velBits);
     atomicMax(&result.velMax, velBits);
+
+    let density = textureLoad(densityTexture, vec2<i32>(i32(i), i32(j))).r;
+    let densityBits = floatToOrderedUint(density);
+    atomicMin(&result.densityMin, densityBits);
+    atomicMax(&result.densityMax, densityBits);
 }

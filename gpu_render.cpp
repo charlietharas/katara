@@ -76,6 +76,8 @@ void GPURenderer::updateUniformBufferRender(const ISimulator& simulator) {
             auto cfgIt = g_config.layout.components.find(vpName);
             uniformData.viewportRenderTarget[i] = (cfgIt != g_config.layout.components.end())
                 ? cfgIt->second.target : 2;
+            uniformData.viewportRenderVelocity[i] = (cfgIt != g_config.layout.components.end())
+                ? (cfgIt->second.velocity ? 1 : 0) : 0;
             uniformData.viewportCount++;
         }
     }
@@ -620,12 +622,13 @@ void GPURenderer::computeHistograms(const ISimulator& simulator) {
         int readySlot = -1;
         const float* pressureMinMax = nullptr;
         const float* velocityMinMax = nullptr;
+        const float* densityMinMax = nullptr;
         const int* histogramBins = nullptr;
 
-        if (gpuSim.getHistogramData(readySlot, pressureMinMax, velocityMinMax, histogramBins)) {
-            if (pressureMinMax[0] < pressureMinMax[1]) {
-                densityHistogramMin = pressureMinMax[0];
-                densityHistogramMax = pressureMinMax[1];
+        if (gpuSim.getHistogramData(readySlot, pressureMinMax, velocityMinMax, densityMinMax, histogramBins)) {
+            if (densityMinMax[0] < densityMinMax[1]) {
+                densityHistogramMin = densityMinMax[0];
+                densityHistogramMax = densityMinMax[1];
             }
             if (velocityMinMax[0] < velocityMinMax[1]) {
                 velocityHistogramMin = velocityMinMax[0];

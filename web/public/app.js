@@ -42,12 +42,14 @@ class KataraWebApp {
         const layout = this.initLayoutFromCpp();
         this.positionCameraPanel(layout);
         this.positionControls(layout);
+        this.updateViewportButtons();
     }
 
     async init() {
         this.isInkMode = false;
         this.inkAspectRatio = 1.0;
         this.cameraAspectRatio = 4.0 / 3.0;
+        this.viewportControllers = new Map();
 
         // Show loading overlay
         const loadingOverlay = document.getElementById('loadingOverlay');
@@ -178,6 +180,8 @@ class KataraWebApp {
         this.setupInkUpload();
         this.setupCameraCapture();
         this.setupResetButton();
+        this.setupViewportButtons();
+        this.updateViewportButtons();
 
         // mediapipe
         this.handTracker = new MediaPipeHandTracker();
@@ -442,6 +446,7 @@ class KataraWebApp {
             const layout = this.initLayoutFromCpp();
             this.positionCameraPanel(layout);
             this.positionControls(layout);
+            this.updateViewportButtons();
 
         } catch (err) {
             console.error('Failed to upload image:', err);
@@ -471,6 +476,28 @@ class KataraWebApp {
                 this.module._resetFluidField();
             } else {
                 console.error('resetFluidField not available');
+            }
+        });
+    }
+
+    setupViewportButtons() {
+        const viewportNames = ['viewport_1', 'viewport_2', 'viewport_3'];
+        viewportNames.forEach((name, index) => {
+            const layoutRect = this.layoutPixels[name];
+            if (!layoutRect) return;
+            const target = layoutRect.target ?? 2;
+            const velocity = false; // Default to disabled
+            const controller = new ViewportController(index, name, target, velocity, layoutRect, this);
+            controller.createTargetButton();
+            this.viewportControllers.set(name, controller);
+        });
+    }
+
+    updateViewportButtons() {
+        this.viewportControllers.forEach((controller, name) => {
+            const layoutRect = this.layoutPixels[name];
+            if (layoutRect) {
+                controller.updateLayout(layoutRect);
             }
         });
     }
@@ -604,6 +631,183 @@ class KataraWebApp {
         }
 
         requestAnimationFrame(() => this.processLoop());
+    }
+}
+
+class ViewportController {
+    constructor(viewportIndex, viewportName, target, velocity, layoutRect, parentApp) {
+        this.viewportIndex = viewportIndex;
+        this.viewportName = viewportName;
+        this.target = target;
+        this.velocity = velocity;
+        this.layoutRect = layoutRect;
+        this.parentApp = parentApp;
+        this.targetButtonElement = null;
+        this.velocityButtonElement = null;
+        this.screenshotButtonElement = null;
+    }
+
+    createTargetButton() {
+        const viewport = document.querySelector('.sim-viewport');
+        if (!viewport) return;
+
+        // Create screenshot button
+        const screenshotBtn = document.createElement('button');
+        screenshotBtn.className = 'viewport-screenshot-btn';
+        screenshotBtn.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+                <circle cx="12" cy="13" r="4"></circle>
+            </svg>
+        `;
+        screenshotBtn.addEventListener('click', () => this.captureScreenshot());
+        viewport.appendChild(screenshotBtn);
+        this.screenshotButtonElement = screenshotBtn;
+
+        // Create velocity button
+        const velocityBtn = document.createElement('button');
+        velocityBtn.className = 'viewport-velocity-btn';
+        if (!this.velocity) {
+            velocityBtn.classList.add('disabled');
+        }
+        velocityBtn.textContent = 'V';
+        velocityBtn.addEventListener('click', () => this.toggleVelocity());
+        viewport.appendChild(velocityBtn);
+        this.velocityButtonElement = velocityBtn;
+
+        // Create target button
+        const targetBtn = document.createElement('button');
+        targetBtn.className = 'viewport-target-btn';
+        targetBtn.textContent = `${this.target}`;
+        targetBtn.addEventListener('click', () => this.cycleTarget());
+        viewport.appendChild(targetBtn);
+        this.targetButtonElement = targetBtn;
+
+        // Position after elements are rendered so offsetWidth is available
+        requestAnimationFrame(() => this.positionButtons());
+    }
+
+    positionButtons() {
+        if (!this.targetButtonElement || !this.velocityButtonElement || !this.screenshotButtonElement || !this.layoutRect) return;
+        const margin = 8;
+        const gap = 4;
+
+        // Position target button on the right
+        this.targetButtonElement.style.position = 'absolute';
+        this.targetButtonElement.style.left = `${this.layoutRect.x + this.layoutRect.width - this.targetButtonElement.offsetWidth - margin}px`;
+        this.targetButtonElement.style.top = `${this.layoutRect.y + margin}px`;
+
+        // Position velocity button to the left of target button
+        this.velocityButtonElement.style.position = 'absolute';
+        this.velocityButtonElement.style.left = `${this.layoutRect.x + this.layoutRect.width - this.targetButtonElement.offsetWidth - this.velocityButtonElement.offsetWidth - gap - margin}px`;
+        this.velocityButtonElement.style.top = `${this.layoutRect.y + margin}px`;
+
+        // Position screenshot button to the left of velocity button
+        this.screenshotButtonElement.style.position = 'absolute';
+        this.screenshotButtonElement.style.left = `${this.layoutRect.x + this.layoutRect.width - this.targetButtonElement.offsetWidth - this.velocityButtonElement.offsetWidth - this.screenshotButtonElement.offsetWidth - gap * 2 - margin}px`;
+        this.screenshotButtonElement.style.top = `${this.layoutRect.y + margin}px`;
+    }
+
+    cycleTarget() {
+        this.target = (this.target + 1) % 4;
+        this.updateDisplay();
+
+        // Pass viewport index instead of string (simpler, no string conversion needed)
+        this.parentApp.module._setViewportTarget(this.viewportIndex, this.target);
+
+        this.parentApp.initLayoutFromCpp();
+    }
+
+    toggleVelocity() {
+        this.velocity = !this.velocity;
+        this.updateVelocityDisplay();
+
+        // Pass viewport index and enabled state
+        this.parentApp.module._setViewportVelocity(this.viewportIndex, this.velocity ? 1 : 0);
+
+        this.parentApp.initLayoutFromCpp();
+    }
+
+    updateDisplay() {
+        if (this.targetButtonElement) {
+            this.targetButtonElement.textContent = `${this.target}`;
+        }
+    }
+
+    updateVelocityDisplay() {
+        if (this.velocityButtonElement) {
+            if (this.velocity) {
+                this.velocityButtonElement.classList.remove('disabled');
+            } else {
+                this.velocityButtonElement.classList.add('disabled');
+            }
+        }
+    }
+
+    updateLayout(layoutRect) {
+        this.layoutRect = layoutRect;
+        this.positionButtons();
+    }
+
+    captureScreenshot() {
+        const canvas = document.querySelector('#canvas');
+        if (!canvas || !this.layoutRect) return;
+
+        // Generate timestamp: katara_YYYYMMDD-HHMMSS.png
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const hours = String(now.getHours()).padStart(2, '0');
+        const minutes = String(now.getMinutes()).padStart(2, '0');
+        const seconds = String(now.getSeconds()).padStart(2, '0');
+        const filename = `katara_${year}${month}${day}-${hours}${minutes}${seconds}.png`;
+
+        // Get the full canvas as a blob
+        canvas.toBlob((blob) => {
+            if (!blob) {
+                console.error('Failed to capture canvas');
+                return;
+            }
+
+            // Create an image from the blob
+            const img = new Image();
+            img.onload = () => {
+                // Create a temporary canvas sized to the viewport
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = this.layoutRect.width;
+                tempCanvas.height = this.layoutRect.height;
+                const ctx = tempCanvas.getContext('2d');
+
+                // Draw only the viewport region from the source image
+                ctx.drawImage(
+                    img,
+                    this.layoutRect.x, this.layoutRect.y, this.layoutRect.width, this.layoutRect.height,  // Source
+                    0, 0, this.layoutRect.width, this.layoutRect.height  // Destination
+                );
+
+                // Convert to blob and download
+                tempCanvas.toBlob((screenshotBlob) => {
+                    if (!screenshotBlob) {
+                        console.error('Failed to create screenshot blob');
+                        return;
+                    }
+
+                    // Create download link
+                    const url = URL.createObjectURL(screenshotBlob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+
+                    console.log('Screenshot saved:', filename);
+                }, 'image/png');
+            };
+            img.src = URL.createObjectURL(blob);
+        }, 'image/png');
     }
 }
 

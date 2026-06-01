@@ -28,8 +28,8 @@
         },
         "circle": {
             "radius": 0.02,
-            "momentumTransferStrength": 10,
-            "momentumTransferRadius": 2,
+            "momentumTransferStrength": 40,
+            "momentumTransferRadius": 2.5,
             "zScaling": {
                 "zMin": -0.1,
                 "zMax": 0.1,

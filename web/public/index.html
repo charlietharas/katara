@@ -125,6 +125,74 @@ body.light-mode .loading-overlay {
     border-color: rgba(255, 255, 255, 0.5);
 }
 
+.viewport-target-btn {
+    position: absolute;
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 12px;
+    cursor: pointer;
+    z-index: 15;
+    transition: all 0.2s;
+}
+
+.viewport-target-btn:hover {
+    background: rgba(0, 0, 0, 0.85);
+    border-color: rgba(255, 255, 255, 0.5);
+}
+
+.viewport-velocity-btn {
+    position: absolute;
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 12px;
+    cursor: pointer;
+    z-index: 15;
+    transition: all 0.2s;
+    font-weight: bold;
+}
+
+.viewport-velocity-btn:hover {
+    background: rgba(0, 0, 0, 0.85);
+    border-color: rgba(255, 255, 255, 0.5);
+}
+
+.viewport-velocity-btn.disabled {
+    opacity: 0.5;
+    text-decoration: line-through;
+}
+
+.viewport-screenshot-btn {
+    position: absolute;
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 12px;
+    cursor: pointer;
+    z-index: 15;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.viewport-screenshot-btn:hover {
+    background: rgba(0, 0, 0, 0.85);
+    border-color: rgba(255, 255, 255, 0.5);
+}
+
+.viewport-screenshot-btn svg {
+    width: 14px;
+    height: 14px;
+}
+
 video {
     display: none;
 }

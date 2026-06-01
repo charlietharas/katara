@@ -679,7 +679,9 @@ void GPUSimulator::dispatchPressureMinMax(int slotIndex) {
     // reinitialize with +/- inf
     const float positiveInf = std::numeric_limits<float>::infinity();
     const float negativeInf = -std::numeric_limits<float>::infinity();
-    uint32_t initialMinMax[4] = {
+    uint32_t initialMinMax[6] = {
+        floatToOrderedUint(positiveInf),
+        floatToOrderedUint(negativeInf),
         floatToOrderedUint(positiveInf),
         floatToOrderedUint(negativeInf),
         floatToOrderedUint(positiveInf),
@@ -687,17 +689,18 @@ void GPUSimulator::dispatchPressureMinMax(int slotIndex) {
     };
     wgpuQueueWriteBuffer(queue, slot.minMaxBuffer, 0, initialMinMax, sizeof(initialMinMax));
 
-    WGPUBindGroupEntry minMaxEntries[5] = {};
+    WGPUBindGroupEntry minMaxEntries[6] = {};
     minMaxEntries[0] = createUniformBufferBindGroupEntry(0, uniformBuffer, sizeof(SimParams));
     minMaxEntries[1] = createTextureViewBindGroupEntry(1, pressureTextureView);
     minMaxEntries[2] = createTextureViewBindGroupEntry(2, velocityTextureView);
     minMaxEntries[3] = createTextureViewBindGroupEntry(3, solidTextureView);
-    minMaxEntries[4] = createStorageBufferBindGroupEntry(4, slot.minMaxBuffer, 4 * sizeof(uint32_t));
+    minMaxEntries[4] = createStorageBufferBindGroupEntry(4, slot.minMaxBuffer, 6 * sizeof(uint32_t));
+    minMaxEntries[5] = createTextureViewBindGroupEntry(5, densityTextureView);
 
     if (slot.bindGroupMinMax) {
         wgpuBindGroupRelease(slot.bindGroupMinMax);
     }
-    slot.bindGroupMinMax = createBindGroup(5, minMaxEntries, pressureMinMaxBindGroupLayout);
+    slot.bindGroupMinMax = createBindGroup(6, minMaxEntries, pressureMinMaxBindGroupLayout);
 
     // dispatch compute pass
     HistogramDispatchDesc desc = {};
@@ -705,7 +708,7 @@ void GPUSimulator::dispatchPressureMinMax(int slotIndex) {
     desc.bindGroup = slot.bindGroupMinMax;
     desc.srcBuffer = slot.minMaxBuffer;
     desc.stagingBuffer = slot.minMaxStagingBuffer;
-    desc.stagingBufferSize = 4 * sizeof(uint32_t);
+    desc.stagingBufferSize = 6 * sizeof(uint32_t);
     desc.label = "Histogram MinMax";
     desc.slotIndex = slotIndex;
     desc.simulator = this;
@@ -723,7 +726,7 @@ void GPUSimulator::dispatchPressureMinMax(int slotIndex) {
     };
     mapCallbackInfo.userdata1 = this;
     mapCallbackInfo.userdata2 = reinterpret_cast<void*>(static_cast<intptr_t>(slotIndex));
-    wgpuBufferMapAsync(slot.minMaxStagingBuffer, WGPUMapMode_Read, 0, 4 * sizeof(uint32_t), mapCallbackInfo);
+    wgpuBufferMapAsync(slot.minMaxStagingBuffer, WGPUMapMode_Read, 0, 6 * sizeof(uint32_t), mapCallbackInfo);
 #else
     WGPUBufferMapCallbackInfo2 mapCallbackInfo = {};
     mapCallbackInfo.mode = WGPUCallbackMode_AllowProcessEvents;
@@ -735,7 +738,7 @@ void GPUSimulator::dispatchPressureMinMax(int slotIndex) {
     };
     mapCallbackInfo.userdata1 = this;
     mapCallbackInfo.userdata2 = reinterpret_cast<void*>(static_cast<intptr_t>(slotIndex));
-    wgpuBufferMapAsync2(slot.minMaxStagingBuffer, WGPUMapMode_Read, 0, 4 * sizeof(uint32_t), mapCallbackInfo);
+    wgpuBufferMapAsync2(slot.minMaxStagingBuffer, WGPUMapMode_Read, 0, 6 * sizeof(uint32_t), mapCallbackInfo);
 #endif
 }
 
@@ -744,7 +747,7 @@ void GPUSimulator::onMinMaxMapped(WGPUMapAsyncStatus status, int slotIndex) {
 
     if (status == WGPUMapAsyncStatus_Success) {
         const uint32_t* data = static_cast<const uint32_t*>(
-            wgpuBufferGetConstMappedRange(slot.minMaxStagingBuffer, 0, 4 * sizeof(uint32_t))
+            wgpuBufferGetConstMappedRange(slot.minMaxStagingBuffer, 0, 6 * sizeof(uint32_t))
         );
 
         if (data) {
@@ -752,8 +755,8 @@ void GPUSimulator::onMinMaxMapped(WGPUMapAsyncStatus status, int slotIndex) {
             slot.pendingPressureMinMax[1] = orderedUintToFloat(data[1]);  // pressMax
             slot.pendingVelocityMinMax[0] = orderedUintToFloat(data[2]);  // velMin
             slot.pendingVelocityMinMax[1] = orderedUintToFloat(data[3]);  // velMax
-
-            // std::cout << "GPU pressure min/max: min=" << slot.pendingPressureMinMax[0] << ", max=" << slot.pendingPressureMinMax[1] << std::endl;
+            slot.pendingDensityMinMax[0] = orderedUintToFloat(data[4]);   // densityMin
+            slot.pendingDensityMinMax[1] = orderedUintToFloat(data[5]);   // densityMax
         }
 
         wgpuBufferUnmap(slot.minMaxStagingBuffer);
@@ -864,7 +867,7 @@ void GPUSimulator::onHistogramBinsMapped(WGPUMapAsyncStatus status, int slotInde
     }
 }
 
-bool GPUSimulator::getHistogramData(int& readySlot, const float*& pressureMinMax, const float*& velocityMinMax, const int*& histogramBins) const {
+bool GPUSimulator::getHistogramData(int& readySlot, const float*& pressureMinMax, const float*& velocityMinMax, const float*& densityMinMax, const int*& histogramBins) const {
     // find the most recent ready slot
     for (int i = 0; i < HISTOGRAM_RING_SIZE; i++) {
         int checkIdx = (histogramReadIndex + i) % HISTOGRAM_RING_SIZE;
@@ -873,6 +876,7 @@ bool GPUSimulator::getHistogramData(int& readySlot, const float*& pressureMinMax
             auto& slot = histogramSlots[checkIdx];
             pressureMinMax = slot.pendingPressureMinMax;
             velocityMinMax = slot.pendingVelocityMinMax;
+            densityMinMax = slot.pendingDensityMinMax;
             histogramBins = slot.pendingHistogramBins;
             return true;
         }
@@ -980,23 +984,25 @@ bool GPUSimulator::initTextures() {
         auto& slot = histogramSlots[i];
 
         WGPUBufferDescriptor minMaxBufferDesc = {};
-        minMaxBufferDesc.size = 4 * sizeof(uint32_t);
+        minMaxBufferDesc.size = 6 * sizeof(uint32_t);
         minMaxBufferDesc.usage = WGPUBufferUsage_Storage | WGPUBufferUsage_CopySrc | WGPUBufferUsage_CopyDst;
         minMaxBufferDesc.mappedAtCreation = true;
         slot.minMaxBuffer = wgpuDeviceCreateBuffer(device, &minMaxBufferDesc);
         if (!slot.minMaxBuffer) return false;
 
         // initialize with +/- inf
-        uint32_t* mappedData = static_cast<uint32_t*>(wgpuBufferGetMappedRange(slot.minMaxBuffer, 0, 4 * sizeof(uint32_t)));
+        uint32_t* mappedData = static_cast<uint32_t*>(wgpuBufferGetMappedRange(slot.minMaxBuffer, 0, 6 * sizeof(uint32_t)));
         const float positiveInf = std::numeric_limits<float>::infinity();
         const float negativeInf = -std::numeric_limits<float>::infinity();
         mappedData[0] = floatToOrderedUint(positiveInf);
         mappedData[1] = floatToOrderedUint(negativeInf);
         mappedData[2] = floatToOrderedUint(positiveInf);
         mappedData[3] = floatToOrderedUint(negativeInf);
+        mappedData[4] = floatToOrderedUint(positiveInf);
+        mappedData[5] = floatToOrderedUint(negativeInf);
         wgpuBufferUnmap(slot.minMaxBuffer);
 
-        slot.minMaxStagingBuffer = createBuffer(4 * sizeof(uint32_t), WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst);
+        slot.minMaxStagingBuffer = createBuffer(6 * sizeof(uint32_t), WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst);
         RETURN_FALSE_IF_FAIL(slot.minMaxStagingBuffer);
 
         slot.histogramBinBuffer = createBuffer(128 * sizeof(int32_t), WGPUBufferUsage_Storage | WGPUBufferUsage_CopySrc | WGPUBufferUsage_CopyDst);
@@ -1249,20 +1255,22 @@ bool GPUSimulator::initPipelineLayouts() {
     RETURN_FALSE_IF_FAIL(lineSegmentPipelineLayout);
 #endif
 
-    // pressure minmax [5]:
+    // pressure minmax [6]:
     // uniform
     // pressure (read)
     // velocity (read)
     // solid (read)
     // minmax storage buffer
-    WGPUBindGroupLayoutEntry pressureMinMaxEntries[5] = {};
+    // density (read)
+    WGPUBindGroupLayoutEntry pressureMinMaxEntries[6] = {};
     createUniformBufferPipelineLayoutEntry(pressureMinMaxEntries);
     pressureMinMaxEntries[1] = createStorageTextureLayoutEntry(1, WGPUStorageTextureAccess_ReadOnly, WGPUTextureFormat_R32Float);
     pressureMinMaxEntries[2] = createStorageTextureLayoutEntry(2, WGPUStorageTextureAccess_ReadOnly, WGPUTextureFormat_RG32Float);
     pressureMinMaxEntries[3] = createStorageTextureLayoutEntry(3, WGPUStorageTextureAccess_ReadOnly, WGPUTextureFormat_R32Float);
-    pressureMinMaxEntries[4] = createStorageBufferLayoutEntry(4, 4 * sizeof(uint32_t));
+    pressureMinMaxEntries[4] = createStorageBufferLayoutEntry(4, 6 * sizeof(uint32_t));
+    pressureMinMaxEntries[5] = createStorageTextureLayoutEntry(5, WGPUStorageTextureAccess_ReadOnly, WGPUTextureFormat_R32Float);
 
-    pressureMinMaxBindGroupLayout = createBindGroupLayout(5, pressureMinMaxEntries);
+    pressureMinMaxBindGroupLayout = createBindGroupLayout(6, pressureMinMaxEntries);
     RETURN_FALSE_IF_FAIL(pressureMinMaxBindGroupLayout);
     pressureMinMaxPipelineLayout = createPipelineLayout(&pressureMinMaxBindGroupLayout);
     RETURN_FALSE_IF_FAIL(pressureMinMaxPipelineLayout);

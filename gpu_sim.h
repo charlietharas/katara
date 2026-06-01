@@ -80,6 +80,7 @@ struct HistogramSlot {
     HistogramSlotState state;
     float pendingPressureMinMax[2];
     float pendingVelocityMinMax[2];
+    float pendingDensityMinMax[2];
     int pendingHistogramBins[128];
 };
 
@@ -116,7 +117,7 @@ public:
 
     // histogram data access (for renderer)
     static const int HISTOGRAM_RING_SIZE = 4;
-    bool getHistogramData(int& readySlot, const float*& pressureMinMax, const float*& velocityMinMax, const int*& histogramBins) const;
+    bool getHistogramData(int& readySlot, const float*& pressureMinMax, const float*& velocityMinMax, const float*& densityMinMax, const int*& histogramBins) const;
     void advanceHistogramReadIndex() const;
 
 private:

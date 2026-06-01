@@ -231,6 +231,34 @@ extern "C" {
             std::cout << "Fluid field reset (ink preserved)" << std::endl;
         }
     }
+
+    // Set viewport target by index (0=viewport_1, 1=viewport_2, 2=viewport_3)
+    // target: 0=pressure, 1=smoke, 2=both, 3=ink
+    EMSCRIPTEN_KEEPALIVE
+    void setViewportTarget(int viewportIndex, int target) {
+        std::string vpName = "viewport_" + std::to_string(viewportIndex + 1);
+        auto it = g_config.layout.components.find(vpName);
+        if (it != g_config.layout.components.end()) {
+            it->second.target = target;
+            std::cout << "Viewport " << vpName << " target set to " << target << std::endl;
+        } else {
+            std::cerr << "Viewport " << vpName << " not found in config" << std::endl;
+        }
+    }
+
+    // Set viewport velocity enabled by index (0=viewport_1, 1=viewport_2, 2=viewport_3)
+    // enabled: 0=disabled, 1=enabled
+    EMSCRIPTEN_KEEPALIVE
+    void setViewportVelocity(int viewportIndex, int enabled) {
+        std::string vpName = "viewport_" + std::to_string(viewportIndex + 1);
+        auto it = g_config.layout.components.find(vpName);
+        if (it != g_config.layout.components.end()) {
+            it->second.velocity = (enabled != 0);
+            std::cout << "Viewport " << vpName << " velocity set to " << (enabled != 0 ? "enabled" : "disabled") << std::endl;
+        } else {
+            std::cerr << "Viewport " << vpName << " not found in config" << std::endl;
+        }
+    }
 }
 #endif
 

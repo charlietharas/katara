@@ -84,6 +84,7 @@ struct ComponentBBox {
     int py = 0;          // vertical padding (raw px)
     int target = 2;      // render target (viewports: 0=pressure,1=smoke,2=both,3=ink)
     bool enabled = true; // enabled flag (histograms)
+    bool velocity = false; // show velocity vectors (viewports)
 };
 
 struct PixelRect {
