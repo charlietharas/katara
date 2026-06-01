@@ -4,16 +4,62 @@ struct SimParams {
     cellSize: f32,
     halfCellSize: f32,
     timestep: f32,
-    pad0: i32,
-    pad1: i32,
-    pad2: i32,
-};
+    density: f32,
+    gravity: f32,
+    projectionIters: f32,
+    windTunnelSide: i32,
+    windTunnelStart: i32,
+    windTunnelEnd: i32,
+    windTunnelSpeed: f32,
+}
 
 @group(0) @binding(0) var<uniform> params: SimParams;
 @group(0) @binding(1) var velocityTexture: texture_storage_2d<rg32float, read>;
 @group(0) @binding(2) var inkTexture: texture_storage_2d<rgba32float, read>;
 @group(0) @binding(3) var solidTexture: texture_2d<f32>;
 @group(0) @binding(4) var newInkTexture: texture_storage_2d<rgba32float, write>;
+
+// Hash-based random function
+fn hash2D(p: vec2<i32>) -> f32 {
+    let x = f32(p.x) * 0.1031;
+    let y = f32(p.y) * 0.1030;
+    let h = fract(x * 127.1 + y * 311.7);
+    return fract(h * 43758.5453);
+}
+
+// Check if a grid position is near a wind tunnel injection boundary
+fn isNearWindTunnelBoundary(i: i32, j: i32) -> bool {
+    if (params.windTunnelSide == -1) { return false; }
+
+    if (params.windTunnelSide == 0) { // left
+        return i <= 2 && j >= params.windTunnelStart && j < params.windTunnelEnd;
+    } else if (params.windTunnelSide == 1) { // top
+        return j >= params.gridY - 3 && i >= params.windTunnelStart && i < params.windTunnelEnd;
+    } else if (params.windTunnelSide == 2) { // bottom
+        return j <= 2 && i >= params.windTunnelStart && i < params.windTunnelEnd;
+    } else if (params.windTunnelSide == 3) { // right
+        return i >= params.gridX - 3 && j >= params.windTunnelStart && j < params.windTunnelEnd;
+    }
+    return false;
+}
+
+// Get colored ink from random position across the image for wind tunnel injection
+fn getWindTunnelInk(i: i32, j: i32) -> vec4<f32> {
+    // Use velocity at this cell as random seed (velocity changes every frame)
+    let vel = textureLoad(velocityTexture, vec2<i32>(i, j));
+
+    // Convert velocity to integer coordinates for hashing
+    let velSeedX = i32(vel.x * 1000.0);
+    let velSeedY = i32(vel.y * 1000.0);
+
+    // Generate random coordinates across the entire image
+    let randX = hash2D(vec2<i32>(i + velSeedX, j + velSeedY));
+    let randY = hash2D(vec2<i32>(j + velSeedY, i + velSeedX));
+    let sampleI = i32(randX * f32(params.gridX));
+    let sampleJ = i32(randY * f32(params.gridY));
+
+    return textureLoad(inkTexture, vec2<i32>(sampleI, sampleJ));
+}
 
 fn sampleInk(x: f32, y: f32, texture: texture_storage_2d<rgba32float, read>) -> vec4<f32> {
     let x_clamp = clamp(x, params.halfCellSize, (f32(params.gridX) * params.cellSize) - params.halfCellSize);
@@ -30,10 +76,22 @@ fn sampleInk(x: f32, y: f32, texture: texture_storage_2d<rgba32float, read>) -> 
     let fx = gx - f32(i0);
     let fy = gy - f32(j0);
 
-    let v00 = textureLoad(texture, vec2<i32>(i0, j0));
-    let v10 = textureLoad(texture, vec2<i32>(i1, j0));
-    let v01 = textureLoad(texture, vec2<i32>(i0, j1));
-    let v11 = textureLoad(texture, vec2<i32>(i1, j1));
+    // Check if any of the 4 sample points are near wind tunnel boundary
+    let nearTunnel = isNearWindTunnelBoundary(i0, j0) || isNearWindTunnelBoundary(i1, j0) ||
+                      isNearWindTunnelBoundary(i0, j1) || isNearWindTunnelBoundary(i1, j1);
+
+    var v00 = textureLoad(texture, vec2<i32>(i0, j0));
+    var v10 = textureLoad(texture, vec2<i32>(i1, j0));
+    var v01 = textureLoad(texture, vec2<i32>(i0, j1));
+    var v11 = textureLoad(texture, vec2<i32>(i1, j1));
+
+    // If near wind tunnel boundary, replace with colored samples
+    if (nearTunnel) {
+        if (isNearWindTunnelBoundary(i0, j0)) { v00 = getWindTunnelInk(i0, j0); }
+        if (isNearWindTunnelBoundary(i1, j0)) { v10 = getWindTunnelInk(i1, j0); }
+        if (isNearWindTunnelBoundary(i0, j1)) { v01 = getWindTunnelInk(i0, j1); }
+        if (isNearWindTunnelBoundary(i1, j1)) { v11 = getWindTunnelInk(i1, j1); }
+    }
 
     let v0 = mix(v00, v10, fx);
     let v1 = mix(v01, v11, fx);

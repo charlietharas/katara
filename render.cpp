@@ -9,12 +9,6 @@ Renderer::Renderer(SDL_Window* window, const Config& config)
     window(window),
     frameCount(0),
 
-    // draw params
-    drawTarget(config.rendering.target),
-    drawVelocities(config.rendering.showVelocityVectors),
-    disableHistograms(config.rendering.disableHistograms),
-    velScale(config.rendering.velocityScale),
-
     // histograms
     densityHistogramBins(IRenderer::HISTOGRAM_BINS, 0),
     densityHistogramMin(0.0f),
@@ -64,6 +58,12 @@ bool Renderer::init(const Config& config) {
 }
 
 void Renderer::render(const ISimulator& simulator) {
+    // Copy rendering config from g_config
+    const int drawTarget = g_config.rendering.target;
+    const bool drawVelocities = g_config.rendering.showVelocityVectors;
+    const bool disableHistograms = g_config.rendering.disableHistograms;
+    const float velScale = g_config.rendering.velocityScale;
+
     simWidth = simulator.domainWidth;
     simHeight = simulator.domainHeight;
     float scaleX = windowWidth / simWidth;
@@ -73,9 +73,9 @@ void Renderer::render(const ISimulator& simulator) {
     // clear bg
     std::fill(pixels, pixels + windowWidth * windowHeight, 0xFF000000);
 
-    drawFluidField(simulator);
+    drawFluidField(simulator, drawTarget);
     if (drawVelocities) {
-        drawVelocityField(simulator);
+        drawVelocityField(simulator, velScale);
     }
 
     // compute histograms every n frames
@@ -168,7 +168,7 @@ void Renderer::setPixel(int x, int y, Uint8 r, Uint8 g, Uint8 b) {
     }
 }
 
-void Renderer::drawFluidField(const ISimulator& simulator) {
+void Renderer::drawFluidField(const ISimulator& simulator, int drawTarget) {
     const auto& pressure = simulator.getPressure();
     const auto& density = simulator.getDensity();
     const auto& solid = simulator.getSolid();
@@ -259,7 +259,7 @@ void Renderer::drawFluidField(const ISimulator& simulator) {
     }
 }
 
-void Renderer::drawVelocityField(const ISimulator& simulator) {
+void Renderer::drawVelocityField(const ISimulator& simulator, float velScale) {
     const auto& velocityX = simulator.getVelocityX();
     const auto& velocityY = simulator.getVelocityY();
     const auto& solid = simulator.getSolid();
@@ -339,15 +339,19 @@ void Renderer::computeHistograms(const ISimulator& simulator) {
 }
 
 void Renderer::drawHistograms() {
-    const int histWidth = 300;
-    const int histHeight = 150;
+    // Read histogram positions from global pixel layout
+    auto dhIt = g_layoutPixels.components.find("density_histogram");
+    auto vhIt = g_layoutPixels.components.find("velocity_histogram");
+    if (dhIt == g_layoutPixels.components.end() || vhIt == g_layoutPixels.components.end()) return;
 
-    // density histogram
-    int dhistX = 10;
-    int dhistY = 10;
-    // velocity histogram
-    int vhistX = 320;
-    int vhistY = 10;
+    const int dhistX = dhIt->second.x;
+    const int dhistY = dhIt->second.y;
+    const int histWidth = dhIt->second.width;
+    const int histHeight = dhIt->second.height;
+    const int vhistX = vhIt->second.x;
+    const int vhistY = vhIt->second.y;
+    const int vhistWidth = vhIt->second.width;
+    const int vhistHeight = vhIt->second.height;
     
     int dmaxCount = 0;
     int vmaxCount = 0;
@@ -366,8 +370,8 @@ void Renderer::drawHistograms() {
             }
         }
     }
-    for (int y = vhistY; y < vhistY + histHeight; y++) {
-        for (int x = vhistX; x < vhistX + histWidth; x++) {
+    for (int y = vhistY; y < vhistY + vhistHeight; y++) {
+        for (int x = vhistX; x < vhistX + vhistWidth; x++) {
             if (x >= 0 && x < windowWidth && y >= 0 && y < windowHeight) {
                 setPixel(x, y, bg, bg, bg);
             }
@@ -396,28 +400,29 @@ void Renderer::drawHistograms() {
             }
         }
     }
-    for (int x = vhistX; x < vhistX + histWidth; x++) {
+    for (int x = vhistX; x < vhistX + vhistWidth; x++) {
         if (x >= 0 && x < windowWidth) {
             if (vhistY >= 0 && vhistY < windowHeight) {
                 setPixel(x, vhistY, border, border, border); // top
             }
-            if (vhistY + histHeight - 1 >= 0 && vhistY + histHeight - 1 < windowHeight) {
-                setPixel(x, vhistY + histHeight - 1, border, border, border); // bottom
+            if (vhistY + vhistHeight - 1 >= 0 && vhistY + vhistHeight - 1 < windowHeight) {
+                setPixel(x, vhistY + vhistHeight - 1, border, border, border); // bottom
             }
         }
     }
-    for (int y = vhistY; y < vhistY + histHeight; y++) {
+    for (int y = vhistY; y < vhistY + vhistHeight; y++) {
         if (y >= 0 && y < windowHeight) {
             if (vhistX >= 0 && vhistX < windowWidth) {
                 setPixel(vhistX, y, border, border, border); // left
             }
-            if (vhistX + histWidth - 1 >= 0 && vhistX + histWidth - 1 < windowWidth) {
-                setPixel(vhistX + histWidth - 1, y, border, border, border); // right
+            if (vhistX + vhistWidth - 1 >= 0 && vhistX + vhistWidth - 1 < windowWidth) {
+                setPixel(vhistX + vhistWidth - 1, y, border, border, border); // right
             }
         }
     }
-    
+
     int barWidth = histWidth / IRenderer::HISTOGRAM_BINS;
+    int vbarWidth = vhistWidth / IRenderer::HISTOGRAM_BINS;
     int padding = 1;
     
     // bars
@@ -436,11 +441,11 @@ void Renderer::drawHistograms() {
             }
         }
 
-        barHeight = static_cast<int>((static_cast<float>(velocityHistogramBins[i]) / vmaxCount) * (histHeight - 20));
-        barX = vhistX + 10 + i * barWidth;
-        
-        for (int x = barX; x < barX + barWidth - padding && x < vhistX + histWidth - 10; x++) {
-            for (int y = vhistY + histHeight - 10; y >= vhistY + histHeight - 10 - barHeight && y >= vhistY + 10; y--) {
+        barHeight = static_cast<int>((static_cast<float>(velocityHistogramBins[i]) / vmaxCount) * (vhistHeight - 20));
+        barX = vhistX + 10 + i * vbarWidth;
+
+        for (int x = barX; x < barX + vbarWidth - padding && x < vhistX + vhistWidth - 10; x++) {
+            for (int y = vhistY + vhistHeight - 10; y >= vhistY + vhistHeight - 10 - barHeight && y >= vhistY + 10; y--) {
                 if (x >= 0 && x < windowWidth && y >= 0 && y < windowHeight) {
                     Uint8 r, g, b;
                     mapValueToVelocityColor(normalized, 0.0f, 1.0f, r, g, b);

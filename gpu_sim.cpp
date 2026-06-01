@@ -753,8 +753,7 @@ void GPUSimulator::onMinMaxMapped(WGPUMapAsyncStatus status, int slotIndex) {
             slot.pendingVelocityMinMax[0] = orderedUintToFloat(data[2]);  // velMin
             slot.pendingVelocityMinMax[1] = orderedUintToFloat(data[3]);  // velMax
 
-            std::cout << "GPU pressure min/max: min=" << slot.pendingPressureMinMax[0]
-                      << ", max=" << slot.pendingPressureMinMax[1] << std::endl;
+            // std::cout << "GPU pressure min/max: min=" << slot.pendingPressureMinMax[0] << ", max=" << slot.pendingPressureMinMax[1] << std::endl;
         }
 
         wgpuBufferUnmap(slot.minMaxStagingBuffer);
@@ -903,7 +902,7 @@ bool GPUSimulator::initUniformBuffer() {
 }
 
 bool GPUSimulator::initSimData(const Config& cfg, const ImageData* imageData, float aspectRatio) {
-    this->config = &cfg;
+    this->config = &g_config;
     if (!cpuSimulator.init(cfg, imageData, aspectRatio)) {
         return false;
     }
@@ -1495,4 +1494,133 @@ bool GPUSimulator::initPipelines() {
 
     copyInitialDataToGPU(); // non-boilerplate, so separate function
     return true;
+}
+
+void GPUSimulator::updateSimParams(const Config& config) {
+    // Base class members (from ISimulator)
+    gravity = config.simulation.gravity;
+    windTunnelSide = config.simulation.windTunnel.side;
+    windTunnelSpeed = config.simulation.windTunnel.velocity;
+    momentumTransferStrength = config.simulation.circle.momentumTransferStrength;
+    momentumTransferRadius = config.simulation.circle.momentumTransferRadius;
+    // Update stored config pointer — updateUniformBufferSim() reads from this each frame
+    this->config = &config;
+}
+
+void GPUSimulator::reinitInk(const ImageData* imageData) {
+    // Reset fluid state (this will call resetFluidState on cpuSimulator and re-upload textures)
+    resetFluidState();
+
+    if (imageData) {
+        // Initialize new ink data on CPU simulator (initializeFromImageData is now public)
+        cpuSimulator.initializeFromImageData(g_config, imageData);
+
+        // Re-upload ink textures from cpuSimulator data
+        const auto& redInk = cpuSimulator.getRedInk();
+        const auto& greenInk = cpuSimulator.getGreenInk();
+        const auto& blueInk = cpuSimulator.getBlueInk();
+
+        // Combine ink data into RGBA32Float format
+        std::vector<float> inkData(gridX * gridY * 4);
+        for (int j = 0; j < gridY; j++) {
+            for (int i = 0; i < gridX; i++) {
+                int idx = j * gridX + i;
+                inkData[idx * 4] = redInk[idx];
+                inkData[idx * 4 + 1] = greenInk[idx];
+                inkData[idx * 4 + 2] = blueInk[idx];
+                inkData[idx * 4 + 3] = 1.0f; // alpha
+            }
+        }
+
+        // Re-upload to both ping-pong textures
+        WGPUExtent3D size = {static_cast<uint32_t>(gridX), static_cast<uint32_t>(gridY), 1};
+        WGPUImageCopyTexture copy = {};
+        copy.mipLevel = 0;
+        copy.origin = {0, 0, 0};
+        copy.aspect = WGPUTextureAspect_All;
+
+        WGPUTextureDataLayout layout = {};
+        layout.offset = 0;
+        layout.bytesPerRow = gridX * 16; // RGBA32Float = 4 floats * 4 bytes
+        layout.rowsPerImage = gridY;
+
+        copy.texture = inkTexture;
+        wgpuQueueWriteTexture(queue, &copy, inkData.data(), inkData.size() * sizeof(float), &layout, &size);
+
+        copy.texture = newInkTexture;
+        wgpuQueueWriteTexture(queue, &copy, inkData.data(), inkData.size() * sizeof(float), &layout, &size);
+
+        inkInitialized = true;
+    } else {
+        inkInitialized = false;
+    }
+}
+
+void GPUSimulator::resetFluidState() {
+    // Reset CPU simulator state
+    cpuSimulator.resetFluidState();
+
+    // Re-upload zeroed data to GPU textures
+    const auto& velX = cpuSimulator.getVelocityX();
+    const auto& velY = cpuSimulator.getVelocityY();
+    const auto& solid = cpuSimulator.getSolid();
+    const auto& density = cpuSimulator.getDensity();
+
+    WGPUExtent3D size = {static_cast<uint32_t>(gridX), static_cast<uint32_t>(gridY), 1};
+
+    // Combine velocity data
+    std::vector<float> velocityData(gridX * gridY * 2);
+    for (int j = 0; j < gridY; j++) {
+        for (int i = 0; i < gridX; i++) {
+            int idx = j * gridX + i;
+            velocityData[idx * 2] = velX[idx];
+            velocityData[idx * 2 + 1] = velY[idx];
+        }
+    }
+
+    // Upload velocity, density, solid to GPU
+    WGPUImageCopyTexture copy = {};
+    copy.mipLevel = 0;
+    copy.origin = {0, 0, 0};
+    copy.aspect = WGPUTextureAspect_All;
+
+    WGPUTextureDataLayout layout = {};
+    layout.offset = 0;
+
+    // Velocity (RG32Float)
+    layout.bytesPerRow = gridX * 8;
+    copy.texture = velocityTexture;
+    wgpuQueueWriteTexture(queue, &copy, velocityData.data(), velocityData.size() * sizeof(float), &layout, &size);
+    copy.texture = newVelocityTexture;
+    wgpuQueueWriteTexture(queue, &copy, velocityData.data(), velocityData.size() * sizeof(float), &layout, &size);
+
+    // Density (R32Float)
+    layout.bytesPerRow = gridX * 4;
+    copy.texture = densityTexture;
+    wgpuQueueWriteTexture(queue, &copy, density.data(), density.size() * sizeof(float), &layout, &size);
+    copy.texture = newDensityTexture;
+    wgpuQueueWriteTexture(queue, &copy, density.data(), density.size() * sizeof(float), &layout, &size);
+
+    // Solid (R32Float) - needs staging texture
+    copy.texture = solidStagingTexture;
+    wgpuQueueWriteTexture(queue, &copy, solid.data(), solid.size() * sizeof(float), &layout, &size);
+
+    // Copy from staging to storage texture
+    WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(device, nullptr);
+    copyTextureDeviceToDevice(encoder, solidStagingTexture, solidTexture);
+    WGPUCommandBufferDescriptor cmdDesc = {};
+    WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, &cmdDesc);
+    wgpuQueueSubmit(queue, 1, &commands);
+    wgpuCommandBufferRelease(commands);
+    wgpuCommandEncoderRelease(encoder);
+
+    // Zero ink textures if ink was initialized
+    if (inkInitialized) {
+        std::vector<float> zeroInk(gridX * gridY * 4, 0.0f);
+        layout.bytesPerRow = gridX * 16;
+        copy.texture = inkTexture;
+        wgpuQueueWriteTexture(queue, &copy, zeroInk.data(), zeroInk.size() * sizeof(float), &layout, &size);
+        copy.texture = newInkTexture;
+        wgpuQueueWriteTexture(queue, &copy, zeroInk.data(), zeroInk.size() * sizeof(float), &layout, &size);
+    }
 }

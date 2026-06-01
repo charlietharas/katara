@@ -2,6 +2,7 @@
 
 #include <webgpu/webgpu.h>
 #include <iostream>
+#include <cstdio>
 #include <sdl2webgpu.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
@@ -21,6 +22,9 @@
 #include <cmath>
 #endif
 
+// Global config — single source of truth
+Config g_config;
+
 // cpu -> cpu renderer, otherwise hybrid/gpu both use gpu
 std::unique_ptr<IRenderer> createRenderer(SDL_Window* window, const Config& config) {
     if (config.pipeline == PipelineType::CPU) {
@@ -37,7 +41,63 @@ std::unique_ptr<ISimulator> createSimulator(const Config& config) {
     return std::make_unique<Simulator>(config);
 }
 
+// Image loading helper for runtime ink reload
+struct LoadedImage {
+    SDL_Surface* surface = nullptr;
+    SDL_Surface* converted = nullptr;
+    ImageData* imageData = nullptr;
+    float aspectRatio = 1.5f;
+
+    void cleanup() {
+        delete imageData;
+        if (converted) SDL_FreeSurface(converted);
+        if (surface) SDL_FreeSurface(surface);
+        imageData = nullptr;
+        converted = nullptr;
+        surface = nullptr;
+    }
+};
+
+LoadedImage loadImage(const std::string& path) {
+    LoadedImage result;
+
+    SDL_Surface* imageSurface = IMG_Load(path.c_str());
+    if (!imageSurface) {
+        std::cerr << "ERR loading image (path: " << path << "): " << IMG_GetError() << std::endl;
+        return result;
+    }
+
+    result.surface = imageSurface;
+    result.aspectRatio = static_cast<float>(imageSurface->w) / imageSurface->h;
+
+    // Convert to 32-bit RGB
+    SDL_Surface* convertedSurface = SDL_ConvertSurfaceFormat(imageSurface, SDL_PIXELFORMAT_RGB888, 0);
+    if (!convertedSurface) {
+        std::cerr << "ERR converting image surface: " << SDL_GetError() << std::endl;
+        SDL_FreeSurface(imageSurface);
+        return result;
+    }
+
+    result.converted = convertedSurface;
+
+    // Copy data to struct
+    ImageData* imageData = new ImageData();
+    imageData->pixels = convertedSurface->pixels;
+    imageData->width = convertedSurface->w;
+    imageData->height = convertedSurface->h;
+    imageData->bytesPerPixel = convertedSurface->format->BytesPerPixel;
+    imageData->rShift = convertedSurface->format->Rshift;
+    imageData->gShift = convertedSurface->format->Gshift;
+    imageData->bShift = convertedSurface->format->Bshift;
+    result.imageData = imageData;
+
+    std::cout << "Loaded image: " << path << " (" << imageData->width << "x" << imageData->height << ")" << std::endl;
+
+    return result;
+}
+
 #ifdef __EMSCRIPTEN__
+
 struct MainLoopState {
     ISimulator* simulator;
     IRenderer* renderer;
@@ -106,6 +166,54 @@ extern "C" {
         }
     }
 #endif
+
+    EMSCRIPTEN_KEEPALIVE
+    void initLayout(int canvasW, int canvasH) {
+        std::string json = ConfigLoader::computeLayout(g_config.layout, canvasW, canvasH);
+        // Write to virtual FS for JS to read
+        FILE* f = fopen("/layout_pixels.json", "w");
+        if (f) {
+            fputs(json.c_str(), f);
+            fclose(f);
+        }
+    }
+
+    // Reload config at runtime without page refresh
+    // Flags: INK=1, SIM=2, RENDER=4, LAYOUT=8
+    EMSCRIPTEN_KEEPALIVE
+    void reloadConfig(int flags) {
+        Config newConfig = ConfigLoader::loadConfig("/config.json");
+
+        // Always update the global
+        g_config = newConfig;
+
+        // SIM: push new sim params to simulator
+        if (flags & 2) {
+            if (g_simulator) {
+                g_simulator->updateSimParams(g_config);
+                std::cout << "Sim params updated" << std::endl;
+            }
+        }
+
+        // INK: reload ink image
+        if (flags & 1) {
+            if (g_simulator && !g_config.ink.imagePath.empty()) {
+                LoadedImage img = loadImage(g_config.ink.imagePath);
+                if (img.imageData) {
+                    g_simulator->reinitInk(img.imageData);
+                    std::cout << "Ink reinitialized from: " << g_config.ink.imagePath << std::endl;
+                }
+                // Cleanup surfaces (imageData still points to converted->pixels,
+                // simulator has copied the data by now)
+                img.cleanup();
+            }
+        }
+
+        // RENDER (4): no action needed, renderers read g_config each frame
+
+        // LAYOUT (8): handled by JS calling initLayout() separately after
+        std::cout << "Config reload complete (flags=" << flags << ")" << std::endl;
+    }
 }
 #endif
 
@@ -120,6 +228,7 @@ int main(int argc, char** argv) {
         configPath = argv[1];
     }
     Config config = ConfigLoader::loadConfig(configPath);
+    g_config = config;
 
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
         std::cerr << "ERR initializing SDL: " << SDL_GetError() << std::endl;
@@ -204,6 +313,11 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Compute pixel layout from window dimensions (desktop path)
+#ifndef __EMSCRIPTEN__
+    ConfigLoader::computeLayout(g_config.layout, windowWidth, windowHeight);
+#endif
+
     auto renderer = createRenderer(window, config);
     auto simulator = createSimulator(config);
 
@@ -235,6 +349,11 @@ int main(int argc, char** argv) {
         return 1;
     }
     std::cout << "Simulator initialized" << std::endl;
+
+#ifdef __EMSCRIPTEN__
+    // Signal JS that C++ initialization is complete (window is ready, image loaded if applicable)
+    emscripten_run_script("if (window.kataraOnReady) window.kataraOnReady();");
+#endif
 
     // MAIN LOOP
     bool running = true;

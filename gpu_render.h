@@ -29,6 +29,29 @@ struct alignas(16) UniformData {
     float simWidth;
     float simHeight;
     int disableHistograms; // 0=enabled, 1=disabled
+
+    // Viewport configuration (up to 4 viewports)
+    int viewportCount;
+    int viewportX[4];
+    int viewportY[4];
+    int viewportWidth[4];
+    int viewportHeight[4];
+    int viewportRenderTarget[4];
+    int pad1[3]; // alignment padding
+
+    // Histogram configuration
+    int densityHistogramEnabled;
+    int densityHistogramX;
+    int densityHistogramY;
+    int densityHistogramWidth;
+    int densityHistogramHeight;
+    int velocityHistogramEnabled;
+    int velocityHistogramX;
+    int velocityHistogramY;
+    int velocityHistogramWidth;
+    int velocityHistogramHeight;
+
+    // Histogram data
     float densityHistogramMin;
     float densityHistogramMax;
     int densityHistogramMaxCount;
@@ -59,12 +82,6 @@ private:
     UniformData uniformData;
     bool initialized = false;
     bool usingGPUTextures = false;
-
-    // cached config values
-    int drawTarget;
-    bool showVelocityVectors;
-    bool disableHistograms;
-    float velocityScale;
 
     // histogram state (CPU/HYBRID)
     bool minMaxReadPending = false;

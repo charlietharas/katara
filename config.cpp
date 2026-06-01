@@ -3,6 +3,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <algorithm>
 
 using json = nlohmann::json;
 
@@ -33,6 +34,9 @@ Config ConfigLoader::loadConfig(const std::string& filename) {
     }
     if (j.contains("ink")) {
         config.ink = loadInkConfig(j["ink"]);
+    }
+    if (j.contains("layout")) {
+        config.layout = loadLayoutConfig(j["layout"]);
     }
 
     return config;
@@ -94,6 +98,62 @@ InkConfig ConfigLoader::loadInkConfig(const json& j) {
     InkConfig config;
     config.imagePath = j.value("imagePath", "");
     return config;
+}
+
+LayoutConfig ConfigLoader::loadLayoutConfig(const json& j) {
+    LayoutConfig config;
+
+    if (j.contains("components")) {
+        for (auto& [key, val] : j["components"].items()) {
+            ComponentBBox bbox;
+            bbox.x = val.value("x", 0.0f);
+            bbox.y = val.value("y", 0.0f);
+            bbox.w = val.value("w", 0.5f);
+            bbox.h = val.value("h", 0.5f);
+            bbox.px = val.value("px", 0);
+            bbox.py = val.value("py", 0);
+            bbox.target = val.value("target", 2);
+            bbox.enabled = val.value("enabled", true);
+            config.components[key] = bbox;
+        }
+    }
+
+    return config;
+}
+
+// Global pixel layout
+LayoutPixels g_layoutPixels;
+
+std::string ConfigLoader::computeLayout(const LayoutConfig& config, int canvasW, int canvasH) {
+    g_layoutPixels.components.clear();
+
+    for (const auto& [name, bbox] : config.components) {
+        PixelRect pr;
+        pr.x = static_cast<int>(bbox.x * canvasW) + bbox.px;
+        pr.y = static_cast<int>(bbox.y * canvasH) + bbox.py;
+        pr.width = std::max(0, static_cast<int>(bbox.w * canvasW) - 2 * bbox.px);
+        pr.height = std::max(0, static_cast<int>(bbox.h * canvasH) - 2 * bbox.py);
+        g_layoutPixels.components[name] = pr;
+    }
+
+    // Build JSON response
+    json j;
+    for (const auto& [name, rect] : g_layoutPixels.components) {
+        j[name] = {
+            {"x", rect.x},
+            {"y", rect.y},
+            {"width", rect.width},
+            {"height", rect.height}
+        };
+    }
+    for (const auto& [name, bbox] : config.components) {
+        if (j.contains(name)) {
+            j[name]["target"] = bbox.target;
+            j[name]["enabled"] = bbox.enabled;
+        }
+    }
+
+    return j.dump();
 }
 
 ProjectionConfig ConfigLoader::loadProjectionConfig(const json& j) {

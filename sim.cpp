@@ -29,7 +29,7 @@ Simulator::~Simulator() {}
 
 // MAIN SIM LOOP
 bool Simulator::init(const Config& config, const ImageData* imageData, float aspectRatio) {
-    this->config = &config;
+    this->config = &g_config;
     bool imageLoaded = imageData != nullptr && imageData->pixels != nullptr;
 
     // set domain dimensions based on aspect ratio
@@ -920,6 +920,140 @@ void Simulator::updateCircleAreas(int prevX, int prevY, int newX, int newY,
                     // don't touch density -- this fixed the wisp !!!
                 }
             }
+        }
+    }
+}
+
+void Simulator::updateSimParams(const Config& config) {
+    timestep = config.simulation.timestep;
+    density = config.simulation.fluidDensity;
+    overrelaxationCoefficient = config.simulation.projection.overrelaxationCoefficient;
+    projectionIters = config.simulation.projection.iterations;
+    doVorticity = config.simulation.vorticity.enabled;
+    vorticity = config.simulation.vorticity.strength;
+    vorticityLen = config.simulation.vorticity.lengthScale;
+    gravity = config.simulation.gravity;
+    windTunnelSide = config.simulation.windTunnel.side;
+    windTunnelSpeed = config.simulation.windTunnel.velocity;
+    momentumTransferStrength = config.simulation.circle.momentumTransferStrength;
+    momentumTransferRadius = config.simulation.circle.momentumTransferRadius;
+    // Update stored config pointer to g_config
+    this->config = &config;
+}
+
+void Simulator::reinitInk(const ImageData* imageData) {
+    // Reset fluid state to zero velocity, density, pressure
+    resetFluidState();
+
+    if (imageData) {
+        initializeFromImageData(*this->config, imageData);
+    }
+    inkInitialized = (imageData != nullptr);
+}
+
+void Simulator::resetFluidState() {
+    // Zero velocity/density/pressure arrays
+    std::fill(x.begin(), x.end(), 0.0f);
+    std::fill(y.begin(), y.end(), 0.0f);
+    std::fill(d.begin(), d.end(), 1.0f);
+    std::fill(p.begin(), p.end(), 0.0f);
+    // Note: s (solid) is NOT zeroed - boundaries must be preserved
+
+    // Zero ink arrays if they exist
+    if (!inkRed.empty()) {
+        std::fill(inkRed.begin(), inkRed.end(), 0.0f);
+        std::fill(inkGreen.begin(), inkGreen.end(), 0.0f);
+        std::fill(inkBlue.begin(), inkBlue.end(), 0.0f);
+    }
+
+    // Reset circle state
+#ifdef ENABLE_MOUSE_INPUT
+    circleX = gridX / 2;
+    circleY = gridY / 2;
+    prevCircleX = circleX;
+    prevCircleY = circleY;
+    circleVelX = 0.0f;
+    circleVelY = 0.0f;
+    isDragging = false;
+#else
+    for (int i = 0; i < HandTracking::MAX_CIRCLES; i++) {
+        circles[i].present = false;
+        circles[i].wasPresent = false;
+        circles[i].x = 0;
+        circles[i].y = 0;
+        circles[i].prevX = 0;
+        circles[i].prevY = 0;
+        circles[i].velX = 0.0f;
+        circles[i].velY = 0.0f;
+        circles[i].z = 0.0f;
+        circles[i].scaledRadius = baseCircleRadius;
+    }
+    for (int i = 0; i < HandTracking::MAX_SEGMENTS; i++) {
+        segments[i].present = false;
+        segments[i].wasPresent = false;
+        segments[i].startX = 0;
+        segments[i].startY = 0;
+        segments[i].endX = 0;
+        segments[i].endY = 0;
+        segments[i].prevStartX = 0;
+        segments[i].prevStartY = 0;
+        segments[i].prevEndX = 0;
+        segments[i].prevEndY = 0;
+        segments[i].startRadius = 0.0f;
+        segments[i].endRadius = 0.0f;
+        segments[i].prevStartRadius = 0.0f;
+        segments[i].prevEndRadius = 0.0f;
+    }
+    numSegments = 0;
+#endif
+
+    // Reapply edges (boundary conditions)
+    int edgesMask = config->simulation.edges;
+    bool leftEdge = edgesMask & 8;
+    bool topEdge = edgesMask & 4;
+    bool bottomEdge = edgesMask & 2;
+    bool rightEdge = edgesMask & 1;
+    for (int i = 0; i < gridX; i++) {
+        for (int j = 0; j < gridY; j++) {
+            if ((i == 0 && leftEdge) ||
+                (i == gridX - 1 && rightEdge) ||
+                (j == 0 && bottomEdge) ||
+                (j == gridY - 1 && topEdge)) {
+                s[idx(i, j)] = 0.0f;
+            } else if (s[idx(i, j)] == 0.0f) {
+                // Restore solid cells that aren't on edges
+                s[idx(i, j)] = 1.0f;
+            }
+        }
+    }
+
+    // Reapply wind tunnel
+    if (windTunnelSide != -1) {
+        switch (windTunnelSide) {
+            case 0: // left
+                for (int j = windTunnelStartCell; j < windTunnelEndCell; j++) {
+                    x[idx(1, j)] = windTunnelSpeed;
+                    d[idx(0, j)] = 0.0f;
+                }
+                break;
+            case 1: // top
+                for (int i = windTunnelStartCell; i < windTunnelEndCell; i++) {
+                    y[idx(i, gridY-2)] = -windTunnelSpeed;
+                    d[idx(i, gridY-1)] = 0.0f;
+                }
+                break;
+            case 2: // bottom
+                for (int i = windTunnelStartCell; i < windTunnelEndCell; i++) {
+                    y[idx(i, 1)] = windTunnelSpeed;
+                    d[idx(i, 0)] = 0.0f;
+                }
+                break;
+            case 3: // right
+                for (int j = windTunnelStartCell; j < windTunnelEndCell; j++) {
+                    x[idx(gridX-1, j)] = -windTunnelSpeed;
+                    d[idx(gridX-1, j)] = 0.0f;
+                }
+                break;
         }
     }
 }

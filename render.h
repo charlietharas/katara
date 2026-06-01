@@ -26,12 +26,6 @@ private:
     float canvasScale;
     float simWidth, simHeight;
 
-    // draw params
-    int drawTarget; // 0=pressure, 1=smoke, 2=both, 3=ink
-    bool drawVelocities;
-    bool disableHistograms;
-    float velScale;
-
     // histograms
     int frameCount;
     std::vector<int> densityHistogramBins;
@@ -45,8 +39,8 @@ private:
     void mapValueToGreyscale(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b);
     void mapValueToVelocityColor(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b);
     void mapInkToColor(float r, float g, float b, Uint8& outR, Uint8& outG, Uint8& outB);
-    void drawFluidField(const ISimulator& simulator);
-    void drawVelocityField(const ISimulator& simulator);
+    void drawFluidField(const ISimulator& simulator, int drawTarget);
+    void drawVelocityField(const ISimulator& simulator, float velScale);
     void computeHistograms(const ISimulator& simulator);
     void drawHistograms();
     void setPixel(int x, int y, Uint8 r, Uint8 g, Uint8 b);

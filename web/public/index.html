@@ -7,21 +7,75 @@
     <link rel="stylesheet" href="https://charliemax.dev/css/stylesheet.css">
     <title>katara</title>
     <style>
-.canvas-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.5rem;
-    width: 100%;
-    max-width: 1400px;
-    margin: 0 auto;
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
 }
 
-.camera-container,
-.sim-container {
-    position: relative;
+body {
+    background: #0a0a0a;
+    min-height: 100vh;
+    padding-top: 40px;
+    overflow: hidden;
+}
+
+nav {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 40px;
+    z-index: 100;
+}
+
+.loading-overlay {
+    position: fixed;
+    top: 40px;
+    left: 0;
+    width: 100vw;
+    height: calc(100vh - 40px);
+    background: #0a0a0a;
     display: flex;
-    justify-content: center;
     align-items: center;
+    justify-content: center;
+    z-index: 50;
+    transition: opacity 0.3s ease;
+}
+
+.loading-overlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.loading-overlay h2 {
+    color: white;
+    font-family: system-ui, -apple-system, sans-serif;
+}
+
+.camera-panel {
+    position: absolute;
+    background: #1a1a1a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    z-index: 10;
+}
+
+#canvas {
+    position: fixed;
+    top: 40px;
+    left: 0;
+    width: 100vw;
+    height: calc(100vh - 40px);
+    z-index: 0;
+}
+
+#cameraCanvas {
+    max-width: 100%;
+    height: auto;
+    display: block;
 }
 
 .sim-controls {
@@ -30,7 +84,7 @@
     right: 16px;
     display: flex;
     gap: 8px;
-    z-index: 10;
+    z-index: 20;
 }
 
 .control-btn {
@@ -52,52 +106,49 @@
     border-color: rgba(255, 255, 255, 0.5);
 }
 
-#cameraCanvas {
-    width: 100%;
-    height: auto;
-    border-radius: 8px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+video {
+    display: none;
 }
 
-#canvas {
-    width: 100%;
-    height: auto;
-    max-height: 90vh;
-    border-radius: 8px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-}
-
-@media (max-width: 900px) {
-    .canvas-row {
-        grid-template-columns: 1fr;
-    }
+.countdown-overlay {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 120px;
+    font-weight: bold;
+    color: white;
+    text-shadow: 2px 2px 8px rgba(0,0,0,0.8);
+    z-index: 1000;
+    pointer-events: none;
 }
     </style>
 </head>
-<nav></nav>
-<script src="https://charliemax.dev/js/lightmode.js"></script>
 <body>
-    <div id="content" style="text-align: center">
-        <h1>katara</h1>
+    <nav></nav>
+    <script src="https://charliemax.dev/js/lightmode.js"></script>
+    <div class="loading-overlay" id="loadingOverlay">
+        <h2>Loading...</h2>
     </div>
-    <div class="canvas-row">
-        <div class="sim-container">
-            <canvas id="canvas"></canvas>
-            <div class="sim-controls">
-                <button id="uploadInkBtn" class="control-btn" title="Upload PNG image for ink mode">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                        <polyline points="17 8 12 3 7 8"></polyline>
-                        <line x1="12" y1="3" x2="12" y2="15"></line>
-                    </svg>
-                    Upload Ink
-                </button>
-                <input type="file" id="inkImageInput" accept="image/png" hidden>
-            </div>
-        </div>
-        <div class="camera-container">
-            <canvas id="cameraCanvas" width="600" height="400"></canvas>
-        </div>
+    <canvas id="canvas"></canvas>
+    <div class="camera-panel"></div>
+    <div class="sim-controls">
+        <button id="uploadInkBtn" class="control-btn" title="Upload PNG image for ink mode">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+            Upload Background
+        </button>
+        <button id="cheeseBtn" class="control-btn" title="Take picture from webcam">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"></path>
+                <circle cx="12" cy="13" r="3"></circle>
+            </svg>
+            Cheese
+        </button>
+        <input type="file" id="inkImageInput" accept="image/png" hidden>
     </div>
     <script src="katara.js"></script>
     <script type="module" src="app.js"></script>

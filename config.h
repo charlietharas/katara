@@ -4,6 +4,7 @@
 #include <string>
 #include <fstream>
 #include <sstream>
+#include <map>
 #include "json.hpp"
 #include "circle_state.h"
 
@@ -74,12 +75,38 @@ struct InkConfig {
     std::string imagePath = "";
 };
 
+struct ComponentBBox {
+    float x = 0.0f;     // normalized [0,1]
+    float y = 0.0f;
+    float w = 0.5f;
+    float h = 0.5f;
+    int px = 0;          // horizontal padding (raw px)
+    int py = 0;          // vertical padding (raw px)
+    int target = 2;      // render target (viewports: 0=pressure,1=smoke,2=both,3=ink)
+    bool enabled = true; // enabled flag (histograms)
+};
+
+struct PixelRect {
+    int x = 0, y = 0, width = 0, height = 0;
+};
+
+struct LayoutConfig {
+    std::map<std::string, ComponentBBox> components;
+};
+
+struct LayoutPixels {
+    std::map<std::string, PixelRect> components;
+};
+
+extern LayoutPixels g_layoutPixels;
+
 struct Config {
     PipelineType pipeline = PipelineType::CPU;
     WindowConfig window;
     SimulationConfig simulation;
     RenderingConfig rendering;
     InkConfig ink;
+    LayoutConfig layout;  // layout configuration for flexible frontend
 };
 
 class ConfigLoader {
@@ -87,16 +114,23 @@ public:
     static Config loadConfig(const std::string& filename = "../config.json");
     static std::string readFile(const char* filename);
 
+    // Compute pixel layout from normalized config + canvas dimensions
+    static std::string computeLayout(const LayoutConfig& config, int canvasW, int canvasH);
+
 private:
     static PipelineType stringToPipelineType(const std::string& type);
     static WindowConfig loadWindowConfig(const json& j);
     static SimulationConfig loadSimulationConfig(const json& j);
     static RenderingConfig loadRenderingConfig(const json& j);
     static InkConfig loadInkConfig(const json& j);
+    static LayoutConfig loadLayoutConfig(const json& j);
     static ProjectionConfig loadProjectionConfig(const json& j);
     static VorticityConfig loadVorticityConfig(const json& j);
     static WindTunnelConfig loadWindTunnelConfig(const json& j);
     static CircleConfig loadCircleConfig(const json& j);
 };
+
+// Global config — single source of truth, update in-place for runtime reload
+extern Config g_config;
 
 #endif

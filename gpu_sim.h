@@ -209,6 +209,11 @@ private:
     void updateLineSegments(const FingertipData* landmarks, int count) override;
 #endif
 
+    // Runtime config reload
+    void updateSimParams(const Config& config) override;
+    void reinitInk(const ImageData* imageData) override;
+    void resetFluidState() override;
+
     // gpu resource initialization helpers
     bool createTexture(const TextureDesc& desc, WGPUTexture& texture, WGPUTextureView& view);
     void copyTextureDeviceToDevice(WGPUCommandEncoder encoder, WGPUTexture srcTexture, WGPUTexture dstTexture);

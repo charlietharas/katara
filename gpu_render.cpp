@@ -63,6 +63,44 @@ void GPURenderer::updateUniformBufferRender(const ISimulator& simulator) {
         uniformData.velocityHistogramBins[i].w = velocityHistogramBins[i * 4 + 3];
     }
 
+    // Update viewport configuration from g_layoutPixels
+    uniformData.viewportCount = 0;
+    for (int i = 0; i < 4; i++) {
+        std::string vpName = "viewport_" + std::to_string(i + 1);
+        auto it = g_layoutPixels.components.find(vpName);
+        if (it != g_layoutPixels.components.end()) {
+            uniformData.viewportX[i] = it->second.x;
+            uniformData.viewportY[i] = it->second.y;
+            uniformData.viewportWidth[i] = it->second.width;
+            uniformData.viewportHeight[i] = it->second.height;
+            auto cfgIt = g_config.layout.components.find(vpName);
+            uniformData.viewportRenderTarget[i] = (cfgIt != g_config.layout.components.end())
+                ? cfgIt->second.target : 2;
+            uniformData.viewportCount++;
+        }
+    }
+
+    // Update histogram configuration from g_layoutPixels
+    auto dhIt = g_layoutPixels.components.find("density_histogram");
+    auto dhCfgIt = g_config.layout.components.find("density_histogram");
+    if (dhIt != g_layoutPixels.components.end() && dhCfgIt != g_config.layout.components.end()) {
+        uniformData.densityHistogramEnabled = dhCfgIt->second.enabled ? 1 : 0;
+        uniformData.densityHistogramX = dhIt->second.x;
+        uniformData.densityHistogramY = dhIt->second.y;
+        uniformData.densityHistogramWidth = dhIt->second.width;
+        uniformData.densityHistogramHeight = dhIt->second.height;
+    }
+
+    auto vhIt = g_layoutPixels.components.find("velocity_histogram");
+    auto vhCfgIt = g_config.layout.components.find("velocity_histogram");
+    if (vhIt != g_layoutPixels.components.end() && vhCfgIt != g_config.layout.components.end()) {
+        uniformData.velocityHistogramEnabled = vhCfgIt->second.enabled ? 1 : 0;
+        uniformData.velocityHistogramX = vhIt->second.x;
+        uniformData.velocityHistogramY = vhIt->second.y;
+        uniformData.velocityHistogramWidth = vhIt->second.width;
+        uniformData.velocityHistogramHeight = vhIt->second.height;
+    }
+
     // update uniform buffer
     wgpuQueueWriteBuffer(queue, uniformBuffer, 0, &uniformData, sizeof(UniformData));
 }
@@ -272,21 +310,17 @@ GPURenderer::RenderPipelineResult GPURenderer::createRenderPipelineWithLayout(
 }
 
 GPURenderer::GPURenderer(SDL_Window* window, const Config& config)
-    : window(window),
-      drawTarget(config.rendering.target),
-      showVelocityVectors(config.rendering.showVelocityVectors),
-      disableHistograms(config.rendering.disableHistograms),
-      velocityScale(config.rendering.velocityScale) {
+    : window(window) {
 
     SDL_GetWindowSize(window, &windowWidth, &windowHeight);
 
     uniformData = {};
-    uniformData.drawTarget = drawTarget;
-    uniformData.drawVelocities = showVelocityVectors ? 1 : 0;
-    uniformData.velScale = velocityScale;
+    uniformData.drawTarget = g_config.rendering.target;
+    uniformData.drawVelocities = g_config.rendering.showVelocityVectors ? 1 : 0;
+    uniformData.velScale = g_config.rendering.velocityScale;
     uniformData.windowWidth = static_cast<float>(windowWidth);
     uniformData.windowHeight = static_cast<float>(windowHeight);
-    uniformData.disableHistograms = disableHistograms ? 1 : 0;
+    uniformData.disableHistograms = g_config.rendering.disableHistograms ? 1 : 0;
 }
 
 GPURenderer::~GPURenderer() {
@@ -355,7 +389,7 @@ void GPURenderer::render(const ISimulator& simulator) {
     usingGPUTextures = simulator.isUsingGPU();
 
     // compute histograms every n frames
-    if (!disableHistograms && frameCount++ % HISTOGRAM_FRAME_INTERVAL == 0) {
+    if (!g_config.rendering.disableHistograms && frameCount++ % HISTOGRAM_FRAME_INTERVAL == 0) {
         computeHistograms(simulator);
     }
 

@@ -2,9 +2,16 @@ import { MediaPipeHandTracker } from './mediapipe.js';
 
 class KataraWebApp {
     async init() {
+        // Show loading overlay
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        if (loadingOverlay) {
+            loadingOverlay.classList.remove('hidden');
+        }
+
+        // Canvas size will be updated after C++ resizes window
         const simCanvas = document.querySelector('#canvas');
-        simCanvas.width = 1200;
-        simCanvas.height = 800;
+        simCanvas.width = window.innerWidth;
+        simCanvas.height = window.innerHeight - 40;
 
         // Check if we need to restore persisted data (images, config)
         const needsRestore = localStorage.getItem('katara_needs_restore') === 'true';
@@ -56,24 +63,85 @@ class KataraWebApp {
             localStorage.setItem('katara_needs_restore', 'false');
         }
 
-        module.callMain([]);
+        // C++ will call kataraOnReady when initialization is complete
+        this.configured = false;
+
+        // Wait for C++ to signal readiness (window created, image loaded)
+        await new Promise(resolve => {
+            window.kataraOnReady = resolve;
+            module.callMain([]);
+        });
+
+        // Clean up the callback
+        window.kataraOnReady = null;
+
+        // Now canvas size matches the (possibly resized) window
+        simCanvas.width = window.innerWidth;
+        simCanvas.height = window.innerHeight - 40;
+        console.log('After C++ init: canvas size', simCanvas.width, 'x', simCanvas.height);
+        console.log('Window AR:', (window.innerWidth / window.innerHeight).toFixed(3));
+        const layout = this.initLayoutFromCpp();
+        this.configured = true;
 
         // 2D context for camera + keypoints
-        this.cameraCanvas = document.querySelector('#cameraCanvas');
-        if (!this.cameraCanvas) {
-            throw new Error('Camera canvas not found');
+        const camPanel = document.querySelector('.camera-panel');
+        if (!camPanel) {
+            throw new Error('Camera panel not found');
         }
+
+        // Create camera canvas dynamically
+        this.cameraCanvas = document.createElement('canvas');
+        this.cameraCanvas.id = 'cameraCanvas';
+        // Set initial dimensions, will be adjusted based on camera stream
+        this.cameraCanvas.width = 640;
+        this.cameraCanvas.height = 480;
+        this.cameraCanvas.style.width = '100%';
+        this.cameraCanvas.style.display = 'block';
+        camPanel.appendChild(this.cameraCanvas);
+
+        console.log('Camera canvas created');
+
+        // Create countdown overlay element
+        this.countdownElement = document.createElement('div');
+        this.countdownElement.className = 'countdown-overlay';
+        document.body.appendChild(this.countdownElement);
+
+        // Get 2D context
         this.cameraCtx = this.cameraCanvas.getContext('2d');
         if (!this.cameraCtx) {
             throw new Error('Could not get 2D context for camera canvas');
         }
+        console.log('2D context created successfully');
 
         await this.setupCamera();
+
+        // Position camera panel from C++ layout
+        this.positionCameraPanel(layout);
+
         this.setupInkUpload();
+        this.setupCameraCapture();
 
         // mediapipe
         this.handTracker = new MediaPipeHandTracker();
         await this.handTracker.init(this.videoElement);
+
+        // Handle window resize (C++ might resize window based on image)
+        window.addEventListener('resize', () => {
+            if (this.configured) {
+                const simCanvas = document.querySelector('#canvas');
+                simCanvas.width = window.innerWidth;
+                simCanvas.height = window.innerHeight - 40;
+                const layout = this.initLayoutFromCpp();
+                this.positionCameraPanel(layout);
+            }
+        });
+
+        // Hide loading overlay - everything is already configured
+        if (loadingOverlay) {
+            loadingOverlay.classList.add('hidden');
+        }
+        const ar = window.innerWidth / window.innerHeight;
+        console.log('Layout settled - AR:', ar.toFixed(3), ar < 1.0 ? '(portrait)' : '(landscape)');
 
         // start hand tracking loop
         console.log("Hand tracking starting. Say hi!");
@@ -82,7 +150,7 @@ class KataraWebApp {
 
     async setupCamera() {
         const stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: 320, height: 240, facingMode: 'user' }
+            video: { facingMode: 'user' }
         });
 
         this.videoElement = document.createElement('video');
@@ -93,11 +161,53 @@ class KataraWebApp {
         document.body.appendChild(this.videoElement);
         this.videoElement.play();
         await new Promise(resolve => this.videoElement.onloadeddata = resolve);
+
+        // Adjust camera canvas to match camera stream aspect ratio
+        const videoWidth = this.videoElement.videoWidth;
+        const videoHeight = this.videoElement.videoHeight;
+        console.log('Camera stream dimensions:', videoWidth, videoHeight);
+
+        if (videoWidth && videoHeight) {
+            this.cameraCanvas.width = videoWidth;
+            this.cameraCanvas.height = videoHeight;
+        }
+    }
+
+    initLayoutFromCpp() {
+        const canvasW = window.innerWidth;
+        const canvasH = window.innerHeight - 40;
+        this.module._initLayout(canvasW, canvasH);
+        const jsonStr = this.module.FS.readFile('/layout_pixels.json', { encoding: 'utf8' });
+        this.layoutPixels = JSON.parse(jsonStr);
+        console.log('Layout from C++:', canvasW, 'x', canvasH, this.layoutPixels);
+        return this.layoutPixels;
+    }
+
+    positionCameraPanel(layout) {
+        const camFrame = layout.camera_frame;
+        const camPanel = document.querySelector('.camera-panel');
+        if (camFrame && camPanel) {
+            camPanel.style.position = 'absolute';
+            camPanel.style.left = camFrame.x + 'px';
+            camPanel.style.top = (camFrame.y + 40) + 'px'; // +40 for nav bar
+            camPanel.style.width = camFrame.width + 'px';
+            camPanel.style.height = camFrame.height + 'px';
+
+            this.cameraCanvas.style.width = '100%';
+            this.cameraCanvas.style.height = '100%';
+            this.cameraCanvas.style.maxWidth = 'none';
+            console.log('Camera positioned from layout:', camFrame.x, camFrame.y, camFrame.width, 'x', camFrame.height);
+        }
     }
 
     setupInkUpload() {
         const uploadBtn = document.getElementById('uploadInkBtn');
         const fileInput = document.getElementById('inkImageInput');
+
+        if (!uploadBtn || !fileInput) {
+            console.error('Upload button or file input not found');
+            return;
+        }
 
         uploadBtn.addEventListener('click', () => fileInput.click());
 
@@ -124,8 +234,9 @@ class KataraWebApp {
             const uint8Array = new Uint8Array(arrayBuffer);
             console.log('Image loaded: ' + uint8Array.length + ' bytes');
 
-            // Write to /persist
+            // Write to /persist and root
             FS.writeFile('/persist/uploaded.png', uint8Array);
+            FS.writeFile('/uploaded.png', uint8Array);
 
             // Update config to use uploaded image and enable ink mode
             const configText = FS.readFile('/config.json', { encoding: 'utf8' });
@@ -134,17 +245,17 @@ class KataraWebApp {
             config.rendering.target = 3;
             const newConfigText = JSON.stringify(config, null, 4);
 
-            // Write config to /persist and /
+            // Write config to /persist and root
             FS.writeFile('/persist/config.json', newConfigText);
             FS.writeFile('/config.json', newConfigText);
 
-            console.log('Files written to /persist, syncing to IndexedDB...');
+            console.log('Files written, syncing to IndexedDB...');
 
             // Sync to IndexedDB
             await new Promise((resolve) => {
                 FS.syncfs(false, (err) => {
                     if (err) console.error('syncfs failed:', err);
-                    else console.log('syncfs completed - data persisted to IndexedDB');
+                    else console.log('syncfs completed');
                     resolve();
                 });
             });
@@ -152,14 +263,46 @@ class KataraWebApp {
             // Set flag so on reload we restore from /persist
             localStorage.setItem('katara_needs_restore', 'true');
 
-            // Reload page to apply changes
-            console.log('Ink image uploaded. Reloading...');
-            location.reload();
+            // Reload config without page reload (INK + RENDER flags)
+            console.log('Reloading config...');
+            this.module._reloadConfig(1 | 4);
 
         } catch (err) {
             console.error('Failed to upload image:', err);
             alert('Failed to upload image: ' + err.message);
         }
+    }
+
+    setupCameraCapture() {
+        const cheeseBtn = document.getElementById('cheeseBtn');
+        if (!cheeseBtn) {
+            console.error('Cheese button not found');
+            return;
+        }
+
+        cheeseBtn.addEventListener('click', () => this.captureFromCamera());
+    }
+
+    async captureFromCamera() {
+        // Countdown sequence
+        for (let i = 3; i > 0; i--) {
+            this.countdownElement.textContent = i;
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        this.countdownElement.textContent = '';
+
+        // Capture frame from video element
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = this.videoElement.videoWidth;
+        tempCanvas.height = this.videoElement.videoHeight;
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCtx.drawImage(this.videoElement, 0, 0);
+
+        // Convert to blob and create File object
+        tempCanvas.toBlob(async (blob) => {
+            const file = new File([blob], 'camera-capture.png', { type: 'image/png' });
+            await this.handleImageUpload(file);
+        }, 'image/png');
     }
 
     // hand skeleton connections (MediaPipe topology)

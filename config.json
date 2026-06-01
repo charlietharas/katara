@@ -24,7 +24,7 @@
             "side": 0,
             "startPosition": 0.475,
             "endPosition": 0.525,
-            "velocity": 0
+            "velocity": 1
         },
         "circle": {
             "radius": 0.02,
@@ -46,5 +46,38 @@
     },
     "ink": {
         "imagePath": "/img1.png"
+    },
+    "layout": {
+        "components": {
+            "camera_frame": {
+                "x": 0, "y": 0.25, "w": 0.25, "h": 0.25,
+                "px": 5, "py": 5
+            },
+            "viewport_1": {
+                "x": 0.5, "y": 0.0, "w": 0.5, "h": 0.5,
+                "px": 5, "py": 5,
+                "target": 2
+            },
+            "viewport_2": {
+                "x": 0.5, "y": 0.5, "w": 0.5, "h": 0.5,
+                "px": 5, "py": 5,
+                "target": 3
+            },
+            "viewport_3": {
+                "x": 0.0, "y": 0.5, "w": 0.5, "h": 0.5,
+                "px": 5, "py": 5,
+                "target": 0
+            },
+            "density_histogram": {
+                "x": 0.0, "y": 0.0, "w": 0.25, "h": 0.25,
+                "px": 5, "py": 5,
+                "enabled": true
+            },
+            "velocity_histogram": {
+                "x": 0.25, "y": 0, "w": 0.25, "h": 0.25,
+                "px": 5, "py": 5,
+                "enabled": true
+            }
+        }
     }
 }

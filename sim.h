@@ -21,6 +21,11 @@ public:
     void updateLineSegments(const FingertipData* landmarks, int count) override;
 #endif
 
+    // Runtime config reload
+    void updateSimParams(const Config& config) override;
+    void reinitInk(const ImageData* imageData) override;
+    void resetFluidState() override;
+
     // fields
     const std::vector<float>& getVelocityX() const override { return x; }
     const std::vector<float>& getVelocityY() const override { return y; }
@@ -79,9 +84,11 @@ private:
     void updateLineSegmentSolidField(LineSegment& seg);
 #endif
 
-    // image initialization helpers
+public:
+    // image initialization helpers (public so GPU simulator can access via member)
     void initializeFromImageData(const Config& config, const ImageData* imageData);
 
+protected:
     // sim steps
     void integrate();
     void project();

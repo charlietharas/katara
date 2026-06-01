@@ -96,6 +96,11 @@ public:
     // modes
     virtual bool isUsingGPU() const { return false; }
 
+    // Runtime config reload
+    virtual void updateSimParams(const Config& config) {}
+    virtual void reinitInk(const ImageData* imageData) {}
+    virtual void resetFluidState() {}
+
 #ifdef ENABLE_MOUSE_INPUT
     // mouse helpers
     bool isInsideCircle(int i, int j) {
