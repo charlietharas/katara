@@ -100,6 +100,7 @@ struct PixelRect {
 };
 
 struct LayoutConfig {
+    std::string preset = "default";
     std::map<std::string, ComponentBBox> components;
 };
 

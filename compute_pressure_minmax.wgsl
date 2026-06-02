@@ -12,6 +12,8 @@ struct MinMaxUniform {
     velMax : atomic<u32>,
     densityMin : atomic<u32>,
     densityMax : atomic<u32>,
+    densitySumScaled : atomic<u32>,
+    fluidCellCount : atomic<u32>,
 }
 
 @group(0) @binding(0) var<uniform> params : SimParams;
@@ -58,4 +60,10 @@ fn computePressureMinMax(@builtin(global_invocation_id) id : vec3<u32>) {
     let densityBits = floatToOrderedUint(density);
     atomicMin(&result.densityMin, densityBits);
     atomicMax(&result.densityMax, densityBits);
+
+    // total smoke/dye amount (scaled) + fluid domain volume (cell count)
+    let densityClamped = clamp(density, 0.0, 1.0);
+    let densityScaled = u32(densityClamped * 1024.0);
+    atomicAdd(&result.densitySumScaled, densityScaled);
+    atomicAdd(&result.fluidCellCount, 1u);
 }

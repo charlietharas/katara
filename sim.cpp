@@ -835,10 +835,10 @@ void Simulator::circleMomentumTransfer() {
                     x[idx(i, j)] += momentumX;
                     y[idx(i, j)] += momentumY;
 
-                    // NOTE: max velocity clamping for force imparted by circle, for stability
-                    float maxVel = 8.0f;
-                    x[idx(i, j)] = std::max(-maxVel, std::min(maxVel, x[idx(i, j)]));
-                    y[idx(i, j)] = std::max(-maxVel, std::min(maxVel, y[idx(i, j)]));
+                    // NOTE [DISABLED]: max velocity clamping for force imparted by circle, for stability
+                    // float maxVel = 8.0f;
+                    // x[idx(i, j)] = std::max(-maxVel, std::min(maxVel, x[idx(i, j)]));
+                    // y[idx(i, j)] = std::max(-maxVel, std::min(maxVel, y[idx(i, j)]));
                 }
             }
         }
@@ -883,10 +883,10 @@ void Simulator::circleMomentumTransfer() {
                         x[idx(i, j)] += momentumX;
                         y[idx(i, j)] += momentumY;
 
-                        // NOTE: max velocity clamping for force imparted by circle, for stability
-                        float maxVel = 8.0f;
-                        x[idx(i, j)] = std::max(-maxVel, std::min(maxVel, x[idx(i, j)]));
-                        y[idx(i, j)] = std::max(-maxVel, std::min(maxVel, y[idx(i, j)]));
+                        // NOTE [DISABLED]: max velocity clamping for force imparted by circle, for stability
+                        // float maxVel = 8.0f;
+                        // x[idx(i, j)] = std::max(-maxVel, std::min(maxVel, x[idx(i, j)]));
+                        // y[idx(i, j)] = std::max(-maxVel, std::min(maxVel, y[idx(i, j)]));
                     }
                 }
             }
@@ -948,6 +948,14 @@ void Simulator::updateSimParams(const Config& config) {
     momentumTransferStrength = config.simulation.circle.momentumTransferStrength;
     momentumTransferRadius = config.simulation.circle.momentumTransferRadius;
     momentumTransferDeadZone = config.simulation.circle.momentumTransferDeadZone;
+
+    // Circle radius is specified in world units in config; convert to grid units for simulation.
+#ifdef ENABLE_MOUSE_INPUT
+    circleRadius = static_cast<int>(config.simulation.circle.radius / cellSize);
+#else
+    baseCircleRadius = static_cast<int>(config.simulation.circle.radius / cellSize);
+#endif
+
     // Update stored config pointer to g_config
     this->config = &config;
 }

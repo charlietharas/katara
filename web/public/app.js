@@ -1,4 +1,5 @@
 import { MediaPipeHandTracker } from './mediapipe.js';
+import { SettingsPanel, createSkeletonSections } from './settings.js';
 
 class KataraWebApp {
     getSimViewportSize() {
@@ -43,13 +44,17 @@ class KataraWebApp {
         this.positionCameraPanel(layout);
         this.positionControls(layout);
         this.updateViewportButtons();
+        this.updatePlotLabels();
     }
 
     async init() {
         this.isInkMode = false;
+        this.labelsEnabled = true;
+        this.buttonsEnabled = true;
         this.inkAspectRatio = 1.0;
         this.cameraAspectRatio = 4.0 / 3.0;
         this.viewportControllers = new Map();
+        this.plotLabelElements = new Map();
 
         // Show loading overlay
         const loadingOverlay = document.getElementById('loadingOverlay');
@@ -181,9 +186,12 @@ class KataraWebApp {
         this.setupCameraCapture();
         this.setupResetButton();
         this.setupPauseButton();
+        this.setupSettingsButton();
         this.setupKeyboardShortcuts();
         this.setupViewportButtons();
+        this.setupPlotLabels();
         this.updateViewportButtons();
+        this.updatePlotLabels();
 
         // mediapipe
         this.handTracker = new MediaPipeHandTracker();
@@ -260,6 +268,8 @@ class KataraWebApp {
             const configText = this.module.FS.readFile('/config.json', { encoding: 'utf8' });
             const config = JSON.parse(configText);
             this.isInkMode = config?.rendering?.target === 3;
+            this.labelsEnabled = config?.layout?.labelsEnabled !== false;
+            this.buttonsEnabled = config?.layout?.buttonsEnabled !== false;
         } catch (err) {
             console.warn('Could not read /config.json for layout mode:', err);
         }
@@ -449,6 +459,7 @@ class KataraWebApp {
             this.positionCameraPanel(layout);
             this.positionControls(layout);
             this.updateViewportButtons();
+            this.updatePlotLabels();
 
         } catch (err) {
             console.error('Failed to upload image:', err);
@@ -501,14 +512,14 @@ class KataraWebApp {
             pauseBtnIcon.setAttribute('stroke', 'currentColor');
             pauseBtnIcon.setAttribute('stroke-width', '2');
             pauseBtnIcon.setAttribute('stroke-linejoin', 'round');
-            pauseBtnLabel.textContent = '[P]esume';
+            pauseBtnLabel.textContent = '[P]';
             pauseBtn.title = 'Resume simulation (P)';
         } else {
             pauseBtnIcon.innerHTML = '<rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect>';
             pauseBtnIcon.removeAttribute('stroke');
             pauseBtnIcon.removeAttribute('stroke-width');
             pauseBtnIcon.removeAttribute('stroke-linejoin');
-            pauseBtnLabel.textContent = '[P]ause';
+            pauseBtnLabel.textContent = '[P]';
             pauseBtn.title = 'Pause simulation (P)';
         }
     }
@@ -540,6 +551,19 @@ class KataraWebApp {
                     event.preventDefault();
                     this.resetSimulation();
                     break;
+                case 'u': {
+                    event.preventDefault();
+                    const uploadBtn = document.getElementById('uploadInkBtn');
+                    if (uploadBtn instanceof HTMLButtonElement) {
+                        uploadBtn.click();
+                    }
+                    break;
+                }
+                case 's':
+                    event.preventDefault();
+                    const settingsBtn = document.getElementById('settingsBtn');
+                    if (settingsBtn) settingsBtn.click();
+                    break;
             }
         });
     }
@@ -567,26 +591,165 @@ class KataraWebApp {
         pauseBtn.addEventListener('click', () => this.togglePause());
     }
 
+    setupSettingsButton() {
+        const settingsBtn = document.getElementById('settingsBtn');
+        if (!settingsBtn) {
+            console.error('Settings button not found');
+            return;
+        }
+
+        settingsBtn.addEventListener('click', () => {
+            if (!this.settingsPanel) {
+                this.settingsPanel = new SettingsPanel(this);
+
+                let currentConfig = {};
+                try {
+                    const configText = this.module.FS.readFile('/config.json', { encoding: 'utf8' });
+                    currentConfig = JSON.parse(configText);
+                    window.kataraConfig = currentConfig;
+                } catch (err) {
+                    console.error('Failed to load config for settings:', err);
+                }
+
+                const sections = createSkeletonSections(currentConfig);
+                sections.forEach(section => this.settingsPanel.addSection(section));
+            }
+
+            this.settingsPanel.open();
+        });
+    }
+
     setupViewportButtons() {
-        const viewportNames = ['viewport_1', 'viewport_2', 'viewport_3'];
-        viewportNames.forEach((name, index) => {
+        this.syncViewportButtons();
+    }
+
+    setupPlotLabels() {
+        this.syncPlotLabels();
+    }
+
+    getActiveViewportNames() {
+        const viewportNames = ['viewport_1', 'viewport_2', 'viewport_3', 'viewport_4'];
+        return viewportNames.filter((name) => {
+            const rect = this.layoutPixels?.[name];
+            return rect && rect.width > 0 && rect.height > 0;
+        });
+    }
+
+    syncViewportButtons() {
+        const activeNames = new Set(this.getActiveViewportNames());
+
+        // Remove stale controllers
+        this.viewportControllers.forEach((controller, name) => {
+            if (!activeNames.has(name)) {
+                controller.destroy();
+                this.viewportControllers.delete(name);
+            }
+        });
+
+        // Create missing controllers
+        activeNames.forEach((name) => {
+            if (this.viewportControllers.has(name)) {
+                return;
+            }
             const layoutRect = this.layoutPixels[name];
-            if (!layoutRect) return;
             const target = layoutRect.target ?? 2;
-            const velocity = false; // Default to disabled
+            const velocity = !!layoutRect.velocity;
+            const index = Number.parseInt(name.split('_')[1], 10) - 1;
             const controller = new ViewportController(index, name, target, velocity, layoutRect, this);
             controller.createTargetButton();
             this.viewportControllers.set(name, controller);
         });
     }
 
+    updateSimControlsVisibility() {
+        const controls = document.querySelector('.sim-controls');
+        if (controls) {
+            controls.style.display = this.buttonsEnabled ? '' : 'none';
+        }
+    }
+
     updateViewportButtons() {
+        this.syncViewportButtons();
         this.viewportControllers.forEach((controller, name) => {
             const layoutRect = this.layoutPixels[name];
-            if (layoutRect) {
+            if (layoutRect && layoutRect.width > 0 && layoutRect.height > 0) {
                 controller.updateLayout(layoutRect);
             }
+            controller.setButtonsVisible(this.buttonsEnabled);
         });
+        this.updateSimControlsVisibility();
+    }
+
+    getActiveLabelComponents() {
+        const labels = [
+            ['camera_frame', 'CAM'],
+            ['viewport_1', 'PANE_1'],
+            ['viewport_2', 'PANE_2'],
+            ['viewport_3', 'PANE_3'],
+            ['viewport_4', 'PANE_4'],
+            ['density_histogram', 'DENSITY'],
+            ['velocity_histogram', 'VELOCITY'],
+            ['entropy_time_series', 'ENTROPY'],
+            ['volume_time_series', 'VOLUME']
+        ];
+
+        return labels.filter(([name]) => {
+            const rect = this.layoutPixels?.[name];
+            const enabled = name.includes('histogram') || name.includes('time_series')
+                ? rect?.enabled !== false
+                : true;
+            return enabled && rect && rect.width > 0 && rect.height > 0;
+        });
+    }
+
+    syncPlotLabels() {
+        const activeEntries = this.getActiveLabelComponents();
+        const activeNames = new Set(activeEntries.map(([name]) => name));
+        const viewport = document.querySelector('.sim-viewport');
+        if (!viewport) return;
+
+        this.plotLabelElements.forEach((element, name) => {
+            if (!activeNames.has(name)) {
+                if (element.parentNode) element.parentNode.removeChild(element);
+                this.plotLabelElements.delete(name);
+            }
+        });
+
+        activeEntries.forEach(([name, displayLabel]) => {
+            if (this.plotLabelElements.has(name)) {
+                return;
+            }
+            const label = document.createElement('div');
+            label.className = 'plot-label';
+            label.textContent = displayLabel;
+            viewport.appendChild(label);
+            this.plotLabelElements.set(name, label);
+        });
+    }
+
+    updatePlotLabels() {
+        this.syncPlotLabels();
+        if (!this.labelsEnabled) {
+            this.plotLabelElements.forEach((label) => {
+                label.style.display = 'none';
+            });
+            this.viewportControllers.forEach((controller) => controller.positionButtons());
+            return;
+        }
+        this.plotLabelElements.forEach((label, name) => {
+            const rect = this.layoutPixels?.[name];
+            if (!rect || rect.width <= 0 || rect.height <= 0) {
+                label.style.display = 'none';
+                return;
+            }
+
+            label.style.display = '';
+            label.style.position = 'absolute';
+            label.style.left = `${rect.x + 8}px`;
+            label.style.top = `${rect.y + 8}px`;
+            label.style.maxWidth = `${Math.max(0, rect.width - 16)}px`;
+        });
+        this.viewportControllers.forEach((controller) => controller.positionButtons());
     }
 
     async captureFromCamera() {
@@ -749,7 +912,7 @@ class ViewportController {
         const screenshotBtn = document.createElement('button');
         screenshotBtn.className = 'viewport-screenshot-btn';
         screenshotBtn.innerHTML = `
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
                 <circle cx="12" cy="13" r="4"></circle>
             </svg>
@@ -785,21 +948,25 @@ class ViewportController {
         if (!this.targetButtonElement || !this.velocityButtonElement || !this.screenshotButtonElement || !this.layoutRect) return;
         const margin = 8;
         const gap = 4;
+        const label = this.parentApp.plotLabelElements.get(this.viewportName);
 
-        // Position target button on the right
-        this.targetButtonElement.style.position = 'absolute';
-        this.targetButtonElement.style.left = `${this.layoutRect.x + this.layoutRect.width - this.targetButtonElement.offsetWidth - margin}px`;
-        this.targetButtonElement.style.top = `${this.layoutRect.y + margin}px`;
+        let leftX = this.layoutRect.x + margin;
+        let topY = this.layoutRect.y + margin;
+        if (label && label.offsetHeight > 0 && label.style.display !== 'none') {
+            topY = this.layoutRect.y + margin + label.offsetHeight + gap;
+        }
 
-        // Position velocity button to the left of target button
-        this.velocityButtonElement.style.position = 'absolute';
-        this.velocityButtonElement.style.left = `${this.layoutRect.x + this.layoutRect.width - this.targetButtonElement.offsetWidth - this.velocityButtonElement.offsetWidth - gap - margin}px`;
-        this.velocityButtonElement.style.top = `${this.layoutRect.y + margin}px`;
-
-        // Position screenshot button to the left of velocity button
-        this.screenshotButtonElement.style.position = 'absolute';
-        this.screenshotButtonElement.style.left = `${this.layoutRect.x + this.layoutRect.width - this.targetButtonElement.offsetWidth - this.velocityButtonElement.offsetWidth - this.screenshotButtonElement.offsetWidth - gap * 2 - margin}px`;
-        this.screenshotButtonElement.style.top = `${this.layoutRect.y + margin}px`;
+        const buttons = [
+            this.screenshotButtonElement,
+            this.velocityButtonElement,
+            this.targetButtonElement
+        ];
+        let x = leftX;
+        for (const btn of buttons) {
+            btn.style.left = `${x}px`;
+            btn.style.top = `${topY}px`;
+            x += btn.offsetWidth + gap;
+        }
     }
 
     cycleTarget() {
@@ -825,6 +992,7 @@ class ViewportController {
     updateDisplay() {
         if (this.targetButtonElement) {
             this.targetButtonElement.textContent = `${this.target}`;
+            this.positionButtons();
         }
     }
 
@@ -841,6 +1009,32 @@ class ViewportController {
     updateLayout(layoutRect) {
         this.layoutRect = layoutRect;
         this.positionButtons();
+    }
+
+    setButtonsVisible(visible) {
+        const display = visible ? '' : 'none';
+        for (const btn of [
+            this.screenshotButtonElement,
+            this.velocityButtonElement,
+            this.targetButtonElement
+        ]) {
+            if (btn) btn.style.display = display;
+        }
+    }
+
+    destroy() {
+        if (this.targetButtonElement?.parentNode) {
+            this.targetButtonElement.parentNode.removeChild(this.targetButtonElement);
+        }
+        if (this.velocityButtonElement?.parentNode) {
+            this.velocityButtonElement.parentNode.removeChild(this.velocityButtonElement);
+        }
+        if (this.screenshotButtonElement?.parentNode) {
+            this.screenshotButtonElement.parentNode.removeChild(this.screenshotButtonElement);
+        }
+        this.targetButtonElement = null;
+        this.velocityButtonElement = null;
+        this.screenshotButtonElement = null;
     }
 
     captureScreenshot() {

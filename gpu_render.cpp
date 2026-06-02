@@ -142,8 +142,55 @@ void GPURenderer::updateUniformBufferRender(const ISimulator& simulator) {
         uniformData.entropyHistory[i].w = entropyHistory[i * 4 + 3];
     }
 
+    auto vtsIt = g_layoutPixels.components.find("volume_time_series");
+    auto vtsCfgIt = g_config.layout.components.find("volume_time_series");
+    if (vtsIt != g_layoutPixels.components.end() && vtsCfgIt != g_config.layout.components.end()) {
+        uniformData.volumeTimeSeriesEnabled = vtsCfgIt->second.enabled ? 1 : 0;
+        uniformData.volumeTimeSeriesX = vtsIt->second.x;
+        uniformData.volumeTimeSeriesY = vtsIt->second.y;
+        uniformData.volumeTimeSeriesWidth = vtsIt->second.width;
+        uniformData.volumeTimeSeriesHeight = vtsIt->second.height;
+    } else {
+        uniformData.volumeTimeSeriesEnabled = 0;
+        uniformData.volumeTimeSeriesX = 0;
+        uniformData.volumeTimeSeriesY = 0;
+        uniformData.volumeTimeSeriesWidth = 0;
+        uniformData.volumeTimeSeriesHeight = 0;
+    }
+
+    uniformData.volumeHistoryMax = volumeHistoryMax;
+    uniformData.volumeHistoryCount = volumeHistoryCount;
+    uniformData.volumeHistoryWriteIndex = volumeHistoryWriteIndex;
+    uniformData.volumePad0 = 0;
+    for (int i = 0; i < 16; i++) {
+        uniformData.volumeDomainHistory[i].x = volumeDomainHistory[i * 4 + 0];
+        uniformData.volumeDomainHistory[i].y = volumeDomainHistory[i * 4 + 1];
+        uniformData.volumeDomainHistory[i].z = volumeDomainHistory[i * 4 + 2];
+        uniformData.volumeDomainHistory[i].w = volumeDomainHistory[i * 4 + 3];
+
+        uniformData.volumeMassHistory[i].x = volumeMassHistory[i * 4 + 0];
+        uniformData.volumeMassHistory[i].y = volumeMassHistory[i * 4 + 1];
+        uniformData.volumeMassHistory[i].z = volumeMassHistory[i * 4 + 2];
+        uniformData.volumeMassHistory[i].w = volumeMassHistory[i * 4 + 3];
+    }
+
     // update uniform buffer
     wgpuQueueWriteBuffer(queue, uniformBuffer, 0, &uniformData, sizeof(UniformData));
+}
+
+void GPURenderer::resetEntropyTimeSeries() {
+    entropyValue = 0.0f;
+    entropyNormalized = 0.0f;
+    entropyHistoryWriteIndex = 0;
+    entropyHistoryCount = 0;
+    entropyHistoryMax = 1.0f;
+    entropyHistory.fill(0.0f);
+
+    volumeHistoryWriteIndex = 0;
+    volumeHistoryCount = 0;
+    volumeHistoryMax = 1.0f;
+    volumeDomainHistory.fill(0.0f);
+    volumeMassHistory.fill(0.0f);
 }
 
 // BOILERPLATE INSTANTIATION HELPERS
@@ -672,7 +719,9 @@ void GPURenderer::computeHistograms(const ISimulator& simulator) {
         const float* densityMinMax = nullptr;
         const int* histogramBins = nullptr;
 
-        if (gpuSim.getHistogramData(readySlot, pressureMinMax, velocityMinMax, densityMinMax, histogramBins)) {
+        uint32_t densitySumScaled = 0;
+        uint32_t fluidCellCount = 0;
+        if (gpuSim.getHistogramData(readySlot, pressureMinMax, velocityMinMax, densityMinMax, histogramBins, densitySumScaled, fluidCellCount)) {
             if (densityMinMax[0] < densityMinMax[1]) {
                 densityHistogramMin = densityMinMax[0];
                 densityHistogramMax = densityMinMax[1];
@@ -710,6 +759,19 @@ void GPURenderer::computeHistograms(const ISimulator& simulator) {
             entropyHistoryMax = ENTROPY_EPSILON;
             for (int i = 0; i < entropyHistoryCount; i++) {
                 entropyHistoryMax = std::max(entropyHistoryMax, entropyHistory[i]);
+            }
+
+            const float cellArea = simulator.cellSize * simulator.cellSize;
+            const float domainVolume = static_cast<float>(fluidCellCount) * cellArea;
+            const float smokeMass = (static_cast<float>(densitySumScaled) / VOLUME_DENSITY_SCALE) * cellArea;
+
+            volumeDomainHistory[volumeHistoryWriteIndex] = domainVolume;
+            volumeMassHistory[volumeHistoryWriteIndex] = smokeMass;
+            volumeHistoryWriteIndex = (volumeHistoryWriteIndex + 1) % VOLUME_HISTORY_SAMPLES;
+            volumeHistoryCount = std::min(volumeHistoryCount + 1, VOLUME_HISTORY_SAMPLES);
+            volumeHistoryMax = ENTROPY_EPSILON;
+            for (int i = 0; i < volumeHistoryCount; i++) {
+                volumeHistoryMax = std::max(volumeHistoryMax, std::max(volumeDomainHistory[i], volumeMassHistory[i]));
             }
 
             gpuSim.advanceHistogramReadIndex();
@@ -751,6 +813,32 @@ void GPURenderer::computeHistograms(const ISimulator& simulator) {
         entropyHistoryMax = ENTROPY_EPSILON;
         for (int i = 0; i < entropyHistoryCount; i++) {
             entropyHistoryMax = std::max(entropyHistoryMax, entropyHistory[i]);
+        }
+
+        const auto& density = simulator.getDensity();
+        const auto& solid = simulator.getSolid();
+        uint32_t fluidCells = 0;
+        double densitySum = 0.0;
+        const int totalCells = simulator.gridX * simulator.gridY;
+        for (int i = 0; i < totalCells && i < static_cast<int>(density.size()) && i < static_cast<int>(solid.size()); i++) {
+            if (solid[i] != 0.0f) {
+                fluidCells++;
+                const float d = std::max(0.0f, std::min(1.0f, density[i]));
+                densitySum += static_cast<double>(d);
+            }
+        }
+
+        const float cellArea = simulator.cellSize * simulator.cellSize;
+        const float domainVolume = static_cast<float>(fluidCells) * cellArea;
+        const float smokeMass = static_cast<float>(densitySum) * cellArea;
+
+        volumeDomainHistory[volumeHistoryWriteIndex] = domainVolume;
+        volumeMassHistory[volumeHistoryWriteIndex] = smokeMass;
+        volumeHistoryWriteIndex = (volumeHistoryWriteIndex + 1) % VOLUME_HISTORY_SAMPLES;
+        volumeHistoryCount = std::min(volumeHistoryCount + 1, VOLUME_HISTORY_SAMPLES);
+        volumeHistoryMax = ENTROPY_EPSILON;
+        for (int i = 0; i < volumeHistoryCount; i++) {
+            volumeHistoryMax = std::max(volumeHistoryMax, std::max(volumeDomainHistory[i], volumeMassHistory[i]));
         }
     }
 }

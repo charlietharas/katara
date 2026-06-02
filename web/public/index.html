@@ -5,211 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="shortcut icon" type="image/x-icon" href="https://charliemax.dev/favicon.ico">
     <link rel="stylesheet" href="https://charliemax.dev/css/stylesheet.css">
+    <link rel="stylesheet" href="styles.css">
     <title>katara</title>
-    <style>
-.sim-viewport,
-.sim-viewport * {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}
-
-body {
-    background-color: var(--offblack);
-    min-height: 100vh;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-start;
-    align-items: stretch;
-}
-
-body.light-mode {
-    background-color: var(--offwhite);
-}
-
-.content.page-title {
-    width: 100%;
-    max-width: none;
-    text-align: center;
-    padding: 0;
-    margin: 0;
-}
-
-.content.page-title h1 {
-    margin: 0;
-    text-align: center;
-}
-
-.sim-viewport {
-    position: relative;
-    flex: 1;
-    min-height: 0;
-    width: 100%;
-}
-
-.loading-overlay {
-    position: absolute;
-    inset: 0;
-    background-color: var(--offblack);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 50;
-    transition: opacity 0.3s ease;
-}
-
-.loading-overlay.hidden {
-    opacity: 0;
-    pointer-events: none;
-}
-
-body.light-mode .loading-overlay {
-    background-color: var(--offwhite);
-}
-
-.loading-overlay h2 {
-    color: white;
-    font-family: system-ui, -apple-system, sans-serif;
-}
-
-.camera-panel {
-    position: absolute;
-    background: #1a1a1a;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-    z-index: 10;
-}
-
-#canvas {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    z-index: 0;
-}
-
-#cameraCanvas {
-    max-width: 100%;
-    height: auto;
-    display: block;
-}
-
-.sim-controls {
-    position: absolute;
-    bottom: 16px;
-    right: 16px;
-    display: flex;
-    gap: 8px;
-    z-index: 20;
-}
-
-.control-btn {
-    background: rgba(0, 0, 0, 0.7);
-    color: white;
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    border-radius: 6px;
-    padding: 8px 16px;
-    font-size: 14px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    transition: all 0.2s;
-}
-
-.control-btn:hover {
-    background: rgba(0, 0, 0, 0.85);
-    border-color: rgba(255, 255, 255, 0.5);
-}
-
-.viewport-target-btn {
-    position: absolute;
-    background: rgba(0, 0, 0, 0.7);
-    color: white;
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    border-radius: 4px;
-    padding: 4px 8px;
-    font-size: 12px;
-    cursor: pointer;
-    z-index: 15;
-    transition: all 0.2s;
-}
-
-.viewport-target-btn:hover {
-    background: rgba(0, 0, 0, 0.85);
-    border-color: rgba(255, 255, 255, 0.5);
-}
-
-.viewport-velocity-btn {
-    position: absolute;
-    background: rgba(0, 0, 0, 0.7);
-    color: white;
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    border-radius: 4px;
-    padding: 4px 8px;
-    font-size: 12px;
-    cursor: pointer;
-    z-index: 15;
-    transition: all 0.2s;
-    font-weight: bold;
-}
-
-.viewport-velocity-btn:hover {
-    background: rgba(0, 0, 0, 0.85);
-    border-color: rgba(255, 255, 255, 0.5);
-}
-
-.viewport-velocity-btn.disabled {
-    opacity: 0.5;
-    text-decoration: line-through;
-}
-
-.viewport-screenshot-btn {
-    position: absolute;
-    background: rgba(0, 0, 0, 0.7);
-    color: white;
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    border-radius: 4px;
-    padding: 4px 8px;
-    font-size: 12px;
-    cursor: pointer;
-    z-index: 15;
-    transition: all 0.2s;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.viewport-screenshot-btn:hover {
-    background: rgba(0, 0, 0, 0.85);
-    border-color: rgba(255, 255, 255, 0.5);
-}
-
-.viewport-screenshot-btn svg {
-    width: 14px;
-    height: 14px;
-}
-
-video {
-    display: none;
-}
-
-.countdown-overlay {
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    font-size: 120px;
-    font-weight: bold;
-    color: white;
-    text-shadow: 2px 2px 8px rgba(0,0,0,0.8);
-    z-index: 1000;
-    pointer-events: none;
-}
-    </style>
 </head>
 <nav></nav>
 <script src="https://charliemax.dev/js/lightmode.js"></script>
@@ -224,27 +21,12 @@ video {
         <canvas id="canvas"></canvas>
         <div class="camera-panel"></div>
         <div class="sim-controls">
-            <button id="uploadInkBtn" class="control-btn" title="Upload PNG image for ink mode">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                <polyline points="17 8 12 3 7 8"></polyline>
-                <line x1="12" y1="3" x2="12" y2="15"></line>
-            </svg>
-            Background
-            </button>
-            <button id="cheeseBtn" class="control-btn" title="Take picture from webcam (C)">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"></path>
-                    <circle cx="12" cy="13" r="3"></circle>
-                </svg>
-                [C]heese
-            </button>
             <button id="pauseBtn" class="control-btn" title="Pause simulation (P)">
                 <svg id="pauseBtnIcon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
                     <rect x="6" y="4" width="4" height="16" rx="1"></rect>
                     <rect x="14" y="4" width="4" height="16" rx="1"></rect>
                 </svg>
-                <span id="pauseBtnLabel">[P]ause</span>
+                <span id="pauseBtnLabel">[P]</span>
             </button>
             <button id="resetBtn" class="control-btn" title="Reset fluid and ink (R)">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -253,12 +35,35 @@ video {
                     <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
                     <path d="M3 21v-5h5"></path>
                 </svg>
-                [R]eset
+                [R]
+            </button>
+            <button id="cheeseBtn" class="control-btn" title="Take picture from webcam (C)">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"></path>
+                    <circle cx="12" cy="13" r="3"></circle>
+                </svg>
+                [C]
+            </button>
+            <button id="uploadInkBtn" class="control-btn" title="Upload PNG image for ink mode (U)">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="17 8 12 3 7 8"></polyline>
+                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+                [U]
             </button>
             <input type="file" id="inkImageInput" accept="image/png" hidden>
+            <button id="settingsBtn" class="control-btn" title="Settings (S)">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                </svg>
+                <span>[S]</span>
+            </button>
         </div>
     </div>
     <script src="katara.js"></script>
+    <script type="module" src="settings.js"></script>
     <script type="module" src="app.js"></script>
 </body>
 </html>

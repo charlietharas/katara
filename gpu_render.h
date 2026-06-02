@@ -73,6 +73,19 @@ struct alignas(16) UniformData {
     int entropyPad0;
     Vec4Float entropyHistory[16];
 
+    // Volume time series configuration + data (2 lines)
+    int volumeTimeSeriesEnabled;
+    int volumeTimeSeriesX;
+    int volumeTimeSeriesY;
+    int volumeTimeSeriesWidth;
+    int volumeTimeSeriesHeight;
+    float volumeHistoryMax;
+    int volumeHistoryCount;
+    int volumeHistoryWriteIndex;
+    int volumePad0;
+    Vec4Float volumeDomainHistory[16];
+    Vec4Float volumeMassHistory[16];
+
     // Histogram data
     float densityHistogramMin;
     float densityHistogramMax;
@@ -92,12 +105,15 @@ public:
     static constexpr int HISTOGRAM_FRAME_INTERVAL = 1; // compute histograms every n frames
     static constexpr float ENTROPY_EPSILON = 1e-6f;
     static constexpr int ENTROPY_HISTORY_SAMPLES = 64;
+    static constexpr int VOLUME_HISTORY_SAMPLES = 64;
+    static constexpr float VOLUME_DENSITY_SCALE = 1024.0f;
 
     GPURenderer(SDL_Window* window, const Config& config);
     ~GPURenderer();
 
     bool init(const Config& config) override;
     void render(const ISimulator& simulator) override;
+    void resetEntropyTimeSeries();
 private:
     SDL_Window* window;
     int windowWidth = 0, windowHeight = 0;
@@ -126,6 +142,12 @@ private:
     int entropyHistoryWriteIndex = 0;
     int entropyHistoryCount = 0;
     float entropyHistoryMax = 1.0f;
+
+    std::array<float, VOLUME_HISTORY_SAMPLES> volumeDomainHistory = {};
+    std::array<float, VOLUME_HISTORY_SAMPLES> volumeMassHistory = {};
+    int volumeHistoryWriteIndex = 0;
+    int volumeHistoryCount = 0;
+    float volumeHistoryMax = 1.0f;
 
     // webgpu core
     WGPUInstance instance = nullptr;

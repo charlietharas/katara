@@ -82,6 +82,8 @@ struct HistogramSlot {
     float pendingPressureMinMax[2];
     float pendingVelocityMinMax[2];
     float pendingDensityMinMax[2];
+    uint32_t pendingDensitySumScaled;
+    uint32_t pendingFluidCellCount;
     int pendingHistogramBins[128];
 };
 
@@ -118,7 +120,15 @@ public:
 
     // histogram data access (for renderer)
     static const int HISTOGRAM_RING_SIZE = 4;
-    bool getHistogramData(int& readySlot, const float*& pressureMinMax, const float*& velocityMinMax, const float*& densityMinMax, const int*& histogramBins) const;
+    bool getHistogramData(
+        int& readySlot,
+        const float*& pressureMinMax,
+        const float*& velocityMinMax,
+        const float*& densityMinMax,
+        const int*& histogramBins,
+        uint32_t& densitySumScaled,
+        uint32_t& fluidCellCount
+    ) const;
     void advanceHistogramReadIndex() const;
 
 private:

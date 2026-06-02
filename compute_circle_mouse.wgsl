@@ -90,11 +90,13 @@ fn updateCircle(@builtin(global_invocation_id) id: vec3<u32>) {
             vel.y + momentumY
         );
 
-        let maxVel = 8.0;
-        vel = vec2<f32>(
-            clamp(newVel.x, -maxVel, maxVel),
-            clamp(newVel.y, -maxVel, maxVel)
-        );
+        // disable velocity clamping
+        // let maxVel = 8.0;
+        // vel = vec2<f32>(
+        //     clamp(newVel.x, -maxVel, maxVel),
+        //     clamp(newVel.y, -maxVel, maxVel)
+        // );
+        vel = newVel;
     }
 
     if (isInCircle) {

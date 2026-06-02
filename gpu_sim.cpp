@@ -688,13 +688,15 @@ void GPUSimulator::dispatchPressureMinMax(int slotIndex) {
     // reinitialize with +/- inf
     const float positiveInf = std::numeric_limits<float>::infinity();
     const float negativeInf = -std::numeric_limits<float>::infinity();
-    uint32_t initialMinMax[6] = {
+    uint32_t initialMinMax[8] = {
         floatToOrderedUint(positiveInf),
         floatToOrderedUint(negativeInf),
         floatToOrderedUint(positiveInf),
         floatToOrderedUint(negativeInf),
         floatToOrderedUint(positiveInf),
-        floatToOrderedUint(negativeInf)
+        floatToOrderedUint(negativeInf),
+        0u, // densitySumScaled
+        0u  // fluidCellCount
     };
     wgpuQueueWriteBuffer(queue, slot.minMaxBuffer, 0, initialMinMax, sizeof(initialMinMax));
 
@@ -703,7 +705,7 @@ void GPUSimulator::dispatchPressureMinMax(int slotIndex) {
     minMaxEntries[1] = createTextureViewBindGroupEntry(1, pressureTextureView);
     minMaxEntries[2] = createTextureViewBindGroupEntry(2, velocityTextureView);
     minMaxEntries[3] = createTextureViewBindGroupEntry(3, solidTextureView);
-    minMaxEntries[4] = createStorageBufferBindGroupEntry(4, slot.minMaxBuffer, 6 * sizeof(uint32_t));
+    minMaxEntries[4] = createStorageBufferBindGroupEntry(4, slot.minMaxBuffer, 8 * sizeof(uint32_t));
     minMaxEntries[5] = createTextureViewBindGroupEntry(5, densityTextureView);
 
     if (slot.bindGroupMinMax) {
@@ -717,7 +719,7 @@ void GPUSimulator::dispatchPressureMinMax(int slotIndex) {
     desc.bindGroup = slot.bindGroupMinMax;
     desc.srcBuffer = slot.minMaxBuffer;
     desc.stagingBuffer = slot.minMaxStagingBuffer;
-    desc.stagingBufferSize = 6 * sizeof(uint32_t);
+    desc.stagingBufferSize = 8 * sizeof(uint32_t);
     desc.label = "Histogram MinMax";
     desc.slotIndex = slotIndex;
     desc.simulator = this;
@@ -735,7 +737,7 @@ void GPUSimulator::dispatchPressureMinMax(int slotIndex) {
     };
     mapCallbackInfo.userdata1 = this;
     mapCallbackInfo.userdata2 = reinterpret_cast<void*>(static_cast<intptr_t>(slotIndex));
-    wgpuBufferMapAsync(slot.minMaxStagingBuffer, WGPUMapMode_Read, 0, 6 * sizeof(uint32_t), mapCallbackInfo);
+    wgpuBufferMapAsync(slot.minMaxStagingBuffer, WGPUMapMode_Read, 0, 8 * sizeof(uint32_t), mapCallbackInfo);
 #else
     WGPUBufferMapCallbackInfo2 mapCallbackInfo = {};
     mapCallbackInfo.mode = WGPUCallbackMode_AllowProcessEvents;
@@ -747,7 +749,7 @@ void GPUSimulator::dispatchPressureMinMax(int slotIndex) {
     };
     mapCallbackInfo.userdata1 = this;
     mapCallbackInfo.userdata2 = reinterpret_cast<void*>(static_cast<intptr_t>(slotIndex));
-    wgpuBufferMapAsync2(slot.minMaxStagingBuffer, WGPUMapMode_Read, 0, 6 * sizeof(uint32_t), mapCallbackInfo);
+    wgpuBufferMapAsync2(slot.minMaxStagingBuffer, WGPUMapMode_Read, 0, 8 * sizeof(uint32_t), mapCallbackInfo);
 #endif
 }
 
@@ -756,7 +758,7 @@ void GPUSimulator::onMinMaxMapped(WGPUMapAsyncStatus status, int slotIndex) {
 
     if (status == WGPUMapAsyncStatus_Success) {
         const uint32_t* data = static_cast<const uint32_t*>(
-            wgpuBufferGetConstMappedRange(slot.minMaxStagingBuffer, 0, 6 * sizeof(uint32_t))
+            wgpuBufferGetConstMappedRange(slot.minMaxStagingBuffer, 0, 8 * sizeof(uint32_t))
         );
 
         if (data) {
@@ -766,6 +768,8 @@ void GPUSimulator::onMinMaxMapped(WGPUMapAsyncStatus status, int slotIndex) {
             slot.pendingVelocityMinMax[1] = orderedUintToFloat(data[3]);  // velMax
             slot.pendingDensityMinMax[0] = orderedUintToFloat(data[4]);   // densityMin
             slot.pendingDensityMinMax[1] = orderedUintToFloat(data[5]);   // densityMax
+            slot.pendingDensitySumScaled = data[6];
+            slot.pendingFluidCellCount = data[7];
         }
 
         wgpuBufferUnmap(slot.minMaxStagingBuffer);
@@ -876,7 +880,15 @@ void GPUSimulator::onHistogramBinsMapped(WGPUMapAsyncStatus status, int slotInde
     }
 }
 
-bool GPUSimulator::getHistogramData(int& readySlot, const float*& pressureMinMax, const float*& velocityMinMax, const float*& densityMinMax, const int*& histogramBins) const {
+bool GPUSimulator::getHistogramData(
+    int& readySlot,
+    const float*& pressureMinMax,
+    const float*& velocityMinMax,
+    const float*& densityMinMax,
+    const int*& histogramBins,
+    uint32_t& densitySumScaled,
+    uint32_t& fluidCellCount
+) const {
     // find the most recent ready slot
     for (int i = 0; i < HISTOGRAM_RING_SIZE; i++) {
         int checkIdx = (histogramReadIndex + i) % HISTOGRAM_RING_SIZE;
@@ -887,6 +899,8 @@ bool GPUSimulator::getHistogramData(int& readySlot, const float*& pressureMinMax
             velocityMinMax = slot.pendingVelocityMinMax;
             densityMinMax = slot.pendingDensityMinMax;
             histogramBins = slot.pendingHistogramBins;
+            densitySumScaled = slot.pendingDensitySumScaled;
+            fluidCellCount = slot.pendingFluidCellCount;
             return true;
         }
     }
@@ -993,14 +1007,14 @@ bool GPUSimulator::initTextures() {
         auto& slot = histogramSlots[i];
 
         WGPUBufferDescriptor minMaxBufferDesc = {};
-        minMaxBufferDesc.size = 6 * sizeof(uint32_t);
+        minMaxBufferDesc.size = 8 * sizeof(uint32_t);
         minMaxBufferDesc.usage = WGPUBufferUsage_Storage | WGPUBufferUsage_CopySrc | WGPUBufferUsage_CopyDst;
         minMaxBufferDesc.mappedAtCreation = true;
         slot.minMaxBuffer = wgpuDeviceCreateBuffer(device, &minMaxBufferDesc);
         if (!slot.minMaxBuffer) return false;
 
         // initialize with +/- inf
-        uint32_t* mappedData = static_cast<uint32_t*>(wgpuBufferGetMappedRange(slot.minMaxBuffer, 0, 6 * sizeof(uint32_t)));
+        uint32_t* mappedData = static_cast<uint32_t*>(wgpuBufferGetMappedRange(slot.minMaxBuffer, 0, 8 * sizeof(uint32_t)));
         const float positiveInf = std::numeric_limits<float>::infinity();
         const float negativeInf = -std::numeric_limits<float>::infinity();
         mappedData[0] = floatToOrderedUint(positiveInf);
@@ -1009,9 +1023,11 @@ bool GPUSimulator::initTextures() {
         mappedData[3] = floatToOrderedUint(negativeInf);
         mappedData[4] = floatToOrderedUint(positiveInf);
         mappedData[5] = floatToOrderedUint(negativeInf);
+        mappedData[6] = 0u; // densitySumScaled
+        mappedData[7] = 0u; // fluidCellCount
         wgpuBufferUnmap(slot.minMaxBuffer);
 
-        slot.minMaxStagingBuffer = createBuffer(6 * sizeof(uint32_t), WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst);
+        slot.minMaxStagingBuffer = createBuffer(8 * sizeof(uint32_t), WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst);
         RETURN_FALSE_IF_FAIL(slot.minMaxStagingBuffer);
 
         slot.histogramBinBuffer = createBuffer(128 * sizeof(int32_t), WGPUBufferUsage_Storage | WGPUBufferUsage_CopySrc | WGPUBufferUsage_CopyDst);
@@ -1276,7 +1292,7 @@ bool GPUSimulator::initPipelineLayouts() {
     pressureMinMaxEntries[1] = createStorageTextureLayoutEntry(1, WGPUStorageTextureAccess_ReadOnly, WGPUTextureFormat_R32Float);
     pressureMinMaxEntries[2] = createStorageTextureLayoutEntry(2, WGPUStorageTextureAccess_ReadOnly, WGPUTextureFormat_RG32Float);
     pressureMinMaxEntries[3] = createStorageTextureLayoutEntry(3, WGPUStorageTextureAccess_ReadOnly, WGPUTextureFormat_R32Float);
-    pressureMinMaxEntries[4] = createStorageBufferLayoutEntry(4, 6 * sizeof(uint32_t));
+    pressureMinMaxEntries[4] = createStorageBufferLayoutEntry(4, 8 * sizeof(uint32_t));
     pressureMinMaxEntries[5] = createStorageTextureLayoutEntry(5, WGPUStorageTextureAccess_ReadOnly, WGPUTextureFormat_R32Float);
 
     pressureMinMaxBindGroupLayout = createBindGroupLayout(6, pressureMinMaxEntries);
@@ -1521,6 +1537,18 @@ void GPUSimulator::updateSimParams(const Config& config) {
     momentumTransferStrength = config.simulation.circle.momentumTransferStrength;
     momentumTransferRadius = config.simulation.circle.momentumTransferRadius;
     momentumTransferDeadZone = config.simulation.circle.momentumTransferDeadZone;
+
+    // Circle radius is specified in world units in config; convert to grid units used by shaders.
+#ifdef ENABLE_MOUSE_INPUT
+    circleRadius = static_cast<int>(config.simulation.circle.radius / cpuSimulator.cellSize);
+#else
+    baseCircleRadius = static_cast<int>(config.simulation.circle.radius / cpuSimulator.cellSize);
+    // Keep per-circle radii in sync immediately (otherwise user won't see changes until next detection event).
+    for (int i = 0; i < HandTracking::MAX_CIRCLES; i++) {
+        circles[i].scaledRadius = baseCircleRadius;
+    }
+#endif
+
     // Update stored config pointer — updateUniformBufferSim() reads from this each frame
     this->config = &config;
 }

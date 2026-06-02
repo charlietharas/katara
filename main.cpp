@@ -99,6 +99,7 @@ LoadedImage loadImage(const std::string& path) {
 #ifdef __EMSCRIPTEN__
 
 static bool g_simulationPaused = false;
+static IRenderer* g_renderer = nullptr;
 
 struct MainLoopState {
     ISimulator* simulator;
@@ -239,6 +240,13 @@ extern "C" {
             return;
         }
 
+        if (g_renderer) {
+            // entropy time series is drawn from renderer-side history
+            if (g_config.pipeline != PipelineType::CPU) {
+                static_cast<GPURenderer*>(g_renderer)->resetEntropyTimeSeries();
+            }
+        }
+
         if (!g_config.ink.imagePath.empty()) {
             LoadedImage img = loadImage(g_config.ink.imagePath);
             if (img.imageData) {
@@ -254,7 +262,7 @@ extern "C" {
         std::cout << "Fluid field reset" << std::endl;
     }
 
-    // Set viewport target by index (0=viewport_1, 1=viewport_2, 2=viewport_3)
+    // Set viewport target by index (0=viewport_1, 1=viewport_2, ...)
     // target: 0=pressure, 1=smoke, 2=both, 3=ink, 4=divergence, 5=heatmap, 6=normals, 7=threshold+bloom
     EMSCRIPTEN_KEEPALIVE
     void setViewportTarget(int viewportIndex, int target) {
@@ -268,7 +276,7 @@ extern "C" {
         }
     }
 
-    // Set viewport velocity enabled by index (0=viewport_1, 1=viewport_2, 2=viewport_3)
+    // Set viewport velocity enabled by index (0=viewport_1, 1=viewport_2, ...)
     // enabled: 0=disabled, 1=enabled
     EMSCRIPTEN_KEEPALIVE
     void setViewportVelocity(int viewportIndex, int enabled) {
@@ -439,6 +447,7 @@ int main(int argc, char** argv) {
 #ifndef ENABLE_MOUSE_INPUT
     setSimulatorPointer(simulator.get());
 #endif
+    g_renderer = renderer.get();
     MainLoopState state{simulator.get(), renderer.get(), window, &running, windowWidth, windowHeight};
     emscripten_set_main_loop_arg(mainLoopCallback, &state, 0, true);
 #else

@@ -13,7 +13,7 @@
         "edges": 15,
         "projection": {
             "overrelaxationCoefficient": 1.0,
-            "iterations": 200
+            "iterations": 1000
         },
         "vorticity": {
             "enabled": true,
@@ -28,8 +28,8 @@
         },
         "circle": {
             "radius": 0.02,
-            "momentumTransferStrength": 40,
-            "momentumTransferRadius": 2.5,
+            "momentumTransferStrength": 5,
+            "momentumTransferRadius": 1,
             "zScaling": {
                 "zMin": -0.1,
                 "zMax": 0.1,
@@ -39,7 +39,7 @@
             "handSmoothingAlphaLow": 0.15,
             "handSmoothingAlphaHigh": 0.7,
             "handSpeedThreshold": 5.0,
-            "momentumTransferDeadZone": 5.0
+            "momentumTransferDeadZone": 10.0
         }
     },
     "rendering": {
@@ -52,6 +52,9 @@
         "imagePath": "/img1.png"
     },
     "layout": {
+        "preset": "default",
+        "labelsEnabled": true,
+        "buttonsEnabled": true,
         "components": {
             "camera_frame": {
                 "x": 0, "y": 0.25, "w": 0.25, "h": 0.25,
@@ -72,6 +75,11 @@
                 "px": 5, "py": 5,
                 "target": 0
             },
+            "viewport_4": {
+                "x": 0.0, "y": 0.0, "w": 0.5, "h": 0.5,
+                "px": 5, "py": 5,
+                "target": 1
+            },
             "density_histogram": {
                 "x": 0.0, "y": 0.0, "w": 0.25, "h": 0.25,
                 "px": 5, "py": 5,
@@ -84,6 +92,11 @@
             },
             "entropy_time_series": {
                 "x": 0.0, "y": 0.0, "w": 0.25, "h": 0.25,
+                "px": 5, "py": 5,
+                "enabled": true
+            },
+            "volume_time_series": {
+                "x": 0.25, "y": 0.25, "w": 0.25, "h": 0.25,
                 "px": 5, "py": 5,
                 "enabled": true
             }

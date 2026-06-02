@@ -49,6 +49,19 @@ struct UniformData {
     entropyPad0: i32,
     entropyHistory: array<vec4<f32>, 16>,
 
+    // Volume time series configuration + data (2 lines)
+    volumeTimeSeriesEnabled: i32,
+    volumeTimeSeriesX: i32,
+    volumeTimeSeriesY: i32,
+    volumeTimeSeriesWidth: i32,
+    volumeTimeSeriesHeight: i32,
+    volumeHistoryMax: f32,
+    volumeHistoryCount: i32,
+    volumeHistoryWriteIndex: i32,
+    volumePad0: i32,
+    volumeDomainHistory: array<vec4<f32>, 16>,
+    volumeMassHistory: array<vec4<f32>, 16>,
+
     // Histogram data
     densityHistogramMin: f32,
     densityHistogramMax: f32,
@@ -72,22 +85,26 @@ struct UniformData {
 // TODO MAIN -- WIP ^_^
 // we in the browser baby
 
-// TODO WIP design full interface with control panel, several views, live view changing (e.g. pretty/smoke/density), config refreshing, etc.
-// - config editing
-// - more visualization options (consider combined overlay of fluid over camera canvas, etc.)
-
-// TODO overall hand stability just not giving the UX I want, want smoother displacement of fluid
-// - can we use velocity to "eject" existing fluid out of the way? can we manually override and "teleport" fluid out of the way? investigate momentum transfer?
-// - !! can we just nullify all keypoint movements below a certain threshold? [NEXT]
+// TODO overall hand stability just not giving the UX I want, want smoother displacement of fluid [WIP]
+// - at a pretty good place with this given customizability, should just tune default values
+// ? consider scaling up pressure solver iterations when motion is detected (& several timesteps after)
 
 // TODO new two handed control system (with left-handed toggle)
 // - control panel
+// TODO toggle camera input; restore mouse as control option
+
+// TODO info pane
 
 // TODO gravity basically broken
 
 // TODO big cleanup: test, unify, and document codebase, particularly build steps + config (& generally simplify flow of data/modularize)
+//  - fix outdated config stuff (e.g. rendering vs layout)
+//  - python script for modifying simParams struct uniformly
 // TODO unify cpu and gpu stuff
-// TODO python script for modifying simParams struct uniformly
+// TODO rebuild desktop version, test sth basic still works
+// TODO writeup html file; interactive architectural diagram
+
+// TODO LATER custom renderer??
 
 /*
 // TODO examine differences in pressure/velocity histograms between GPU/CPU
@@ -350,6 +367,28 @@ fn entropyHistorySample(sampleIndex: i32) -> f32 {
     return packed.w;
 }
 
+fn volumeDomainSample(sampleIndex: i32) -> f32 {
+    let clampedIndex = clamp(sampleIndex, 0, 63);
+    let vecIndex = clampedIndex / 4;
+    let component = clampedIndex % 4;
+    let packed = uniforms.volumeDomainHistory[vecIndex];
+    if (component == 0) { return packed.x; }
+    if (component == 1) { return packed.y; }
+    if (component == 2) { return packed.z; }
+    return packed.w;
+}
+
+fn volumeMassSample(sampleIndex: i32) -> f32 {
+    let clampedIndex = clamp(sampleIndex, 0, 63);
+    let vecIndex = clampedIndex / 4;
+    let component = clampedIndex % 4;
+    let packed = uniforms.volumeMassHistory[vecIndex];
+    if (component == 0) { return packed.x; }
+    if (component == 1) { return packed.y; }
+    if (component == 2) { return packed.z; }
+    return packed.w;
+}
+
 fn drawEntropyIndicator(pixelCoord: vec2<f32>) -> vec4<f32> {
     if (uniforms.entropyTimeSeriesEnabled == 0) {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
@@ -374,16 +413,10 @@ fn drawEntropyIndicator(pixelCoord: vec2<f32>) -> vec4<f32> {
         return vec4<f32>(border, 1.0);
     }
 
-    if (localY < 13.0) {
-        let headerMix = clamp(localX / max(1.0, panelWidth), 0.0, 1.0);
-        result = vec3<f32>(0.15 + 0.08 * headerMix, 0.18, 0.24 + 0.10 * headerMix);
-        return vec4<f32>(result, 1.0);
-    }
-
-    let innerX = localX - 9.0;
-    let innerY = localY - 16.0;
-    let innerWidth = panelWidth - 18.0;
-    let innerHeight = panelHeight - 25.0;
+    let innerX = localX - 1.0;
+    let innerY = localY - 1.0;
+    let innerWidth = panelWidth - 2.0;
+    let innerHeight = panelHeight - 2.0;
     if (innerWidth <= 1.0 || innerHeight <= 1.0 ||
         innerX < 0.0 || innerX >= innerWidth || innerY < 0.0 || innerY >= innerHeight) {
         return vec4<f32>(result, 1.0);
@@ -395,26 +428,32 @@ fn drawEntropyIndicator(pixelCoord: vec2<f32>) -> vec4<f32> {
     }
 
     let oldestIndex = select(0, uniforms.entropyHistoryWriteIndex, sampleCount == 64);
-    let threshold = clamp(uniforms.entropyThreshold, 0.0, 1.0);
-    let thresholdY = (1.0 - threshold) * innerHeight;
-    if (abs(innerY - thresholdY) <= 1.0) {
-        result = vec3<f32>(0.85, 0.85, 0.9);
-    }
-
     let normalizedX = clamp(innerX / max(1.0, innerWidth - 1.0), 0.0, 1.0);
     let samplePos = normalizedX * f32(sampleCount - 1);
-    let indexLow = i32(floor(samplePos));
-    let indexHigh = min(sampleCount - 1, indexLow + 1);
-    let frac = samplePos - f32(indexLow);
+    let baseIndex = i32(floor(samplePos));
 
-    let ringLow = (oldestIndex + indexLow) % 64;
-    let ringHigh = (oldestIndex + indexHigh) % 64;
-    let entropyLow = entropyHistorySample(ringLow);
-    let entropyHigh = entropyHistorySample(ringHigh);
-    let entropyValue = mix(entropyLow, entropyHigh, frac);
-    let lineY = (1.0 - clamp(entropyValue, 0.0, 1.0)) * innerHeight;
+    var entropyMinDist = 1e9;
+    for (var offset = -1; offset <= 1; offset++) {
+        let segStart = clamp(baseIndex + offset, 0, sampleCount - 2);
+        let segEnd = segStart + 1;
 
-    if (abs(innerY - lineY) <= 1.9) {
+        let ringStart = (oldestIndex + segStart) % 64;
+        let ringEnd = (oldestIndex + segEnd) % 64;
+
+        let yStart = (1.0 - clamp(entropyHistorySample(ringStart), 0.0, 1.0)) * innerHeight;
+        let yEnd = (1.0 - clamp(entropyHistorySample(ringEnd), 0.0, 1.0)) * innerHeight;
+        let xStart = (f32(segStart) / f32(sampleCount - 1)) * (innerWidth - 1.0);
+        let xEnd = (f32(segEnd) / f32(sampleCount - 1)) * (innerWidth - 1.0);
+
+        let dist = distanceToLineSegment(
+            vec2<f32>(innerX, innerY),
+            vec2<f32>(xStart, yStart),
+            vec2<f32>(xEnd, yEnd)
+        );
+        entropyMinDist = min(entropyMinDist, dist);
+    }
+
+    if (entropyMinDist <= 2.1) {
         result = vec3<f32>(0.20, 0.72, 0.98);
     }
 
@@ -426,11 +465,105 @@ fn drawEntropyIndicator(pixelCoord: vec2<f32>) -> vec4<f32> {
         result = vec3<f32>(0.92, 0.96, 1.0);
     }
 
-    if (uniforms.entropyAboveThreshold != 0) {
-        let glowRadius = max(8.0, innerHeight * 0.22);
-        let glow = uniforms.entropyBloomStrength * exp(-(pointDist * pointDist) / (glowRadius * glowRadius));
-        result += vec3<f32>(1.0, 0.35, 0.16) * glow;
-        result = clamp(result, vec3<f32>(0.0), vec3<f32>(1.0));
+    return vec4<f32>(result, 1.0);
+}
+
+fn drawVolumeTimeSeries(pixelCoord: vec2<f32>) -> vec4<f32> {
+    if (uniforms.volumeTimeSeriesEnabled == 0) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+
+    let panelX = f32(uniforms.volumeTimeSeriesX);
+    let panelY = f32(uniforms.volumeTimeSeriesY);
+    let panelWidth = f32(uniforms.volumeTimeSeriesWidth);
+    let panelHeight = f32(uniforms.volumeTimeSeriesHeight);
+    if (!(pixelCoord.x >= panelX && pixelCoord.x < panelX + panelWidth &&
+          pixelCoord.y >= panelY && pixelCoord.y < panelY + panelHeight)) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+
+    let localX = pixelCoord.x - panelX;
+    let localY = pixelCoord.y - panelY;
+    let bg = vec3<f32>(28.0 / 255.0, 28.0 / 255.0, 32.0 / 255.0);
+    let border = vec3<f32>(200.0 / 255.0, 200.0 / 255.0, 210.0 / 255.0);
+    var result = bg;
+
+    if (localX < 1.0 || localX >= panelWidth - 1.0 || localY < 1.0 || localY >= panelHeight - 1.0) {
+        return vec4<f32>(border, 1.0);
+    }
+
+    let innerX = localX - 1.0;
+    let innerY = localY - 1.0;
+    let innerWidth = panelWidth - 2.0;
+    let innerHeight = panelHeight - 2.0;
+    if (innerWidth <= 1.0 || innerHeight <= 1.0 ||
+        innerX < 0.0 || innerX >= innerWidth || innerY < 0.0 || innerY >= innerHeight) {
+        return vec4<f32>(result, 1.0);
+    }
+
+    let sampleCount = clamp(uniforms.volumeHistoryCount, 0, 64);
+    if (sampleCount <= 1) {
+        return vec4<f32>(result, 1.0);
+    }
+
+    let maxVal = max(1e-6, uniforms.volumeHistoryMax);
+    let oldestIndex = select(0, uniforms.volumeHistoryWriteIndex, sampleCount == 64);
+
+    let normalizedX = clamp(innerX / max(1.0, innerWidth - 1.0), 0.0, 1.0);
+    let samplePos = normalizedX * f32(sampleCount - 1);
+    let baseIndex = i32(floor(samplePos));
+
+    var domMinDist = 1e9;
+    var massMinDist = 1e9;
+    for (var offset = -1; offset <= 1; offset++) {
+        let segStart = clamp(baseIndex + offset, 0, sampleCount - 2);
+        let segEnd = segStart + 1;
+
+        let ringStart = (oldestIndex + segStart) % 64;
+        let ringEnd = (oldestIndex + segEnd) % 64;
+
+        let xStart = (f32(segStart) / f32(sampleCount - 1)) * (innerWidth - 1.0);
+        let xEnd = (f32(segEnd) / f32(sampleCount - 1)) * (innerWidth - 1.0);
+
+        let domYStart = (1.0 - clamp(volumeDomainSample(ringStart) / maxVal, 0.0, 1.0)) * innerHeight;
+        let domYEnd = (1.0 - clamp(volumeDomainSample(ringEnd) / maxVal, 0.0, 1.0)) * innerHeight;
+        let domDist = distanceToLineSegment(
+            vec2<f32>(innerX, innerY),
+            vec2<f32>(xStart, domYStart),
+            vec2<f32>(xEnd, domYEnd)
+        );
+        domMinDist = min(domMinDist, domDist);
+
+        let massYStart = (1.0 - clamp(volumeMassSample(ringStart) / maxVal, 0.0, 1.0)) * innerHeight;
+        let massYEnd = (1.0 - clamp(volumeMassSample(ringEnd) / maxVal, 0.0, 1.0)) * innerHeight;
+        let massDist = distanceToLineSegment(
+            vec2<f32>(innerX, innerY),
+            vec2<f32>(xStart, massYStart),
+            vec2<f32>(xEnd, massYEnd)
+        );
+        massMinDist = min(massMinDist, massDist);
+    }
+
+    if (domMinDist <= 2.0) {
+        result = vec3<f32>(0.70, 0.72, 0.78); // domain volume (muted)
+    }
+    if (massMinDist <= 2.0) {
+        result = vec3<f32>(0.16, 0.92, 0.55); // smoke mass (bright)
+    }
+
+    let latestIndex = (uniforms.volumeHistoryWriteIndex + 63) % 64;
+    let latestDom = volumeDomainSample(latestIndex);
+    let latestMass = volumeMassSample(latestIndex);
+    let latestDomY = (1.0 - clamp(latestDom / maxVal, 0.0, 1.0)) * innerHeight;
+    let latestMassY = (1.0 - clamp(latestMass / maxVal, 0.0, 1.0)) * innerHeight;
+
+    let domPointDist = distance(vec2<f32>(innerX, innerY), vec2<f32>(innerWidth - 1.0, latestDomY));
+    if (domPointDist <= 2.0) {
+        result = vec3<f32>(0.92, 0.94, 0.98);
+    }
+    let massPointDist = distance(vec2<f32>(innerX, innerY), vec2<f32>(innerWidth - 1.0, latestMassY));
+    if (massPointDist <= 2.0) {
+        result = vec3<f32>(0.92, 0.98, 0.92);
     }
 
     return vec4<f32>(result, 1.0);
@@ -439,6 +572,11 @@ fn drawEntropyIndicator(pixelCoord: vec2<f32>) -> vec4<f32> {
 fn drawHistograms(pixelCoord: vec2<f32>) -> vec4<f32> {
     if (uniforms.disableHistograms != 0) {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+
+    let volumeIndicator = drawVolumeTimeSeries(pixelCoord);
+    if (volumeIndicator.a > 0.0) {
+        return volumeIndicator;
     }
 
     let entropyIndicator = drawEntropyIndicator(pixelCoord);
