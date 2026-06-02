@@ -92,6 +92,7 @@ public:
 protected:
     // sim steps
     void integrate();
+    void updateProjectionIterations();
     void project();
     void extrapolate();
     void advect();

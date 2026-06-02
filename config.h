@@ -11,45 +11,51 @@
 using json = nlohmann::json;
 
 struct WindowConfig {
-    int baseSize = 800;
-    int defaultWidth = 1200;
-    int defaultHeight = 800;
+    int baseSize;
+    int defaultWidth;
+    int defaultHeight;
 };
 
 struct ProjectionConfig {
-    float overrelaxationCoefficient = 1.9f;
-    int iterations = 40;
+    float overrelaxationCoefficient;
+    int iterations;
+
+    // Auto-scaling parameters
+    bool autoScaleIterations;
+    int motionScaleIterations;
+    int motionCooldownFrames;
+    float motionThreshold;
 };
 
 struct VorticityConfig {
-    bool enabled = true;
-    float strength = 10.0f;
-    float lengthScale = 5.0f;
+    bool enabled;
+    float strength;
+    float lengthScale;
 };
 
 struct WindTunnelConfig {
-    int side = 0; // -1=disabled, 0=left, 1=top, 2=bottom, 3=right
-    float startPosition = 0.45f;
-    float endPosition = 0.55f;
-    float velocity = 1.5f;
+    int side; // -1=disabled, 0=left, 1=top, 2=bottom, 3=right
+    float startPosition;
+    float endPosition;
+    float velocity;
 };
 
 struct CircleConfig {
-    float radius = 0.1f;
-    float momentumTransferStrength = 0.25f;
-    float momentumTransferRadius = 1.0f;
+    float radius;
+    float momentumTransferStrength;
+    float momentumTransferRadius;
 
     // z-coordinate scaling for depth-based radius
-    float zMin = -0.1f;      // closest hand
-    float zMax = 0.1f;       // farthest hand
-    float scaleMin = 2.0f;   // max scale when closest
-    float scaleMax = 0.5f;   // min scale when furthest
+    float zMin;      // closest hand
+    float zMax;       // farthest hand
+    float scaleMin;   // max scale when closest
+    float scaleMax;   // min scale when furthest
 
     // velocity-adaptive smoothing for hand jitter reduction
-    float handSmoothingAlphaLow = 0.05f;
-    float handSmoothingAlphaHigh = 0.5f;
-    float handSpeedThreshold = 5.0f;
-    float momentumTransferDeadZone = 1.0f;
+    float handSmoothingAlphaLow;
+    float handSmoothingAlphaHigh;
+    float handSpeedThreshold;
+    float momentumTransferDeadZone;
 };
 
 enum class PipelineType {
@@ -59,11 +65,11 @@ enum class PipelineType {
 };
 
 struct SimulationConfig {
-    int resolution = 100;
-    float timestep = 1.0f / 60.0f;
-    float gravity = 0.0f;
-    float fluidDensity = 1000.0f;
-    int edges = 15; // 4-bit mask: left(8), top(4), bottom(2), right(1)
+    int resolution;
+    float timestep;
+    float gravity;
+    float fluidDensity;
+    int edges; // 4-bit mask: left(8), top(4), bottom(2), right(1)
     ProjectionConfig projection;
     VorticityConfig vorticity;
     WindTunnelConfig windTunnel;
@@ -72,35 +78,36 @@ struct SimulationConfig {
 
 struct RenderingConfig {
     // 0=pressure, 1=smoke, 2=both(pretty), 3=ink, 4=divergence, 5=heatmap, 6=normals, 7=threshold+bloom
-    int target = 2;
-    bool showVelocityVectors = false;
-    bool disableHistograms = false;
-    float velocityScale = 0.05f;
+    int target;
+    bool showVelocityVectors;
+    bool disableHistograms;
+    float velocityScale;
 };
 
 struct InkConfig {
-    std::string imagePath = "";
+    std::string imagePath;
 };
 
 struct ComponentBBox {
-    float x = 0.0f;     // normalized [0,1]
-    float y = 0.0f;
-    float w = 0.5f;
-    float h = 0.5f;
-    int px = 0;          // horizontal padding (raw px)
-    int py = 0;          // vertical padding (raw px)
+    float x;     // normalized [0,1]
+    float y;
+    float w;
+    float h;
+    int px;          // horizontal padding (raw px)
+    int py;          // vertical padding (raw px)
     // render target (viewports: 0=pressure,1=smoke,2=both,3=ink,4=divergence,5=heatmap,6=normals,7=threshold+bloom)
-    int target = 2;
-    bool enabled = true; // enabled flag (histograms)
-    bool velocity = false; // show velocity vectors (viewports)
+    int target;
+    bool enabled; // enabled flag (histograms)
+    bool velocity; // show velocity vectors (viewports)
 };
 
 struct PixelRect {
-    int x = 0, y = 0, width = 0, height = 0;
+    int x, y, width, height;
 };
 
 struct LayoutConfig {
-    std::string preset = "default";
+    std::string preset;
+    bool camerasEnabled = true;
     std::map<std::string, ComponentBBox> components;
 };
 
@@ -111,7 +118,7 @@ struct LayoutPixels {
 extern LayoutPixels g_layoutPixels;
 
 struct Config {
-    PipelineType pipeline = PipelineType::CPU;
+    PipelineType pipeline;
     WindowConfig window;
     SimulationConfig simulation;
     RenderingConfig rendering;

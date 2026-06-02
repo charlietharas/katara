@@ -276,6 +276,12 @@ void Simulator::updateCircles(const FingertipData* fingertips, int count) {
             circle.velX = alpha * instantVelX + (1.0f - alpha) * circle.velX;
             circle.velY = alpha * instantVelY + (1.0f - alpha) * circle.velY;
 
+            // Motion detection for adaptive solver
+            float velocityMagnitude = std::sqrt(circle.velX * circle.velX + circle.velY * circle.velY);
+            if (velocityMagnitude > config->simulation.projection.motionThreshold) {
+                motionDetected = true;
+            }
+
             updateSingleCircle(circle);
         } else {
             if (circle.wasPresent) {
@@ -474,7 +480,28 @@ void Simulator::updateLineSegmentSolidField(LineSegment& seg) {
 }
 #endif
 
+void Simulator::updateProjectionIterations() {
+    if (!config->simulation.projection.autoScaleIterations) {
+        effectiveProjectionIters = config->simulation.projection.iterations;
+        return;
+    }
+
+    if (motionDetected) {
+        motionCooldownFrames = config->simulation.projection.motionCooldownFrames;
+        effectiveProjectionIters = config->simulation.projection.motionScaleIterations;
+    } else if (motionCooldownFrames > 0) {
+        motionCooldownFrames--;
+        effectiveProjectionIters = config->simulation.projection.motionScaleIterations;
+    } else {
+        effectiveProjectionIters = config->simulation.projection.iterations;
+    }
+
+    motionDetected = false;
+}
+
 void Simulator::update() {
+    updateProjectionIterations();
+
     // base steps
     if (gravity != 0.0f) { 
         integrate();
@@ -502,7 +529,7 @@ void Simulator::project() {
     std::fill(p.begin(), p.end(), 0.0f);
 
     // Gauss-Seidel projection
-    for (int n = 0; n < projectionIters; n++) {
+    for (int n = 0; n < static_cast<int>(effectiveProjectionIters); n++) {
         for (int i = 1; i < gridX - 1; i++) {
             for (int j = 1; j < gridY - 1; j++) {
                 if (s[idx(i, j)] == 0.0f) continue;
@@ -722,6 +749,12 @@ void Simulator::moveCircle(int newGridX, int newGridY) {
     float alpha = 0.3f; // smoothing factor
     circleVelX = alpha * instantVelX + (1.0f - alpha) * circleVelX;
     circleVelY = alpha * instantVelY + (1.0f - alpha) * circleVelY;
+
+    // Motion detection for adaptive solver
+    float velocityMagnitude = std::sqrt(circleVelX * circleVelX + circleVelY * circleVelY);
+    if (velocityMagnitude > config->simulation.projection.motionThreshold) {
+        motionDetected = true;
+    }
 
     circleX = newGridX;
     circleY = newGridY;

@@ -329,6 +329,40 @@ void placePlotCameraRowBundle(const LayoutConfig& config,
     const float safeCameraAspectRatio = cameraAspectRatio > 0.0f ? cameraAspectRatio : (4.0f / 3.0f);
     const int count = static_cast<int>(plots.size());
 
+    if (!config.camerasEnabled) {
+        hideComponentIfPresent(config, "camera_frame");
+        if (count <= 0) {
+            hideAllPlotPanels(config);
+            return;
+        }
+
+        const float widthPerRowHeight = kPlotAspectRatio * static_cast<float>(count);
+        if (widthPerRowHeight <= 0.0f) {
+            hideAllPlotPanels(config);
+            return;
+        }
+
+        const int rowHeight = std::max(1, std::min(
+            bundleArea.height,
+            static_cast<int>(bundleArea.width / widthPerRowHeight)
+        ));
+        const int plotWidth = std::max(1, static_cast<int>(kPlotAspectRatio * rowHeight));
+        const int totalWidth = count * plotWidth;
+        if (totalWidth <= 0) {
+            hideAllPlotPanels(config);
+            return;
+        }
+
+        const int startX = bundleArea.x + std::max(0, (bundleArea.width - totalWidth) / 2);
+        const int rowY = bundleArea.y + std::max(0, (bundleArea.height - rowHeight) / 2);
+
+        for (int i = 0; i < count; ++i) {
+            PixelRect slot = {startX + (i * plotWidth), rowY, plotWidth, rowHeight};
+            applyRectWithPadding(config, plots[i], slot);
+        }
+        return;
+    }
+
     if (count <= 0) {
         hideAllPlotPanels(config);
         applyRectWithPadding(config, "camera_frame", fitRectToAspectCentered(bundleArea, safeCameraAspectRatio));
@@ -373,7 +407,12 @@ void applyDefaultPreset(const LayoutConfig& config,
     const PixelRect frame = buildViewportFrame(canvasW, canvasH, viewportAspectRatio);
     const Quadrants quads = splitIntoQuadrants(frame);
 
-    placePlotCameraGridBundle(config, quads.topLeft, cameraAspectRatio);
+    if (config.camerasEnabled) {
+        placePlotCameraGridBundle(config, quads.topLeft, cameraAspectRatio);
+    } else {
+        hideComponentIfPresent(config, "camera_frame");
+        placePlotGridBundle2x2(config, quads.topLeft);
+    }
     applyViewportRect(config, "viewport_1", quads.topRight, viewportAspectRatio);
     applyViewportRect(config, "viewport_2", quads.bottomLeft, viewportAspectRatio);
     applyViewportRect(config, "viewport_3", quads.bottomRight, viewportAspectRatio);
@@ -389,8 +428,12 @@ void applyFocusedPreset(const LayoutConfig& config,
     const Quadrants quads = splitIntoQuadrants(frame);
     hideAllPlotAndCameraPanels(config);
 
-    const float safeCameraAspectRatio = cameraAspectRatio > 0.0f ? cameraAspectRatio : (4.0f / 3.0f);
-    applyRectWithPadding(config, "camera_frame", fitRectToAspectCentered(quads.topLeft, safeCameraAspectRatio));
+    if (config.camerasEnabled) {
+        const float safeCameraAspectRatio = cameraAspectRatio > 0.0f ? cameraAspectRatio : (4.0f / 3.0f);
+        applyRectWithPadding(config, "camera_frame", fitRectToAspectCentered(quads.topLeft, safeCameraAspectRatio));
+    } else {
+        hideComponentIfPresent(config, "camera_frame");
+    }
     placePlotGridBundle2x2(config, quads.bottomLeft);
     applyViewportRect(config, "viewport_1", quads.topRight, viewportAspectRatio);
     applyViewportRect(config, "viewport_2", quads.bottomRight, viewportAspectRatio);
@@ -488,38 +531,31 @@ void applyGalleryPreset(const LayoutConfig& config,
 }  // namespace
 
 Config ConfigLoader::loadConfig(const std::string& filename) {
-    std::ifstream file(filename);
-    if (!file.is_open()) {
-        std::cerr << "ERR opening config file: " << filename << std::endl;
+    try {
+        std::ifstream file(filename);
+        if (!file.is_open()) {
+            std::cerr << "ERROR: Cannot open config file: " << filename << std::endl;
+            exit(1);
+        }
+
+        json j;
+        file >> j;
+        file.close();
+
+        Config config;
+        config.pipeline = stringToPipelineType(j["pipeline"]);
+        config.window = loadWindowConfig(j["window"]);
+        config.simulation = loadSimulationConfig(j["simulation"]);
+        config.rendering = loadRenderingConfig(j["rendering"]);
+        config.ink = loadInkConfig(j["ink"]);
+        config.layout = loadLayoutConfig(j["layout"]);
+
+        return config;
+    } catch (const nlohmann::json::exception& e) {
+        std::cerr << "CONFIG ERROR: " << e.what() << std::endl;
+        std::cerr << "Ensure config.json has all required keys." << std::endl;
         exit(1);
     }
-
-    json j;
-    file >> j;
-    file.close();
-
-    Config config;
-
-    if (j.contains("pipeline")) {
-        config.pipeline = stringToPipelineType(j["pipeline"]);
-    }   
-    if (j.contains("window")) {
-        config.window = loadWindowConfig(j["window"]);
-    }
-    if (j.contains("simulation")) {
-        config.simulation = loadSimulationConfig(j["simulation"]);
-    }
-    if (j.contains("rendering")) {
-        config.rendering = loadRenderingConfig(j["rendering"]);
-    }
-    if (j.contains("ink")) {
-        config.ink = loadInkConfig(j["ink"]);
-    }
-    if (j.contains("layout")) {
-        config.layout = loadLayoutConfig(j["layout"]);
-    }
-
-    return config;
 }
 
 PipelineType ConfigLoader::stringToPipelineType(const std::string& type) {
@@ -535,69 +571,60 @@ PipelineType ConfigLoader::stringToPipelineType(const std::string& type) {
 
 WindowConfig ConfigLoader::loadWindowConfig(const json& j) {
     WindowConfig config;
-    config.baseSize = j.value("baseSize", 800);
-    config.defaultWidth = j.value("defaultWidth", 1200);
-    config.defaultHeight = j.value("defaultHeight", 800);
+    config.baseSize = j["baseSize"];
+    config.defaultWidth = j["defaultWidth"];
+    config.defaultHeight = j["defaultHeight"];
     return config;
 }
 
 SimulationConfig ConfigLoader::loadSimulationConfig(const json& j) {
     SimulationConfig config;
-    config.resolution = j.value("resolution", 100);
-    config.timestep = j.value("timestep", 1.0f / 60.0f);
-    config.gravity = j.value("gravity", 0.0f);
-    config.fluidDensity = j.value("fluidDensity", 1000.0f);
-    config.edges = j.value("edges", 15);
+    config.resolution = j["resolution"];
+    config.timestep = j["timestep"];
+    config.gravity = j["gravity"];
+    config.fluidDensity = j["fluidDensity"];
+    config.edges = j["edges"];
 
-    if (j.contains("projection")) {
-        config.projection = loadProjectionConfig(j["projection"]);
-    }
-    if (j.contains("vorticity")) {
-        config.vorticity = loadVorticityConfig(j["vorticity"]);
-    }
-    if (j.contains("windTunnel")) {
-        config.windTunnel = loadWindTunnelConfig(j["windTunnel"]);
-    }
-    if (j.contains("circle")) {
-        config.circle = loadCircleConfig(j["circle"]);
-    }
+    config.projection = loadProjectionConfig(j["projection"]);
+    config.vorticity = loadVorticityConfig(j["vorticity"]);
+    config.windTunnel = loadWindTunnelConfig(j["windTunnel"]);
+    config.circle = loadCircleConfig(j["circle"]);
 
     return config;
 }
 
 RenderingConfig ConfigLoader::loadRenderingConfig(const json& j) {
     RenderingConfig config;
-    config.target = j.value("target", 2);
-    config.showVelocityVectors = j.value("showVelocityVectors", false);
-    config.disableHistograms = j.value("disableHistograms", false);
-    config.velocityScale = j.value("velocityScale", 0.05f);
+    config.target = j["target"];
+    config.showVelocityVectors = j["showVelocityVectors"];
+    config.disableHistograms = j["disableHistograms"];
+    config.velocityScale = j["velocityScale"];
     return config;
 }
 
 InkConfig ConfigLoader::loadInkConfig(const json& j) {
     InkConfig config;
-    config.imagePath = j.value("imagePath", "");
+    config.imagePath = j["imagePath"];
     return config;
 }
 
 LayoutConfig ConfigLoader::loadLayoutConfig(const json& j) {
     LayoutConfig config;
-    config.preset = j.value("preset", "default");
+    config.preset = j["preset"];
+    config.camerasEnabled = j.value("camerasEnabled", true);
 
-    if (j.contains("components")) {
-        for (auto& [key, val] : j["components"].items()) {
-            ComponentBBox bbox;
-            bbox.x = val.value("x", 0.0f);
-            bbox.y = val.value("y", 0.0f);
-            bbox.w = val.value("w", 0.5f);
-            bbox.h = val.value("h", 0.5f);
-            bbox.px = val.value("px", 0);
-            bbox.py = val.value("py", 0);
-            bbox.target = val.value("target", 2);
-            bbox.enabled = val.value("enabled", true);
-            bbox.velocity = val.value("velocity", false);
-            config.components[key] = bbox;
-        }
+    for (auto& [key, val] : j["components"].items()) {
+        ComponentBBox bbox;
+        bbox.x = val["x"];
+        bbox.y = val["y"];
+        bbox.w = val["w"];
+        bbox.h = val["h"];
+        bbox.px = val["px"];
+        bbox.py = val["py"];
+        bbox.target = val.value("target", 2);
+        bbox.enabled = val.value("enabled", true);
+        bbox.velocity = val.value("velocity", false);
+        config.components[key] = bbox;
     }
 
     return config;
@@ -672,46 +699,48 @@ std::string ConfigLoader::computeLayout(const LayoutConfig& config,
 
 ProjectionConfig ConfigLoader::loadProjectionConfig(const json& j) {
     ProjectionConfig config;
-    config.overrelaxationCoefficient = j.value("overrelaxationCoefficient", 1.9f);
-    config.iterations = j.value("iterations", 40);
+    config.overrelaxationCoefficient = j["overrelaxationCoefficient"];
+    config.iterations = j["iterations"];
+    config.autoScaleIterations = j["autoScaleIterations"];
+    config.motionScaleIterations = j["motionScaleIterations"];
+    config.motionCooldownFrames = j["motionCooldownFrames"];
+    config.motionThreshold = j["motionThreshold"];
     return config;
 }
 
 VorticityConfig ConfigLoader::loadVorticityConfig(const json& j) {
     VorticityConfig config;
-    config.enabled = j.value("enabled", true);
-    config.strength = j.value("strength", 10.0f);
-    config.lengthScale = j.value("lengthScale", 5.0f);
+    config.enabled = j["enabled"];
+    config.strength = j["strength"];
+    config.lengthScale = j["lengthScale"];
     return config;
 }
 
 WindTunnelConfig ConfigLoader::loadWindTunnelConfig(const json& j) {
     WindTunnelConfig config;
-    config.side = j.value("side", 0);
-    config.startPosition = j.value("startPosition", 0.45f);
-    config.endPosition = j.value("endPosition", 0.55f);
-    config.velocity = j.value("velocity", 1.5f);
+    config.side = j["side"];
+    config.startPosition = j["startPosition"];
+    config.endPosition = j["endPosition"];
+    config.velocity = j["velocity"];
     return config;
 }
 
 CircleConfig ConfigLoader::loadCircleConfig(const json& j) {
     CircleConfig config;
-    config.radius = j.value("radius", 0.1f);
-    config.momentumTransferStrength = j.value("momentumTransferStrength", 0.25f);
-    config.momentumTransferRadius = j.value("momentumTransferRadius", 1.0f);
+    config.radius = j["radius"];
+    config.momentumTransferStrength = j["momentumTransferStrength"];
+    config.momentumTransferRadius = j["momentumTransferRadius"];
 
-    if (j.contains("zScaling")) {
-        json zScaling = j["zScaling"];
-        config.zMin = zScaling.value("zMin", -0.1f);
-        config.zMax = zScaling.value("zMax", 0.1f);
-        config.scaleMin = zScaling.value("scaleMin", 2.0f);
-        config.scaleMax = zScaling.value("scaleMax", 0.5f);
-    }
+    json zScaling = j["zScaling"];
+    config.zMin = zScaling["zMin"];
+    config.zMax = zScaling["zMax"];
+    config.scaleMin = zScaling["scaleMin"];
+    config.scaleMax = zScaling["scaleMax"];
 
-    config.handSmoothingAlphaLow = j.value("handSmoothingAlphaLow", 0.05f);
-    config.handSmoothingAlphaHigh = j.value("handSmoothingAlphaHigh", 0.5f);
-    config.handSpeedThreshold = j.value("handSpeedThreshold", 5.0f);
-    config.momentumTransferDeadZone = j.value("momentumTransferDeadZone", 1.0f);
+    config.handSmoothingAlphaLow = j["handSmoothingAlphaLow"];
+    config.handSmoothingAlphaHigh = j["handSmoothingAlphaHigh"];
+    config.handSpeedThreshold = j["handSpeedThreshold"];
+    config.momentumTransferDeadZone = j["momentumTransferDeadZone"];
 
     return config;
 }

@@ -85,13 +85,8 @@ struct UniformData {
 // TODO MAIN -- WIP ^_^
 // we in the browser baby
 
-// TODO overall hand stability just not giving the UX I want, want smoother displacement of fluid [WIP]
-// - at a pretty good place with this given customizability, should just tune default values
-// ? consider scaling up pressure solver iterations when motion is detected (& several timesteps after)
-
-// TODO new two handed control system (with left-handed toggle)
-// - control panel
-// TODO toggle camera input; restore mouse as control option
+// TODO wind tunnel & edges control panel
+// TODO ? restore mouse as control option
 
 // TODO info pane
 
@@ -109,7 +104,6 @@ struct UniformData {
 /*
 // TODO examine differences in pressure/velocity histograms between GPU/CPU
 - see plotting script
-- note: it seems like we can get better behavior by cranking Jacobi iterations up (1000)
 // TODO LATER swap to different pressure solver
 
 // TODO up/right wind tunnel behaves differently from down/left

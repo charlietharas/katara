@@ -773,6 +773,212 @@ class CircleControl extends ConfigControl {
     }
 }
 
+class HandControl extends ConfigControl {
+    static MODES = ['full', 'pointer', 'pointer-tip', 'none'];
+    static MODE_LABELS = { 'full': 'Full', 'pointer': 'Pointer', 'pointer-tip': 'Dot', 'none': 'Off' };
+    static COLORS = {
+        left: '#00ff88',
+        right: '#ff9933',
+        grey: 'rgba(255, 255, 255, 0.18)',
+        greyDot: 'rgba(255, 255, 255, 0.3)'
+    };
+
+    static ACTIVE_LANDMARKS = {
+        'full': [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20],
+        'pointer': [5,6,7,8],
+        'pointer-tip': [8],
+        'none': []
+    };
+
+    static HAND_LANDMARKS = [
+        {x: 0.50, y: 0.90}, // 0: wrist
+        {x: 0.28, y: 0.76}, // 1: thumb CMC
+        {x: 0.18, y: 0.60}, // 2: thumb MCP
+        {x: 0.13, y: 0.44}, // 3: thumb IP
+        {x: 0.10, y: 0.28}, // 4: thumb tip
+        {x: 0.35, y: 0.42}, // 5: index MCP
+        {x: 0.32, y: 0.26}, // 6: index PIP
+        {x: 0.30, y: 0.12}, // 7: index DIP
+        {x: 0.28, y: 0.00}, // 8: index tip
+        {x: 0.48, y: 0.38}, // 9: middle MCP
+        {x: 0.48, y: 0.21}, // 10: middle PIP
+        {x: 0.48, y: 0.08}, // 11: middle DIP
+        {x: 0.48, y: 0.00}, // 12: middle tip
+        {x: 0.60, y: 0.42}, // 13: ring MCP
+        {x: 0.62, y: 0.27}, // 14: ring PIP
+        {x: 0.63, y: 0.14}, // 15: ring DIP
+        {x: 0.64, y: 0.03}, // 16: ring tip
+        {x: 0.70, y: 0.48}, // 17: pinky MCP
+        {x: 0.74, y: 0.36}, // 18: pinky PIP
+        {x: 0.77, y: 0.25}, // 19: pinky DIP
+        {x: 0.80, y: 0.15}, // 20: pinky tip
+    ];
+
+    static HAND_CONNECTIONS = [
+        [0, 1], [1, 2], [2, 3], [3, 4],
+        [0, 5], [5, 6], [6, 7], [7, 8],
+        [0, 9], [9, 10], [10, 11], [11, 12],
+        [0, 13], [13, 14], [14, 15], [15, 16],
+        [0, 17], [17, 18], [18, 19], [19, 20],
+        [5, 9], [9, 13], [13, 17]
+    ];
+
+    constructor(leftConfigPath, rightConfigPath, initialLeft, initialRight) {
+        super(leftConfigPath, 'Hands', initialLeft);
+        this.rightConfigPath = rightConfigPath;
+        this.leftMode = initialLeft || 'full';
+        this.rightMode = initialRight || 'full';
+        this.canvas = null;
+        this.ctx = null;
+    }
+
+    render() {
+        const container = document.createElement('div');
+        container.className = 'hand-control';
+        container.innerHTML = `
+            <div class="hand-canvas-container">
+                <canvas class="hand-canvas"></canvas>
+            </div>
+            <div class="hand-values">
+                <div class="hand-value-item">
+                    <span class="hand-value-label" style="color:${HandControl.COLORS.left}">L:</span>
+                    <span class="hand-left-mode">${HandControl.MODE_LABELS[this.leftMode]}</span>
+                </div>
+                <div class="hand-value-item">
+                    <span class="hand-value-label" style="color:${HandControl.COLORS.right}">R:</span>
+                    <span class="hand-right-mode">${HandControl.MODE_LABELS[this.rightMode]}</span>
+                </div>
+            </div>
+        `;
+
+        this.canvas = container.querySelector('.hand-canvas');
+        this.ctx = this.canvas.getContext('2d');
+        this.element = container;
+
+        this.setupCanvas();
+        this.setupInteraction();
+
+        return container;
+    }
+
+    getValue() {
+        return this.leftMode;
+    }
+
+    loadValue(left, right) {
+        this.leftMode = left || 'full';
+        this.rightMode = right || 'full';
+        if (this.element) {
+            this.updateDisplay();
+            this.draw();
+        }
+    }
+
+    setupCanvas() {
+        const resizeCanvas = () => {
+            const rect = this.canvas.parentElement.getBoundingClientRect();
+            this.canvas.width = rect.width;
+            this.canvas.height = rect.height;
+            this.draw();
+        };
+        resizeCanvas();
+        new ResizeObserver(resizeCanvas).observe(this.canvas.parentElement);
+    }
+
+    setupInteraction() {
+        this.canvas.style.cursor = 'pointer';
+
+        this.canvas.addEventListener('click', (e) => {
+            const rect = this.canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const midX = this.canvas.width / 2;
+
+            if (x < midX) {
+                const idx = HandControl.MODES.indexOf(this.leftMode);
+                this.leftMode = HandControl.MODES[(idx + 1) % HandControl.MODES.length];
+            } else {
+                const idx = HandControl.MODES.indexOf(this.rightMode);
+                this.rightMode = HandControl.MODES[(idx + 1) % HandControl.MODES.length];
+            }
+
+            this.updateDisplay();
+            this.draw();
+        });
+    }
+
+    updateDisplay() {
+        const leftDisplay = this.element.querySelector('.hand-left-mode');
+        const rightDisplay = this.element.querySelector('.hand-right-mode');
+        if (leftDisplay) leftDisplay.textContent = HandControl.MODE_LABELS[this.leftMode];
+        if (rightDisplay) rightDisplay.textContent = HandControl.MODE_LABELS[this.rightMode];
+    }
+
+    draw() {
+        const ctx = this.ctx;
+        const w = this.canvas.width;
+        const h = this.canvas.height;
+        ctx.clearRect(0, 0, w, h);
+
+        // left
+        this.drawHand(0, 0, w / 2, h, this.leftMode, HandControl.COLORS.left, true);
+        // right
+        this.drawHand(w / 2, 0, w / 2, h, this.rightMode, HandControl.COLORS.right, false);
+
+        // divider
+        // ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+        // ctx.lineWidth = 1;
+        // ctx.beginPath();
+        // ctx.moveTo(w / 2, 0);
+        // ctx.lineTo(w / 2, h);
+        // ctx.stroke();
+    }
+
+    drawHand(ox, oy, areaW, areaH, mode, activeColor, mirror) {
+        const ctx = this.ctx;
+        const activeSet = new Set(HandControl.ACTIVE_LANDMARKS[mode]);
+        const grey = HandControl.COLORS.grey;
+        const greyDot = HandControl.COLORS.greyDot;
+
+        const pad = 0.1;
+        const usableW = areaW * (1 - 2 * pad);
+        const usableH = areaH * (1 - 2 * pad);
+        const scaleX = usableW;
+        const scaleY = usableH;
+        const offsetX = ox + areaW * pad;
+        const offsetY = oy + areaH * pad;
+
+        const tx = (lm) => {
+            let nx = lm.x;
+            if (mirror) nx = 1 - nx;
+            return offsetX + nx * scaleX;
+        };
+        const ty = (lm) => offsetY + lm.y * scaleY;
+
+        const lms = HandControl.HAND_LANDMARKS;
+
+        // draw connections
+        ctx.lineWidth = 2;
+        for (const [i, j] of HandControl.HAND_CONNECTIONS) {
+            const bothActive = activeSet.has(i) && activeSet.has(j);
+            ctx.strokeStyle = bothActive ? activeColor : grey;
+            ctx.beginPath();
+            ctx.moveTo(tx(lms[i]), ty(lms[i]));
+            ctx.lineTo(tx(lms[j]), ty(lms[j]));
+            ctx.stroke();
+        }
+
+        // draw landmarks
+        for (let i = 0; i < lms.length; i++) {
+            const active = activeSet.has(i);
+            ctx.fillStyle = active ? activeColor : greyDot;
+            const r = active ? 4 : 2.5;
+            ctx.beginPath();
+            ctx.arc(tx(lms[i]), ty(lms[i]), r, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+}
+
 function isPlainObject(v) {
     return !!v && typeof v === 'object' && !Array.isArray(v);
 }
@@ -880,6 +1086,11 @@ class ConfigSection {
                 setNestedValue(values, control.strengthConfigPath, control.strengthValue);
                 return;
             }
+            if (control instanceof HandControl) {
+                setNestedValue(values, control.configPath, control.leftMode);
+                setNestedValue(values, control.rightConfigPath, control.rightMode);
+                return;
+            }
             setNestedValue(values, control.configPath, control.getValue());
         });
         return values;
@@ -978,15 +1189,19 @@ class SettingsPanel {
         rightTop.className = 'settings-col-right-top';
         const rightBottom = document.createElement('div');
         rightBottom.className = 'settings-col-right-bottom';
-        const rightPlaceholder = document.createElement('div');
-        rightPlaceholder.className = 'settings-col-right-placeholder';
-        rightPlaceholder.textContent = 'TODO: Wind + Control';
-        rightBottom.appendChild(rightPlaceholder);
         rightCol.appendChild(rightTop);
         rightCol.appendChild(rightBottom);
         this.sections.forEach(section => {
-            (section.column === 'right' ? rightTop : leftCol).appendChild(section.render());
+            if (section.column === 'right') {
+                (section.placement === 'bottom' ? rightBottom : rightTop).appendChild(section.render());
+            } else {
+                leftCol.appendChild(section.render());
+            }
         });
+        const windPlaceholder = document.createElement('div');
+        windPlaceholder.className = 'settings-col-right-placeholder';
+        windPlaceholder.textContent = 'TODO: Wind';
+        rightBottom.appendChild(windPlaceholder);
         content.appendChild(cols);
 
         this.panelElement = panel;
@@ -1045,6 +1260,13 @@ class SettingsPanel {
                     return;
                 }
 
+                if (control instanceof HandControl) {
+                    const left = getNestedValue(config, control.configPath);
+                    const right = getNestedValue(config, control.rightConfigPath);
+                    control.loadValue(left, right);
+                    return;
+                }
+
                 if (control instanceof LayoutPresetControl) {
                     const value = getNestedValue(config, control.configPath);
                     if (value !== undefined) control.loadValue(value);
@@ -1096,6 +1318,7 @@ class SettingsPanel {
         const renderingChanged = sectionChanged('rendering');
 
         try {
+            this.parentApp.mergeViewportTargetsIntoConfig(mergedConfig);
             const configText = JSON.stringify(mergedConfig, null, 4);
             this.parentApp.module.FS.writeFile('/config.json', configText);
 
@@ -1131,6 +1354,7 @@ class SettingsPanel {
             }
 
             this.parentApp.syncLayoutStateFromConfig();
+            this.parentApp.updateCameraUi();
             if (layoutChanged || renderingChanged) {
                 this.parentApp.refreshSimLayout();
             } else {
@@ -1166,6 +1390,11 @@ function createSkeletonSections(currentConfig) {
         'Buttons',
         layout.buttonsEnabled ?? true
     ));
+    layoutSection.addHeaderControl(new HeaderCheckboxControl(
+        'layout.camerasEnabled',
+        'Cameras',
+        layout.camerasEnabled ?? true
+    ));
     sections.push(layoutSection);
 
     const plotsSection = new ConfigSection('Plots', { layout: 'grid4' });
@@ -1199,6 +1428,17 @@ function createSkeletonSections(currentConfig) {
     );
     circleSection.addControl(circleControl);
     sections.push(circleSection);
+
+    const handsSection = new ConfigSection('Hands', { column: 'right', placement: 'bottom' });
+    const hands = currentConfig.hands ?? {};
+    const handControl = new HandControl(
+        'hands.left',
+        'hands.right',
+        hands.left ?? 'full',
+        hands.right ?? 'full'
+    );
+    handsSection.addControl(handControl);
+    sections.push(handsSection);
 
     const simSection = new ConfigSection('Simulation', { layout: 'grid2' });
     simSection.addControl(new SliderControl('simulation.resolution', 'Resolution', sim.resolution ?? 400, 50, 800, 50));

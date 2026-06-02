@@ -110,6 +110,11 @@ public:
     int windTunnelSide; // 0, 1, 2, 3 = left, top, bottom, right; -1 = disabled
     float windTunnelSpeed; // magnitude; direction inferred
 
+    // motion-adaptive solver iterations
+    int motionCooldownFrames = 0;
+    bool motionDetected = false;
+    float effectiveProjectionIters = 200.0f;
+
     // simulation methods
     virtual bool init(const Config& config, const ImageData* imageData = nullptr, float aspectRatio = 1.5f) =0;
     virtual void update() =0;

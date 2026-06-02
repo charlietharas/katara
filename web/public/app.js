@@ -2,6 +2,32 @@ import { MediaPipeHandTracker } from './mediapipe.js';
 import { SettingsPanel, createSkeletonSections } from './settings.js';
 
 class KataraWebApp {
+    static measureElementWidth(el) {
+        if (!el) return 0;
+        if (el.offsetWidth > 0) return el.offsetWidth;
+        const prevDisplay = el.style.display;
+        const prevVisibility = el.style.visibility;
+        el.style.visibility = 'hidden';
+        el.style.display = '';
+        const width = el.offsetWidth;
+        el.style.display = prevDisplay;
+        el.style.visibility = prevVisibility;
+        return width;
+    }
+
+    static measureElementHeight(el) {
+        if (!el) return 0;
+        if (el.offsetHeight > 0) return el.offsetHeight;
+        const prevDisplay = el.style.display;
+        const prevVisibility = el.style.visibility;
+        el.style.visibility = 'hidden';
+        el.style.display = '';
+        const height = el.offsetHeight;
+        el.style.display = prevDisplay;
+        el.style.visibility = prevVisibility;
+        return height;
+    }
+
     getSimViewportSize() {
         const viewport = document.querySelector('.sim-viewport');
         if (!viewport) {
@@ -42,6 +68,8 @@ class KataraWebApp {
         this.syncLayoutStateFromConfig();
         const layout = this.initLayoutFromCpp();
         this.positionCameraPanel(layout);
+        this.updateCameraUi();
+        this.updateSimControlsVisibility();
         this.positionControls(layout);
         this.updateViewportButtons();
         this.updatePlotLabels();
@@ -51,6 +79,7 @@ class KataraWebApp {
         this.isInkMode = false;
         this.labelsEnabled = true;
         this.buttonsEnabled = true;
+        this.camerasEnabled = true;
         this.inkAspectRatio = 1.0;
         this.cameraAspectRatio = 4.0 / 3.0;
         this.viewportControllers = new Map();
@@ -142,6 +171,7 @@ class KataraWebApp {
         console.log('After C++ init: canvas size', simCanvas.width, 'x', simCanvas.height);
         console.log('Window AR:', (settledSize.width / settledSize.height).toFixed(3));
         const initialLayout = this.initLayoutFromCpp();
+        this.updateSimControlsVisibility();
         this.positionControls(initialLayout);
         this.configured = true;
 
@@ -180,6 +210,8 @@ class KataraWebApp {
         // Recompute after camera metadata is ready so camera frame can use stream AR.
         const cameraAlignedLayout = this.initLayoutFromCpp();
         this.positionCameraPanel(cameraAlignedLayout);
+        this.updateCameraUi();
+        this.updateSimControlsVisibility();
         this.positionControls(cameraAlignedLayout);
 
         this.setupInkUpload();
@@ -270,6 +302,7 @@ class KataraWebApp {
             this.isInkMode = config?.rendering?.target === 3;
             this.labelsEnabled = config?.layout?.labelsEnabled !== false;
             this.buttonsEnabled = config?.layout?.buttonsEnabled !== false;
+            this.camerasEnabled = config?.layout?.camerasEnabled !== false;
         } catch (err) {
             console.warn('Could not read /config.json for layout mode:', err);
         }
@@ -321,9 +354,19 @@ class KataraWebApp {
     }
 
     positionCameraPanel(layout) {
-        const camFrame = layout.camera_frame;
         const camPanel = document.querySelector('.camera-panel');
-        if (camFrame && camPanel && this.cameraCanvas) {
+        if (!camPanel) {
+            return;
+        }
+
+        if (!this.camerasEnabled) {
+            camPanel.style.display = 'none';
+            return;
+        }
+
+        const camFrame = layout?.camera_frame;
+        if (camFrame && camFrame.width > 0 && camFrame.height > 0 && this.cameraCanvas) {
+            camPanel.style.display = '';
             camPanel.style.position = 'absolute';
             camPanel.style.left = camFrame.x + 'px';
             camPanel.style.top = camFrame.y + 'px';
@@ -334,6 +377,22 @@ class KataraWebApp {
             this.cameraCanvas.style.height = '100%';
             this.cameraCanvas.style.maxWidth = 'none';
             console.log('Camera positioned from layout:', camFrame.x, camFrame.y, camFrame.width, 'x', camFrame.height);
+        } else {
+            camPanel.style.display = 'none';
+        }
+    }
+
+    updateCameraUi() {
+        const camPanel = document.querySelector('.camera-panel');
+        if (camPanel && !this.camerasEnabled) {
+            camPanel.style.display = 'none';
+        }
+
+        const cheeseBtn = document.getElementById('cheeseBtn');
+        if (cheeseBtn) {
+            const disabled = !this.camerasEnabled;
+            cheeseBtn.disabled = disabled;
+            cheeseBtn.classList.toggle('disabled', disabled);
         }
     }
 
@@ -373,8 +432,10 @@ class KataraWebApp {
         if (!controls || !bounds) return;
 
         const margin = 16;
-        const targetLeft = bounds.x + bounds.width - controls.offsetWidth - margin;
-        const targetTop = bounds.y + bounds.height - controls.offsetHeight - margin;
+        const controlsWidth = KataraWebApp.measureElementWidth(controls);
+        const controlsHeight = KataraWebApp.measureElementHeight(controls);
+        const targetLeft = bounds.x + bounds.width - controlsWidth - margin;
+        const targetTop = bounds.y + bounds.height - controlsHeight - margin;
 
         controls.style.position = 'absolute';
         controls.style.left = `${Math.max(bounds.x, targetLeft)}px`;
@@ -457,6 +518,8 @@ class KataraWebApp {
             this.syncLayoutStateFromConfig();
             const layout = this.initLayoutFromCpp();
             this.positionCameraPanel(layout);
+            this.updateCameraUi();
+            this.updateSimControlsVisibility();
             this.positionControls(layout);
             this.updateViewportButtons();
             this.updatePlotLabels();
@@ -474,15 +537,50 @@ class KataraWebApp {
             return;
         }
 
-        cheeseBtn.addEventListener('click', () => this.captureFromCamera());
+        cheeseBtn.addEventListener('click', () => {
+            if (!this.camerasEnabled) {
+                return;
+            }
+            this.captureFromCamera();
+        });
     }
 
     resetSimulation() {
         if (this.module && this.module._resetFluidField) {
             this.module._resetFluidField();
+            this.syncViewportTargetsToCpp();
         } else {
             console.error('resetFluidField not available');
         }
+    }
+
+    mergeViewportTargetsIntoConfig(config) {
+        if (!config.layout) {
+            config.layout = {};
+        }
+        if (!config.layout.components) {
+            config.layout.components = {};
+        }
+        this.viewportControllers.forEach((controller, name) => {
+            if (!config.layout.components[name]) {
+                config.layout.components[name] = {};
+            }
+            config.layout.components[name].target = controller.target;
+            config.layout.components[name].velocity = controller.velocity;
+        });
+    }
+
+    syncViewportTargetsToCpp() {
+        if (!this.module?._setViewportTarget || !this.module?._setViewportVelocity) {
+            return;
+        }
+        this.viewportControllers.forEach((controller) => {
+            this.module._setViewportTarget(controller.viewportIndex, controller.target);
+            this.module._setViewportVelocity(
+                controller.viewportIndex,
+                controller.velocity ? 1 : 0
+            );
+        });
     }
 
     togglePause() {
@@ -540,6 +638,9 @@ class KataraWebApp {
 
             switch (event.key.toLowerCase()) {
                 case 'c':
+                    if (!this.camerasEnabled) {
+                        break;
+                    }
                     event.preventDefault();
                     this.captureFromCamera();
                     break;
@@ -563,6 +664,13 @@ class KataraWebApp {
                     event.preventDefault();
                     const settingsBtn = document.getElementById('settingsBtn');
                     if (settingsBtn) settingsBtn.click();
+                    break;
+                case '1':
+                case '2':
+                case '3':
+                case '4':
+                    event.preventDefault();
+                    this.cycleViewportTarget(Number(event.key));
                     break;
             }
         });
@@ -635,6 +743,13 @@ class KataraWebApp {
         });
     }
 
+    cycleViewportTarget(viewportNumber) {
+        const controller = this.viewportControllers.get(`viewport_${viewportNumber}`);
+        if (controller) {
+            controller.cycleTarget();
+        }
+    }
+
     syncViewportButtons() {
         const activeNames = new Set(this.getActiveViewportNames());
 
@@ -671,13 +786,27 @@ class KataraWebApp {
     updateViewportButtons() {
         this.syncViewportButtons();
         this.viewportControllers.forEach((controller, name) => {
+            controller.setButtonsVisible(this.buttonsEnabled);
             const layoutRect = this.layoutPixels[name];
             if (layoutRect && layoutRect.width > 0 && layoutRect.height > 0) {
+                if (layoutRect.target !== undefined) {
+                    controller.target = layoutRect.target;
+                    controller.updateDisplay();
+                }
+                if (layoutRect.velocity !== undefined) {
+                    controller.velocity = !!layoutRect.velocity;
+                    controller.updateVelocityDisplay();
+                }
                 controller.updateLayout(layoutRect);
             }
-            controller.setButtonsVisible(this.buttonsEnabled);
         });
         this.updateSimControlsVisibility();
+        if (this.buttonsEnabled) {
+            requestAnimationFrame(() => {
+                this.viewportControllers.forEach((controller) => controller.positionButtons());
+                this.positionControls(this.layoutPixels);
+            });
+        }
     }
 
     getActiveLabelComponents() {
@@ -753,6 +882,10 @@ class KataraWebApp {
     }
 
     async captureFromCamera() {
+        if (!this.camerasEnabled) {
+            return;
+        }
+
         // Countdown sequence
         for (let i = 3; i > 0; i--) {
             this.countdownElement.textContent = i;
@@ -790,20 +923,39 @@ class KataraWebApp {
         [5, 9], [9, 13], [13, 17]
     ];
 
+    static ACTIVE_LANDMARKS_BY_MODE = {
+        'full': [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20],
+        'pointer': [5,6,7,8],
+        'pointer-tip': [8],
+        'none': []
+    };
+
+    getHandModes() {
+        const hands = window.kataraConfig?.hands;
+        return {
+            left: hands?.left || 'full',
+            right: hands?.right || 'full'
+        };
+    }
+
     drawKeypoints(hands) {
         const ctx = this.cameraCtx;
         const width = this.cameraCanvas.width;
         const height = this.cameraCanvas.height;
+        const modes = this.getHandModes();
+        const grey = 'rgba(255, 255, 255, 0.2)';
 
         for (const hand of hands) {
-            // left/right hand get different colors
             const isLeftHand = hand.handedness === 'Right';
+            const mode = isLeftHand ? modes.left : modes.right;
             const color = isLeftHand ? '#00ff88' : '#ff9933';
+            const activeSet = new Set(KataraWebApp.ACTIVE_LANDMARKS_BY_MODE[mode]);
 
             // skeleton connections
-            ctx.strokeStyle = color;
             ctx.lineWidth = 3;
             for (const [i, j] of KataraWebApp.HAND_CONNECTIONS) {
+                const bothActive = activeSet.has(i) && activeSet.has(j);
+                ctx.strokeStyle = bothActive ? color : grey;
                 const p1 = hand.landmarks[i];
                 const p2 = hand.landmarks[j];
                 ctx.beginPath();
@@ -813,10 +965,13 @@ class KataraWebApp {
             }
 
             // keypoints
-            ctx.fillStyle = color;
-            for (const lm of hand.landmarks) {
+            for (let i = 0; i < hand.landmarks.length; i++) {
+                const lm = hand.landmarks[i];
+                const active = activeSet.has(i);
+                ctx.fillStyle = active ? color : grey;
+                const r = active ? 5 : 3;
                 ctx.beginPath();
-                ctx.arc(lm.x * width, lm.y * height, 5, 0, 2 * Math.PI);
+                ctx.arc(lm.x * width, lm.y * height, r, 0, 2 * Math.PI);
                 ctx.fill();
             }
         }
@@ -825,6 +980,15 @@ class KataraWebApp {
     async processLoop() {
         try {
             if (this.simulationPaused) {
+                requestAnimationFrame(() => this.processLoop());
+                return;
+            }
+
+            if (!this.camerasEnabled) {
+                if (this.module) {
+                    this.module._updateFingertips(0, 0);
+                    this.module._updateLineSegments(0, 0);
+                }
                 requestAnimationFrame(() => this.processLoop());
                 return;
             }
@@ -850,6 +1014,22 @@ class KataraWebApp {
             // circle momentum transfer gets all 42 landmarks (21 per hand)
             const allLandmarks = result.landmarks;
             if (allLandmarks && allLandmarks.length > 0) {
+                // filter landmarks by hand mode
+                const modes = this.getHandModes();
+                if (result.hands) {
+                    for (let handIdx = 0; handIdx < Math.min(result.hands.length, 2); handIdx++) {
+                        const hand = result.hands[handIdx];
+                        const isLeftHand = hand.handedness === 'Right';
+                        const mode = isLeftHand ? modes.left : modes.right;
+                        const activeLandmarks = new Set(KataraWebApp.ACTIVE_LANDMARKS_BY_MODE[mode]);
+
+                        for (let i = 0; i < 21; i++) {
+                            if (!activeLandmarks.has(i)) {
+                                allLandmarks[handIdx * 21 + i].present = false;
+                            }
+                        }
+                    }
+                }
                 // allocate memory for all landmarks (used for both circles and line segments)
                 const allLandmarksDataLength = allLandmarks.length * 4;
                 const ptrAll = this.module._malloc(allLandmarksDataLength * 4);
@@ -950,7 +1130,6 @@ class ViewportController {
         const gap = 4;
         const label = this.parentApp.plotLabelElements.get(this.viewportName);
 
-        let leftX = this.layoutRect.x + margin;
         let topY = this.layoutRect.y + margin;
         if (label && label.offsetHeight > 0 && label.style.display !== 'none') {
             topY = this.layoutRect.y + margin + label.offsetHeight + gap;
@@ -961,11 +1140,11 @@ class ViewportController {
             this.velocityButtonElement,
             this.targetButtonElement
         ];
-        let x = leftX;
+        let x = this.layoutRect.x + margin;
         for (const btn of buttons) {
             btn.style.left = `${x}px`;
             btn.style.top = `${topY}px`;
-            x += btn.offsetWidth + gap;
+            x += KataraWebApp.measureElementWidth(btn) + gap;
         }
     }
 

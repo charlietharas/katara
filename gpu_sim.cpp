@@ -10,6 +10,25 @@
 
 // CONSTRUCTOR :150
 
+void GPUSimulator::updateProjectionIterations() {
+    if (!config->simulation.projection.autoScaleIterations) {
+        effectiveProjectionIters = config->simulation.projection.iterations;
+        return;
+    }
+
+    if (motionDetected) {
+        motionCooldownFrames = config->simulation.projection.motionCooldownFrames;
+        effectiveProjectionIters = config->simulation.projection.motionScaleIterations;
+    } else if (motionCooldownFrames > 0) {
+        motionCooldownFrames--;
+        effectiveProjectionIters = config->simulation.projection.motionScaleIterations;
+    } else {
+        effectiveProjectionIters = config->simulation.projection.iterations;
+    }
+
+    motionDetected = false;
+}
+
 // UPDATE SIM PARAMS UNIFORM
 void GPUSimulator::updateUniformBufferSim() {
     SimParams params = {};
@@ -20,7 +39,7 @@ void GPUSimulator::updateUniformBufferSim() {
     params.gravity = config->simulation.gravity;
     params.vorticity = config->simulation.vorticity.strength;
     params.vorticityLen = config->simulation.vorticity.lengthScale;
-    params.projectionIters = config->simulation.projection.iterations;
+    params.projectionIters = static_cast<int>(effectiveProjectionIters);
     params.density = config->simulation.fluidDensity;
 
     params.windTunnelSide = config->simulation.windTunnel.side;
@@ -345,6 +364,7 @@ void GPUSimulator::copyInitialDataToGPU() {
 }
 
 void GPUSimulator::update() {
+    updateProjectionIterations();
     updateUniformBufferSim();
 
     // encoder for the entire update
@@ -420,6 +440,18 @@ void GPUSimulator::moveCircle(int newGridX, int newGridY) {
     prevCircleX = circleX;
     prevCircleY = circleY;
 
+    float instantVelX = (newGridX - circleX) / config->simulation.timestep;
+    float instantVelY = (newGridY - circleY) / config->simulation.timestep;
+    float alpha = 0.3f;
+    circleVelX = alpha * instantVelX + (1.0f - alpha) * circleVelX;
+    circleVelY = alpha * instantVelY + (1.0f - alpha) * circleVelY;
+
+    // Motion detection for adaptive solver
+    float velocityMagnitude = std::sqrt(circleVelX * circleVelX + circleVelY * circleVelY);
+    if (velocityMagnitude > config->simulation.projection.motionThreshold) {
+        motionDetected = true;
+    }
+
     circleX = newGridX;
     circleY = newGridY;
 
@@ -459,6 +491,19 @@ void GPUSimulator::updateCircles(const FingertipData* fingertips, int count) {
             circles[i].scaledRadius = scaleRadiusByZ(fingertips[i].z, baseCircleRadius);
             circles[i].present = true;
             circles[i].wasPresent = true;
+
+            // Calculate velocity for motion detection
+            float instantVelX = (circles[i].x - circles[i].prevX) / timestep;
+            float instantVelY = (circles[i].y - circles[i].prevY) / timestep;
+            float alpha = 0.3f;
+            circles[i].velX = alpha * instantVelX + (1.0f - alpha) * circles[i].velX;
+            circles[i].velY = alpha * instantVelY + (1.0f - alpha) * circles[i].velY;
+
+            // Motion detection for adaptive solver
+            float velocityMagnitude = std::sqrt(circles[i].velX * circles[i].velX + circles[i].velY * circles[i].velY);
+            if (velocityMagnitude > config->simulation.projection.motionThreshold) {
+                motionDetected = true;
+            }
         }
     }
     frameCount++;

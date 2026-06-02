@@ -191,6 +191,7 @@ private:
     DECLARE_PIPELINE_RESOURCES(histogramBins)
 
     // updated with SimParams
+    void updateProjectionIterations();
     void updateUniformBufferSim();
 
     // compute dispatch

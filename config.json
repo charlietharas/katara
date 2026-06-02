@@ -13,7 +13,11 @@
         "edges": 15,
         "projection": {
             "overrelaxationCoefficient": 1.0,
-            "iterations": 1000
+            "iterations": 200,
+            "autoScaleIterations": true,
+            "motionScaleIterations": 2000,
+            "motionCooldownFrames": 10,
+            "motionThreshold": 5.0
         },
         "vorticity": {
             "enabled": true,
@@ -39,7 +43,7 @@
             "handSmoothingAlphaLow": 0.15,
             "handSmoothingAlphaHigh": 0.7,
             "handSpeedThreshold": 5.0,
-            "momentumTransferDeadZone": 10.0
+            "momentumTransferDeadZone": 20.0
         }
     },
     "rendering": {
@@ -48,6 +52,10 @@
         "velocityScale": 0.04,
         "disableHistograms": false
     },
+    "hands": {
+        "left": "full",
+        "right": "full"
+    },
     "ink": {
         "imagePath": "/img1.png"
     },
@@ -55,6 +63,7 @@
         "preset": "default",
         "labelsEnabled": true,
         "buttonsEnabled": true,
+        "camerasEnabled": true,
         "components": {
             "camera_frame": {
                 "x": 0, "y": 0.25, "w": 0.25, "h": 0.25,
