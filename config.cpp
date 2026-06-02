@@ -253,8 +253,8 @@ std::string ConfigLoader::computeLayout(const LayoutConfig& config,
         if (config.components.find("velocity_histogram") != config.components.end()) {
             histogramNames.push_back("velocity_histogram");
         }
-        if (config.components.find("entropy_histogram") != config.components.end()) {
-            histogramNames.push_back("entropy_histogram");
+        if (config.components.find("entropy_time_series") != config.components.end()) {
+            histogramNames.push_back("entropy_time_series");
         }
 
         int histogramBandHeight = 0;

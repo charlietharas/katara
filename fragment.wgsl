@@ -15,12 +15,13 @@ struct UniformData {
 
     // Viewport configuration
     viewportCount: i32,
-    viewportX: array<i32, 4>,
-    viewportY: array<i32, 4>,
-    viewportWidth: array<i32, 4>,
-    viewportHeight: array<i32, 4>,
-    viewportRenderTarget: array<i32, 4>,
-    pad1: array<i32, 3>,
+    viewportX: vec4<i32>,
+    viewportY: vec4<i32>,
+    viewportWidth: vec4<i32>,
+    viewportHeight: vec4<i32>,
+    viewportRenderTarget: vec4<i32>,
+    viewportRenderVelocity: vec4<i32>,
+    pad1: vec3<i32>,
 
     // Histogram configuration
     densityHistogramEnabled: i32,
@@ -33,6 +34,20 @@ struct UniformData {
     velocityHistogramY: i32,
     velocityHistogramWidth: i32,
     velocityHistogramHeight: i32,
+    entropyTimeSeriesEnabled: i32,
+    entropyTimeSeriesX: i32,
+    entropyTimeSeriesY: i32,
+    entropyTimeSeriesWidth: i32,
+    entropyTimeSeriesHeight: i32,
+    entropyCurrentValue: f32,
+    entropyThreshold: f32,
+    entropyBloomStrength: f32,
+    entropyAboveThreshold: i32,
+    entropyHistoryMax: f32,
+    entropyHistoryCount: i32,
+    entropyHistoryWriteIndex: i32,
+    entropyPad0: i32,
+    entropyHistory: array<vec4<f32>, 16>,
 
     // Histogram data
     densityHistogramMin: f32,
@@ -85,6 +100,22 @@ fn mapValueToGreyscale(value: f32, min: f32, max: f32) -> vec3<f32> {
     return vec3<f32>(t, t, t);
 }
 
+fn mapValueToHeatmap(value: f32, min: f32, max: f32) -> vec3<f32> {
+    var t = (value - min) / (max - min);
+    t = clamp(t, 0.0, 1.0);
+
+    if (t < 0.33) {
+        let k = t / 0.33;
+        return vec3<f32>(0.0, k, 1.0);
+    } else if (t < 0.66) {
+        let k = (t - 0.33) / 0.33;
+        return vec3<f32>(k, 1.0, 1.0 - k);
+    }
+
+    let k = (t - 0.66) / 0.34;
+    return vec3<f32>(1.0, 1.0 - 0.75 * k, 0.0);
+}
+
 fn getViewportForPixel(pixelCoord: vec2<f32>) -> i32 {
     if (uniforms.viewportCount == 0) {
         return -1; // No viewports defined, use default rendering
@@ -125,6 +156,84 @@ fn mapInkToColor(r: f32, g: f32, b: f32) -> vec3<f32> {
     var b_clamped = clamp(b, 0.0, 1.0);
 
     return vec3<f32>(r_clamped, g_clamped, b_clamped);
+}
+
+fn getClampedCoord(coord: vec2<i32>) -> vec2<i32> {
+    return vec2<i32>(
+        clamp(coord.x, 0, uniforms.gridX - 1),
+        clamp(coord.y, 0, uniforms.gridY - 1)
+    );
+}
+
+fn sampleDensityClamped(coord: vec2<i32>) -> f32 {
+    return textureLoad(densityTexture, getClampedCoord(coord), 0).r;
+}
+
+fn sampleVelocityClamped(coord: vec2<i32>) -> vec2<f32> {
+    return textureLoad(velocityTexture, getClampedCoord(coord), 0).rg;
+}
+
+fn computeDivergenceFromVelocity(coord: vec2<i32>) -> f32 {
+    let center = sampleVelocityClamped(coord);
+    let right = sampleVelocityClamped(coord + vec2<i32>(1, 0));
+    let top = sampleVelocityClamped(coord + vec2<i32>(0, 1));
+    let bottom = sampleVelocityClamped(coord + vec2<i32>(0, -1));
+    return right.x - center.x + top.y - bottom.y;
+}
+
+fn computeLocalDivergenceScale(coord: vec2<i32>) -> f32 {
+    var maxAbsDiv = abs(computeDivergenceFromVelocity(coord));
+    maxAbsDiv = max(maxAbsDiv, abs(computeDivergenceFromVelocity(coord + vec2<i32>(1, 0))));
+    maxAbsDiv = max(maxAbsDiv, abs(computeDivergenceFromVelocity(coord + vec2<i32>(-1, 0))));
+    maxAbsDiv = max(maxAbsDiv, abs(computeDivergenceFromVelocity(coord + vec2<i32>(0, 1))));
+    maxAbsDiv = max(maxAbsDiv, abs(computeDivergenceFromVelocity(coord + vec2<i32>(0, -1))));
+    return max(maxAbsDiv, 1e-4);
+}
+
+fn mapDivergenceDebug(divergence: f32, scale: f32) -> vec3<f32> {
+    let normalized = clamp(divergence / scale, -1.0, 1.0);
+    let magnitude = pow(abs(normalized), 0.65);
+    let base = vec3<f32>(0.02, 0.02, 0.025);
+    let negColor = vec3<f32>(0.12, 0.38, 1.0);
+    let posColor = vec3<f32>(1.0, 0.24, 0.14);
+    let signedColor = select(negColor, posColor, normalized >= 0.0);
+    return clamp(base + signedColor * magnitude, vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+fn computeNormalLighting(coord: vec2<i32>) -> vec3<f32> {
+    let left = sampleDensityClamped(coord + vec2<i32>(-1, 0));
+    let right = sampleDensityClamped(coord + vec2<i32>(1, 0));
+    let top = sampleDensityClamped(coord + vec2<i32>(0, 1));
+    let bottom = sampleDensityClamped(coord + vec2<i32>(0, -1));
+
+    let dx = right - left;
+    let dy = top - bottom;
+    let normal = normalize(vec3<f32>(-dx * 4.0, -dy * 4.0, 1.0));
+    let lightDir = normalize(vec3<f32>(0.45, -0.55, 0.7));
+    let diffuse = max(dot(normal, lightDir), 0.0);
+    let intensity = 0.2 + 0.8 * diffuse;
+    return vec3<f32>(intensity, intensity, intensity);
+}
+
+fn renderThresholdBloom(coord: vec2<i32>, centerDensity: f32) -> vec3<f32> {
+    let threshold = 0.35;
+    let softness = 0.10;
+    let thresholdMask = smoothstep(threshold, threshold + softness, centerDensity);
+
+    var glowAccum = 0.0;
+    var glowSamples = 0;
+    for (var oy = -1; oy <= 1; oy++) {
+        for (var ox = -1; ox <= 1; ox++) {
+            let d = sampleDensityClamped(coord + vec2<i32>(ox, oy));
+            glowAccum += max(0.0, d - threshold);
+            glowSamples += 1;
+        }
+    }
+
+    let glow = clamp((glowAccum / f32(glowSamples)) * 2.0, 0.0, 1.0);
+    let base = mapValueToHeatmap(centerDensity, 0.0, 1.0) * (1.0 - 0.35 * thresholdMask);
+    let glowColor = vec3<f32>(1.0, 0.75, 0.31) * glow;
+    return clamp(base + glowColor, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
 fn distanceToLineSegment(point: vec2<f32>, lineStart: vec2<f32>, lineEnd: vec2<f32>) -> f32 {
@@ -203,9 +312,111 @@ fn getBinCount(vec: vec4<i32>, component: i32) -> i32 {
     return vec.w;
 }
 
+fn entropyHistorySample(sampleIndex: i32) -> f32 {
+    let clampedIndex = clamp(sampleIndex, 0, 63);
+    let vecIndex = clampedIndex / 4;
+    let component = clampedIndex % 4;
+    let packed = uniforms.entropyHistory[vecIndex];
+    if (component == 0) { return packed.x; }
+    if (component == 1) { return packed.y; }
+    if (component == 2) { return packed.z; }
+    return packed.w;
+}
+
+fn drawEntropyIndicator(pixelCoord: vec2<f32>) -> vec4<f32> {
+    if (uniforms.entropyTimeSeriesEnabled == 0) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+
+    let panelX = f32(uniforms.entropyTimeSeriesX);
+    let panelY = f32(uniforms.entropyTimeSeriesY);
+    let panelWidth = f32(uniforms.entropyTimeSeriesWidth);
+    let panelHeight = f32(uniforms.entropyTimeSeriesHeight);
+    if (!(pixelCoord.x >= panelX && pixelCoord.x < panelX + panelWidth &&
+          pixelCoord.y >= panelY && pixelCoord.y < panelY + panelHeight)) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+
+    let localX = pixelCoord.x - panelX;
+    let localY = pixelCoord.y - panelY;
+    let bg = vec3<f32>(28.0 / 255.0, 28.0 / 255.0, 32.0 / 255.0);
+    let border = vec3<f32>(200.0 / 255.0, 200.0 / 255.0, 210.0 / 255.0);
+    var result = bg;
+
+    if (localX < 1.0 || localX >= panelWidth - 1.0 || localY < 1.0 || localY >= panelHeight - 1.0) {
+        return vec4<f32>(border, 1.0);
+    }
+
+    if (localY < 13.0) {
+        let headerMix = clamp(localX / max(1.0, panelWidth), 0.0, 1.0);
+        result = vec3<f32>(0.15 + 0.08 * headerMix, 0.18, 0.24 + 0.10 * headerMix);
+        return vec4<f32>(result, 1.0);
+    }
+
+    let innerX = localX - 9.0;
+    let innerY = localY - 16.0;
+    let innerWidth = panelWidth - 18.0;
+    let innerHeight = panelHeight - 25.0;
+    if (innerWidth <= 1.0 || innerHeight <= 1.0 ||
+        innerX < 0.0 || innerX >= innerWidth || innerY < 0.0 || innerY >= innerHeight) {
+        return vec4<f32>(result, 1.0);
+    }
+
+    let sampleCount = clamp(uniforms.entropyHistoryCount, 0, 64);
+    if (sampleCount <= 1) {
+        return vec4<f32>(result, 1.0);
+    }
+
+    let oldestIndex = select(0, uniforms.entropyHistoryWriteIndex, sampleCount == 64);
+    let threshold = clamp(uniforms.entropyThreshold, 0.0, 1.0);
+    let thresholdY = (1.0 - threshold) * innerHeight;
+    if (abs(innerY - thresholdY) <= 1.0) {
+        result = vec3<f32>(0.85, 0.85, 0.9);
+    }
+
+    let normalizedX = clamp(innerX / max(1.0, innerWidth - 1.0), 0.0, 1.0);
+    let samplePos = normalizedX * f32(sampleCount - 1);
+    let indexLow = i32(floor(samplePos));
+    let indexHigh = min(sampleCount - 1, indexLow + 1);
+    let frac = samplePos - f32(indexLow);
+
+    let ringLow = (oldestIndex + indexLow) % 64;
+    let ringHigh = (oldestIndex + indexHigh) % 64;
+    let entropyLow = entropyHistorySample(ringLow);
+    let entropyHigh = entropyHistorySample(ringHigh);
+    let entropyValue = mix(entropyLow, entropyHigh, frac);
+    let lineY = (1.0 - clamp(entropyValue, 0.0, 1.0)) * innerHeight;
+
+    if (abs(innerY - lineY) <= 1.9) {
+        result = vec3<f32>(0.20, 0.72, 0.98);
+    }
+
+    let latestIndex = (uniforms.entropyHistoryWriteIndex + 63) % 64;
+    let latestEntropy = entropyHistorySample(latestIndex);
+    let latestY = (1.0 - clamp(latestEntropy, 0.0, 1.0)) * innerHeight;
+    let pointDist = distance(vec2<f32>(innerX, innerY), vec2<f32>(innerWidth - 1.0, latestY));
+    if (pointDist <= 2.0) {
+        result = vec3<f32>(0.92, 0.96, 1.0);
+    }
+
+    if (uniforms.entropyAboveThreshold != 0) {
+        let glowRadius = max(8.0, innerHeight * 0.22);
+        let glow = uniforms.entropyBloomStrength * exp(-(pointDist * pointDist) / (glowRadius * glowRadius));
+        result += vec3<f32>(1.0, 0.35, 0.16) * glow;
+        result = clamp(result, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
+
+    return vec4<f32>(result, 1.0);
+}
+
 fn drawHistograms(pixelCoord: vec2<f32>) -> vec4<f32> {
     if (uniforms.disableHistograms != 0) {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+
+    let entropyIndicator = drawEntropyIndicator(pixelCoord);
+    if (entropyIndicator.a > 0.0) {
+        return entropyIndicator;
     }
 
     // Draw density histogram (configurable position)
@@ -385,6 +596,16 @@ fn fs_main(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
                 finalColor = max(finalColor, vec3<f32>(0.0, 0.0, 0.0));
             } else if (viewportRenderTarget == 3) {
                 finalColor = mapInkToColor(redInk, greenInk, blueInk);
+            } else if (viewportRenderTarget == 4) {
+                let divergence = computeDivergenceFromVelocity(texCoord);
+                let divergenceScale = computeLocalDivergenceScale(texCoord);
+                finalColor = mapDivergenceDebug(divergence, divergenceScale);
+            } else if (viewportRenderTarget == 5) {
+                finalColor = mapValueToHeatmap(density, 0.0, 1.0);
+            } else if (viewportRenderTarget == 6) {
+                finalColor = computeNormalLighting(texCoord);
+            } else if (viewportRenderTarget == 7) {
+                finalColor = renderThresholdBloom(texCoord, density);
             }
         } else {
             finalColor = vec3<f32>(0.47);

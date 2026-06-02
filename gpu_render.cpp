@@ -103,6 +103,45 @@ void GPURenderer::updateUniformBufferRender(const ISimulator& simulator) {
         uniformData.velocityHistogramHeight = vhIt->second.height;
     }
 
+    auto ethIt = g_layoutPixels.components.find("entropy_time_series");
+    if (ethIt == g_layoutPixels.components.end()) {
+        ethIt = g_layoutPixels.components.find("entropy_histogram");
+    }
+
+    auto ethCfgIt = g_config.layout.components.find("entropy_time_series");
+    if (ethCfgIt == g_config.layout.components.end()) {
+        ethCfgIt = g_config.layout.components.find("entropy_histogram");
+    }
+
+    if (ethIt != g_layoutPixels.components.end() && ethCfgIt != g_config.layout.components.end()) {
+        uniformData.entropyTimeSeriesEnabled = ethCfgIt->second.enabled ? 1 : 0;
+        uniformData.entropyTimeSeriesX = ethIt->second.x;
+        uniformData.entropyTimeSeriesY = ethIt->second.y;
+        uniformData.entropyTimeSeriesWidth = ethIt->second.width;
+        uniformData.entropyTimeSeriesHeight = ethIt->second.height;
+    } else {
+        uniformData.entropyTimeSeriesEnabled = 0;
+        uniformData.entropyTimeSeriesX = 0;
+        uniformData.entropyTimeSeriesY = 0;
+        uniformData.entropyTimeSeriesWidth = 0;
+        uniformData.entropyTimeSeriesHeight = 0;
+    }
+
+    uniformData.entropyCurrentValue = entropyNormalized;
+    uniformData.entropyThreshold = entropyThreshold;
+    uniformData.entropyBloomStrength = entropyBloomStrength;
+    uniformData.entropyAboveThreshold = (entropyNormalized >= entropyThreshold) ? 1 : 0;
+    uniformData.entropyHistoryMax = entropyHistoryMax;
+    uniformData.entropyHistoryCount = entropyHistoryCount;
+    uniformData.entropyHistoryWriteIndex = entropyHistoryWriteIndex;
+    uniformData.entropyPad0 = 0;
+    for (int i = 0; i < 16; i++) {
+        uniformData.entropyHistory[i].x = entropyHistory[i * 4 + 0];
+        uniformData.entropyHistory[i].y = entropyHistory[i * 4 + 1];
+        uniformData.entropyHistory[i].z = entropyHistory[i * 4 + 2];
+        uniformData.entropyHistory[i].w = entropyHistory[i * 4 + 3];
+    }
+
     // update uniform buffer
     wgpuQueueWriteBuffer(queue, uniformBuffer, 0, &uniformData, sizeof(UniformData));
 }
@@ -323,6 +362,14 @@ GPURenderer::GPURenderer(SDL_Window* window, const Config& config)
     uniformData.windowWidth = static_cast<float>(windowWidth);
     uniformData.windowHeight = static_cast<float>(windowHeight);
     uniformData.disableHistograms = g_config.rendering.disableHistograms ? 1 : 0;
+    uniformData.entropyCurrentValue = 0.0f;
+    uniformData.entropyThreshold = entropyThreshold;
+    uniformData.entropyBloomStrength = entropyBloomStrength;
+    uniformData.entropyAboveThreshold = 0;
+    uniformData.entropyHistoryMax = 1.0f;
+    uniformData.entropyHistoryCount = 0;
+    uniformData.entropyHistoryWriteIndex = 0;
+    uniformData.entropyPad0 = 0;
 }
 
 GPURenderer::~GPURenderer() {
@@ -649,6 +696,22 @@ void GPURenderer::computeHistograms(const ISimulator& simulator) {
                 velocityHistogramMaxCount = std::max(velocityHistogramMaxCount, velocityHistogramBins[i]);
             }
 
+            entropyValue = IRenderer::computeShannonEntropy(densityHistogramBins);
+            const float maxEntropy = std::log2(static_cast<float>(IRenderer::HISTOGRAM_BINS));
+            if (maxEntropy > ENTROPY_EPSILON) {
+                entropyNormalized = std::max(0.0f, std::min(1.0f, entropyValue / maxEntropy));
+            } else {
+                entropyNormalized = 0.0f;
+            }
+
+            entropyHistory[entropyHistoryWriteIndex] = entropyNormalized;
+            entropyHistoryWriteIndex = (entropyHistoryWriteIndex + 1) % ENTROPY_HISTORY_SAMPLES;
+            entropyHistoryCount = std::min(entropyHistoryCount + 1, ENTROPY_HISTORY_SAMPLES);
+            entropyHistoryMax = ENTROPY_EPSILON;
+            for (int i = 0; i < entropyHistoryCount; i++) {
+                entropyHistoryMax = std::max(entropyHistoryMax, entropyHistory[i]);
+            }
+
             gpuSim.advanceHistogramReadIndex();
         }
     } else {
@@ -672,6 +735,22 @@ void GPURenderer::computeHistograms(const ISimulator& simulator) {
         for (int i = 0; i < IRenderer::HISTOGRAM_BINS; i++) {
             densityHistogramMaxCount = std::max(densityHistogramMaxCount, densityHistogramBins[i]);
             velocityHistogramMaxCount = std::max(velocityHistogramMaxCount, velocityHistogramBins[i]);
+        }
+
+        entropyValue = IRenderer::computeShannonEntropy(densityHistogramBins);
+        const float maxEntropy = std::log2(static_cast<float>(IRenderer::HISTOGRAM_BINS));
+        if (maxEntropy > ENTROPY_EPSILON) {
+            entropyNormalized = std::max(0.0f, std::min(1.0f, entropyValue / maxEntropy));
+        } else {
+            entropyNormalized = 0.0f;
+        }
+
+        entropyHistory[entropyHistoryWriteIndex] = entropyNormalized;
+        entropyHistoryWriteIndex = (entropyHistoryWriteIndex + 1) % ENTROPY_HISTORY_SAMPLES;
+        entropyHistoryCount = std::min(entropyHistoryCount + 1, ENTROPY_HISTORY_SAMPLES);
+        entropyHistoryMax = ENTROPY_EPSILON;
+        for (int i = 0; i < entropyHistoryCount; i++) {
+            entropyHistoryMax = std::max(entropyHistoryMax, entropyHistory[i]);
         }
     }
 }

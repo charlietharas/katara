@@ -37,6 +37,8 @@ private:
     void convertCoordinates(float simX, float simY, int& pixelX, int& pixelY);
     void mapValueToColor(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b);
     void mapValueToGreyscale(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b);
+    void mapValueToHeatmap(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b);
+    void mapDivergenceDebug(float divergence, float scale, Uint8& r, Uint8& g, Uint8& b);
     void mapValueToVelocityColor(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b);
     void mapInkToColor(float r, float g, float b, Uint8& outR, Uint8& outG, Uint8& outB);
     void drawFluidField(const ISimulator& simulator, int drawTarget);

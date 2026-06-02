@@ -6,6 +6,7 @@
 #include "irenderer.h"
 #include "config.h"
 #include "boilerplate.h"
+#include <array>
 #include <vector>
 #include <string>
 #include <fstream>
@@ -14,9 +15,14 @@ struct alignas(16) Vec4Int {
     int x, y, z, w;
 };
 
+struct alignas(16) Vec4Float {
+    float x, y, z, w;
+};
+
 // RENDER PASS UNIFORM
 struct alignas(16) UniformData {
-    int drawTarget; // 0=pressure, 1=smoke, 2=both, 3=ink
+    // 0=pressure, 1=smoke, 2=both(pretty), 3=ink, 4=divergence, 5=heatmap, 6=normals, 7=threshold+bloom
+    int drawTarget;
     int gridX;
     int gridY;
     float cellSize;
@@ -32,6 +38,7 @@ struct alignas(16) UniformData {
 
     // Viewport configuration (up to 4 viewports)
     int viewportCount;
+    int viewportPad0[2]; // matches WGSL alignment before first vec4<i32> viewport field
     int viewportX[4];
     int viewportY[4];
     int viewportWidth[4];
@@ -51,6 +58,20 @@ struct alignas(16) UniformData {
     int velocityHistogramY;
     int velocityHistogramWidth;
     int velocityHistogramHeight;
+    int entropyTimeSeriesEnabled;
+    int entropyTimeSeriesX;
+    int entropyTimeSeriesY;
+    int entropyTimeSeriesWidth;
+    int entropyTimeSeriesHeight;
+    float entropyCurrentValue;
+    float entropyThreshold;
+    float entropyBloomStrength;
+    int entropyAboveThreshold;
+    float entropyHistoryMax;
+    int entropyHistoryCount;
+    int entropyHistoryWriteIndex;
+    int entropyPad0;
+    Vec4Float entropyHistory[16];
 
     // Histogram data
     float densityHistogramMin;
@@ -69,6 +90,8 @@ class GPURenderer : public WGPUBoilerplate, public IRenderer {
 public:
     static constexpr WGPUTextureUsageFlags TEXTURE_BINDING_FLAGS = WGPUTextureUsage_CopyDst | WGPUTextureUsage_TextureBinding;
     static constexpr int HISTOGRAM_FRAME_INTERVAL = 1; // compute histograms every n frames
+    static constexpr float ENTROPY_EPSILON = 1e-6f;
+    static constexpr int ENTROPY_HISTORY_SAMPLES = 64;
 
     GPURenderer(SDL_Window* window, const Config& config);
     ~GPURenderer();
@@ -95,6 +118,14 @@ private:
     float velocityHistogramMin = 0.0f;
     float velocityHistogramMax = 1.0f;
     int velocityHistogramMaxCount = 0;
+    float entropyValue = 0.0f;
+    float entropyNormalized = 0.0f;
+    float entropyThreshold = 0.72f;
+    float entropyBloomStrength = 0.38f;
+    std::array<float, ENTROPY_HISTORY_SAMPLES> entropyHistory = {};
+    int entropyHistoryWriteIndex = 0;
+    int entropyHistoryCount = 0;
+    float entropyHistoryMax = 1.0f;
 
     // webgpu core
     WGPUInstance instance = nullptr;

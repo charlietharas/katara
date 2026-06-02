@@ -181,6 +181,7 @@ class KataraWebApp {
         this.setupCameraCapture();
         this.setupResetButton();
         this.setupPauseButton();
+        this.setupKeyboardShortcuts();
         this.setupViewportButtons();
         this.updateViewportButtons();
 
@@ -465,6 +466,84 @@ class KataraWebApp {
         cheeseBtn.addEventListener('click', () => this.captureFromCamera());
     }
 
+    resetSimulation() {
+        if (this.module && this.module._resetFluidField) {
+            this.module._resetFluidField();
+        } else {
+            console.error('resetFluidField not available');
+        }
+    }
+
+    togglePause() {
+        this.simulationPaused = !this.simulationPaused;
+
+        const pauseBtn = document.getElementById('pauseBtn');
+        const pauseBtnIcon = document.getElementById('pauseBtnIcon');
+        const pauseBtnLabel = document.getElementById('pauseBtnLabel');
+        if (!pauseBtn || !pauseBtnIcon || !pauseBtnLabel) {
+            console.error('Pause button not found');
+            return;
+        }
+
+        if (this.module && this.module._setSimulationPaused) {
+            this.module._setSimulationPaused(this.simulationPaused ? 1 : 0);
+        } else {
+            console.error('setSimulationPaused not available');
+        }
+
+        if (this.simulationPaused) {
+            if (this.module) {
+                this.module._updateFingertips(0, 0);
+                this.module._updateLineSegments(0, 0);
+            }
+            pauseBtnIcon.innerHTML = '<polygon points="8,5 19,12 8,19"></polygon>';
+            pauseBtnIcon.setAttribute('fill', 'currentColor');
+            pauseBtnIcon.setAttribute('stroke', 'currentColor');
+            pauseBtnIcon.setAttribute('stroke-width', '2');
+            pauseBtnIcon.setAttribute('stroke-linejoin', 'round');
+            pauseBtnLabel.textContent = '[P]esume';
+            pauseBtn.title = 'Resume simulation (P)';
+        } else {
+            pauseBtnIcon.innerHTML = '<rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect>';
+            pauseBtnIcon.removeAttribute('stroke');
+            pauseBtnIcon.removeAttribute('stroke-width');
+            pauseBtnIcon.removeAttribute('stroke-linejoin');
+            pauseBtnLabel.textContent = '[P]ause';
+            pauseBtn.title = 'Pause simulation (P)';
+        }
+    }
+
+    setupKeyboardShortcuts() {
+        document.addEventListener('keydown', (event) => {
+            const target = event.target;
+            if (target instanceof HTMLInputElement ||
+                target instanceof HTMLTextAreaElement ||
+                target instanceof HTMLSelectElement ||
+                target.isContentEditable) {
+                return;
+            }
+
+            if (event.ctrlKey || event.metaKey || event.altKey) {
+                return;
+            }
+
+            switch (event.key.toLowerCase()) {
+                case 'c':
+                    event.preventDefault();
+                    this.captureFromCamera();
+                    break;
+                case 'p':
+                    event.preventDefault();
+                    this.togglePause();
+                    break;
+                case 'r':
+                    event.preventDefault();
+                    this.resetSimulation();
+                    break;
+            }
+        });
+    }
+
     setupResetButton() {
         const resetBtn = document.getElementById('resetBtn');
         if (!resetBtn) {
@@ -472,13 +551,7 @@ class KataraWebApp {
             return;
         }
 
-        resetBtn.addEventListener('click', () => {
-            if (this.module && this.module._resetFluidField) {
-                this.module._resetFluidField();
-            } else {
-                console.error('resetFluidField not available');
-            }
-        });
+        resetBtn.addEventListener('click', () => this.resetSimulation());
     }
 
     setupPauseButton() {
@@ -491,36 +564,7 @@ class KataraWebApp {
             return;
         }
 
-        pauseBtn.addEventListener('click', () => {
-            this.simulationPaused = !this.simulationPaused;
-
-            if (this.module && this.module._setSimulationPaused) {
-                this.module._setSimulationPaused(this.simulationPaused ? 1 : 0);
-            } else {
-                console.error('setSimulationPaused not available');
-            }
-
-            if (this.simulationPaused) {
-                if (this.module) {
-                    this.module._updateFingertips(0, 0);
-                    this.module._updateLineSegments(0, 0);
-                }
-                pauseBtnIcon.innerHTML = '<polygon points="8,5 19,12 8,19"></polygon>';
-                pauseBtnIcon.setAttribute('fill', 'currentColor');
-                pauseBtnIcon.setAttribute('stroke', 'currentColor');
-                pauseBtnIcon.setAttribute('stroke-width', '2');
-                pauseBtnIcon.setAttribute('stroke-linejoin', 'round');
-                pauseBtnLabel.textContent = 'Resume';
-                pauseBtn.title = 'Resume simulation';
-            } else {
-                pauseBtnIcon.innerHTML = '<rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect>';
-                pauseBtnIcon.removeAttribute('stroke');
-                pauseBtnIcon.removeAttribute('stroke-width');
-                pauseBtnIcon.removeAttribute('stroke-linejoin');
-                pauseBtnLabel.textContent = 'Pause';
-                pauseBtn.title = 'Pause simulation';
-            }
-        });
+        pauseBtn.addEventListener('click', () => this.togglePause());
     }
 
     setupViewportButtons() {
@@ -683,6 +727,8 @@ class KataraWebApp {
 }
 
 class ViewportController {
+    static TARGET_COUNT = 8;
+
     constructor(viewportIndex, viewportName, target, velocity, layoutRect, parentApp) {
         this.viewportIndex = viewportIndex;
         this.viewportName = viewportName;
@@ -757,7 +803,7 @@ class ViewportController {
     }
 
     cycleTarget() {
-        this.target = (this.target + 1) % 4;
+        this.target = (this.target + 1) % ViewportController.TARGET_COUNT;
         this.updateDisplay();
 
         // Pass viewport index instead of string (simpler, no string conversion needed)

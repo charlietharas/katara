@@ -28,6 +28,29 @@ public:
         float velocityHistogramMax;
     };
 
+    static float computeShannonEntropy(const std::vector<int>& bins) {
+        long long totalCount = 0;
+        for (int count : bins) {
+            if (count > 0) {
+                totalCount += count;
+            }
+        }
+        if (totalCount <= 0) {
+            return 0.0f;
+        }
+
+        float entropy = 0.0f;
+        const float invTotal = 1.0f / static_cast<float>(totalCount);
+        for (int count : bins) {
+            if (count <= 0) {
+                continue;
+            }
+            const float probability = static_cast<float>(count) * invTotal;
+            entropy -= probability * std::log2(probability);
+        }
+        return entropy;
+    }
+
     static void computeHistograms(const ISimulator& simulator, HistogramData& data) {
         const auto& pressure = simulator.getPressure();
         const auto& solid = simulator.getSolid();

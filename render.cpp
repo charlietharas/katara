@@ -134,6 +134,58 @@ void Renderer::mapValueToGreyscale(float value, float min, float max, Uint8& r, 
     r = g = b = static_cast<Uint8>(t);
 }
 
+void Renderer::mapValueToHeatmap(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b) {
+    float t = (value - min) / (max - min);
+    t = std::max(0.0f, std::min(1.0f, t));
+
+    float fr = 0.0f;
+    float fg = 0.0f;
+    float fb = 0.0f;
+
+    if (t < 0.33f) {
+        float k = t / 0.33f;
+        fr = 0.0f;
+        fg = k;
+        fb = 1.0f;
+    } else if (t < 0.66f) {
+        float k = (t - 0.33f) / 0.33f;
+        fr = k;
+        fg = 1.0f;
+        fb = 1.0f - k;
+    } else {
+        float k = (t - 0.66f) / 0.34f;
+        fr = 1.0f;
+        fg = 1.0f - 0.75f * k;
+        fb = 0.0f;
+    }
+
+    r = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, fr * 255.0f)));
+    g = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, fg * 255.0f)));
+    b = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, fb * 255.0f)));
+}
+
+void Renderer::mapDivergenceDebug(float divergence, float scale, Uint8& r, Uint8& g, Uint8& b) {
+    float normalized = divergence / std::max(scale, 1e-4f);
+    normalized = std::max(-1.0f, std::min(1.0f, normalized));
+    float magnitude = std::pow(std::abs(normalized), 0.65f);
+
+    float baseR = 0.02f;
+    float baseG = 0.02f;
+    float baseB = 0.025f;
+
+    float tintR = normalized >= 0.0f ? 1.0f : 0.12f;
+    float tintG = normalized >= 0.0f ? 0.24f : 0.38f;
+    float tintB = normalized >= 0.0f ? 0.14f : 1.0f;
+
+    float outR = std::max(0.0f, std::min(1.0f, baseR + tintR * magnitude));
+    float outG = std::max(0.0f, std::min(1.0f, baseG + tintG * magnitude));
+    float outB = std::max(0.0f, std::min(1.0f, baseB + tintB * magnitude));
+
+    r = static_cast<Uint8>(outR * 255.0f);
+    g = static_cast<Uint8>(outG * 255.0f);
+    b = static_cast<Uint8>(outB * 255.0f);
+}
+
 void Renderer::mapValueToVelocityColor(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b) {
     value = std::max(min, std::min(max - 0.0001f, value));
     float delta = max - min;
@@ -171,6 +223,8 @@ void Renderer::setPixel(int x, int y, Uint8 r, Uint8 g, Uint8 b) {
 void Renderer::drawFluidField(const ISimulator& simulator, int drawTarget) {
     const auto& pressure = simulator.getPressure();
     const auto& density = simulator.getDensity();
+    const auto& velocityX = simulator.getVelocityX();
+    const auto& velocityY = simulator.getVelocityY();
     const auto& solid = simulator.getSolid();
 
     float cellSize = simulator.cellSize;
@@ -183,6 +237,21 @@ void Renderer::drawFluidField(const ISimulator& simulator, int drawTarget) {
     for (int i = 0; i < gridX * gridY; i++) {
         minP = std::min(minP, pressure[i]);
         maxP = std::max(maxP, pressure[i]);
+    }
+
+    float maxAbsDiv = 0.0f;
+    if (drawTarget == 4) {
+        for (int i = 0; i < gridX; i++) {
+            for (int j = 0; j < gridY; j++) {
+                int idx = j * gridX + i;
+                int idxRight = j * gridX + std::min(i + 1, gridX - 1);
+                int idxTop = std::min(j + 1, gridY - 1) * gridX + i;
+                int idxBottom = std::max(j - 1, 0) * gridX + i;
+                float divergence = velocityX[idxRight] - velocityX[idx] + velocityY[idxTop] - velocityY[idxBottom];
+                maxAbsDiv = std::max(maxAbsDiv, std::abs(divergence));
+            }
+        }
+        maxAbsDiv = std::max(maxAbsDiv, 1e-4f);
     }
 
     // get ink references if needed
@@ -211,6 +280,77 @@ void Renderer::drawFluidField(const ISimulator& simulator, int drawTarget) {
                 } else if (drawTarget == 1) {
                     // draw smoke/density
                     mapValueToGreyscale(density[idx], 0.0f, 1.0f, r, g, b);
+                } else if (drawTarget == 4) {
+                    int idxRight = j * gridX + std::min(i + 1, gridX - 1);
+                    int idxTop = std::min(j + 1, gridY - 1) * gridX + i;
+                    int idxBottom = std::max(j - 1, 0) * gridX + i;
+                    float divergence = velocityX[idxRight] - velocityX[idx] + velocityY[idxTop] - velocityY[idxBottom];
+                    mapDivergenceDebug(divergence, maxAbsDiv, r, g, b);
+                } else if (drawTarget == 5) {
+                    mapValueToHeatmap(density[idx], 0.0f, 1.0f, r, g, b);
+                } else if (drawTarget == 6) {
+                    int idxLeft = j * gridX + std::max(i - 1, 0);
+                    int idxRight = j * gridX + std::min(i + 1, gridX - 1);
+                    int idxTop = std::min(j + 1, gridY - 1) * gridX + i;
+                    int idxBottom = std::max(j - 1, 0) * gridX + i;
+
+                    float dx = density[idxRight] - density[idxLeft];
+                    float dy = density[idxTop] - density[idxBottom];
+                    float nz = 1.0f;
+                    float nx = -dx * 4.0f;
+                    float ny = -dy * 4.0f;
+                    float normalLen = std::sqrt(nx * nx + ny * ny + nz * nz);
+                    if (normalLen > 0.0f) {
+                        nx /= normalLen;
+                        ny /= normalLen;
+                        nz /= normalLen;
+                    }
+
+                    const float lightX = 0.45f;
+                    const float lightY = -0.55f;
+                    const float lightZ = 0.70f;
+                    float diffuse = std::max(0.0f, nx * lightX + ny * lightY + nz * lightZ);
+                    float intensity = 0.20f + 0.80f * diffuse;
+                    Uint8 shade = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, intensity * 255.0f)));
+                    r = g = b = shade;
+                } else if (drawTarget == 7) {
+                    auto smoothstep = [](float edge0, float edge1, float x) {
+                        float t = (x - edge0) / (edge1 - edge0);
+                        t = std::max(0.0f, std::min(1.0f, t));
+                        return t * t * (3.0f - 2.0f * t);
+                    };
+
+                    const float threshold = 0.35f;
+                    const float softness = 0.10f;
+
+                    float centerDensity = density[idx];
+                    float thresholdMask = smoothstep(threshold, threshold + softness, centerDensity);
+
+                    float glowAccum = 0.0f;
+                    int glowSamples = 0;
+                    for (int oy = -1; oy <= 1; oy++) {
+                        for (int ox = -1; ox <= 1; ox++) {
+                            int sx = std::max(0, std::min(gridX - 1, i + ox));
+                            int sy = std::max(0, std::min(gridY - 1, j + oy));
+                            float d = density[sy * gridX + sx];
+                            glowAccum += std::max(0.0f, d - threshold);
+                            glowSamples++;
+                        }
+                    }
+
+                    float glow = (glowSamples > 0) ? (glowAccum / static_cast<float>(glowSamples)) : 0.0f;
+                    glow = std::min(1.0f, glow * 2.0f);
+
+                    Uint8 baseR, baseG, baseB;
+                    mapValueToHeatmap(centerDensity, 0.0f, 1.0f, baseR, baseG, baseB);
+
+                    float outR = static_cast<float>(baseR) * (1.0f - 0.35f * thresholdMask) + 255.0f * glow;
+                    float outG = static_cast<float>(baseG) * (1.0f - 0.35f * thresholdMask) + 190.0f * glow;
+                    float outB = static_cast<float>(baseB) * (1.0f - 0.35f * thresholdMask) + 80.0f * glow;
+
+                    r = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, outR)));
+                    g = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, outG)));
+                    b = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, outB)));
                 } else if (drawTarget == 3) {
                     // draw ink diffusion
                     if (inkInitialized && inkRed_ptr->size() > idx) {

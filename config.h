@@ -71,7 +71,8 @@ struct SimulationConfig {
 };
 
 struct RenderingConfig {
-    int target = 2; // 0=pressure, 1=smoke, 2=both, 3=ink
+    // 0=pressure, 1=smoke, 2=both(pretty), 3=ink, 4=divergence, 5=heatmap, 6=normals, 7=threshold+bloom
+    int target = 2;
     bool showVelocityVectors = false;
     bool disableHistograms = false;
     float velocityScale = 0.05f;
@@ -88,7 +89,8 @@ struct ComponentBBox {
     float h = 0.5f;
     int px = 0;          // horizontal padding (raw px)
     int py = 0;          // vertical padding (raw px)
-    int target = 2;      // render target (viewports: 0=pressure,1=smoke,2=both,3=ink)
+    // render target (viewports: 0=pressure,1=smoke,2=both,3=ink,4=divergence,5=heatmap,6=normals,7=threshold+bloom)
+    int target = 2;
     bool enabled = true; // enabled flag (histograms)
     bool velocity = false; // show velocity vectors (viewports)
 };

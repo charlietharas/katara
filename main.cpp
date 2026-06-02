@@ -255,7 +255,7 @@ extern "C" {
     }
 
     // Set viewport target by index (0=viewport_1, 1=viewport_2, 2=viewport_3)
-    // target: 0=pressure, 1=smoke, 2=both, 3=ink
+    // target: 0=pressure, 1=smoke, 2=both, 3=ink, 4=divergence, 5=heatmap, 6=normals, 7=threshold+bloom
     EMSCRIPTEN_KEEPALIVE
     void setViewportTarget(int viewportIndex, int target) {
         std::string vpName = "viewport_" + std::to_string(viewportIndex + 1);
