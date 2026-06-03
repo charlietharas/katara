@@ -85,6 +85,9 @@ class KataraWebApp {
         this.viewportControllers = new Map();
         this.plotLabelElements = new Map();
 
+        // Camera availability state tracking
+        this.cameraDetected = false;
+
         // Show loading overlay
         const loadingOverlay = document.getElementById('loadingOverlay');
         if (loadingOverlay) {
@@ -258,30 +261,74 @@ class KataraWebApp {
         this.processLoop();
     }
 
-    async setupCamera() {
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: 'user' }
-        });
+    async detectCameraAvailability() {
+        try {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+                return false;
+            }
 
-        this.videoElement = document.createElement('video');
-        this.videoElement.muted = true;
-        this.videoElement.playsInline = true;
-        this.videoElement.setAttribute('playsinline', '');
-        this.videoElement.srcObject = stream;
-        document.body.appendChild(this.videoElement);
-        this.videoElement.play();
-        await new Promise(resolve => this.videoElement.onloadeddata = resolve);
-
-        // Adjust camera canvas to match camera stream aspect ratio
-        const videoWidth = this.videoElement.videoWidth;
-        const videoHeight = this.videoElement.videoHeight;
-        console.log('Camera stream dimensions:', videoWidth, videoHeight);
-
-        if (videoWidth && videoHeight) {
-            this.cameraCanvas.width = videoWidth;
-            this.cameraCanvas.height = videoHeight;
-            this.cameraAspectRatio = videoWidth / videoHeight;
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const videoDevices = devices.filter(device => device.kind === 'videoinput');
+            return videoDevices.length > 0;
+        } catch (error) {
+            console.error('Camera detection failed:', error);
+            return false;
         }
+    }
+
+    async setupCamera() {
+        // Check camera availability
+        this.cameraDetected = await this.detectCameraAvailability();
+        console.log('Camera detected:', this.cameraDetected);
+
+        // Try to get camera stream
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'user' }
+            });
+
+            this.videoElement = document.createElement('video');
+            this.videoElement.muted = true;
+            this.videoElement.playsInline = true;
+            this.videoElement.setAttribute('playsinline', '');
+            this.videoElement.srcObject = stream;
+            document.body.appendChild(this.videoElement);
+            this.videoElement.play();
+            await new Promise(resolve => this.videoElement.onloadeddata = resolve);
+
+            // Adjust camera canvas to match camera stream aspect ratio
+            const videoWidth = this.videoElement.videoWidth;
+            const videoHeight = this.videoElement.videoHeight;
+            console.log('Camera stream dimensions:', videoWidth, videoHeight);
+
+            if (videoWidth && videoHeight) {
+                this.cameraCanvas.width = videoWidth;
+                this.cameraCanvas.height = videoHeight;
+                this.cameraAspectRatio = videoWidth / videoHeight;
+            }
+        } catch (error) {
+            console.warn('Camera access failed:', error.message);
+            // Render no camera message in canvas
+            this.renderNoCameraMessage();
+        }
+    }
+
+    renderNoCameraMessage() {
+        const ctx = this.cameraCtx;
+        if (!ctx) return;
+
+        const canvas = this.cameraCanvas;
+        const width = canvas.width;
+        const height = canvas.height;
+
+        ctx.fillStyle = '#1a1a1a';
+        ctx.fillRect(0, 0, width, height);
+
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 24px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('ERR_NO_VIDEO', width / 2, height / 2);
     }
 
     initLayoutFromCpp() {
@@ -376,7 +423,6 @@ class KataraWebApp {
             this.cameraCanvas.style.width = '100%';
             this.cameraCanvas.style.height = '100%';
             this.cameraCanvas.style.maxWidth = 'none';
-            console.log('Camera positioned from layout:', camFrame.x, camFrame.y, camFrame.width, 'x', camFrame.height);
         } else {
             camPanel.style.display = 'none';
         }
@@ -995,6 +1041,8 @@ class KataraWebApp {
 
             const video = this.videoElement;
             if (!(video instanceof HTMLVideoElement) || video.readyState < 2 || video.videoWidth === 0) {
+                // Render "no camera" message if video is not available
+                this.renderNoCameraMessage();
                 requestAnimationFrame(() => this.processLoop());
                 return;
             }
@@ -1278,4 +1326,8 @@ class ViewportController {
     }
 }
 
-document.addEventListener('DOMContentLoaded', () => new KataraWebApp().init());
+document.addEventListener('DOMContentLoaded', () => {
+    const app = new KataraWebApp();
+    window.kataraApp = app;
+    app.init();
+});

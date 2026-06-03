@@ -1392,7 +1392,7 @@ function createSkeletonSections(currentConfig) {
     ));
     layoutSection.addHeaderControl(new HeaderCheckboxControl(
         'layout.camerasEnabled',
-        'Cameras',
+        'Camera',
         layout.camerasEnabled ?? true
     ));
     sections.push(layoutSection);
