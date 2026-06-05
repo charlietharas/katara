@@ -77,6 +77,29 @@ function getSimViewportSize() {
     };
 }
 
+function getSimCanvasAspectRatio() {
+    const app = window.kataraApp;
+    let domainAspect = null;
+    if (app?.module?._getSimDomainWidth && app?.module?._getSimDomainHeight) {
+        const domainWidth = app.module._getSimDomainWidth();
+        const domainHeight = app.module._getSimDomainHeight();
+        if (domainWidth > 0 && domainHeight > 0) {
+            domainAspect = domainWidth / domainHeight;
+        }
+    }
+
+    const inkAspect = app?.inkAspectRatio;
+    // After image upload, inkAspectRatio updates immediately but sim domain may stay stale until reload.
+    if (inkAspect > 0 && domainAspect !== null) {
+        const drift = Math.abs(inkAspect - domainAspect) / Math.max(domainAspect, 0.001);
+        if (drift > 0.02) return inkAspect;
+        return domainAspect;
+    }
+    if (inkAspect > 0) return inkAspect;
+    if (domainAspect !== null) return domainAspect;
+    return 1.0;
+}
+
 function bindSliderRow(row, { onChange, format = String }) {
     const input = row.querySelector('input');
     const display = row.querySelector('.value-display');
@@ -601,6 +624,7 @@ class VorticityControl extends ConfigControl {
         this.ctx = this.canvas.getContext('2d');
         this.element = container;
 
+        this.updateCanvasContainerAspect();
         this.setupCanvas();
         this.setupInteraction();
 
@@ -618,6 +642,25 @@ class VorticityControl extends ConfigControl {
             this.updateDisplay();
             this.draw();
         }
+    }
+
+    updateCanvasContainerAspect() {
+        const container = this.canvas?.parentElement;
+        if (!container) return;
+        container.style.aspectRatio = `${getSimCanvasAspectRatio()}`;
+    }
+
+    refreshLayout() {
+        this.updateCanvasContainerAspect();
+        const container = this.canvas?.parentElement;
+        if (!container || !this.canvas) return;
+        const rect = container.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return;
+        this.canvas.width = rect.width;
+        this.canvas.height = rect.height;
+        this.centerX = this.canvas.width / 2;
+        this.centerY = this.canvas.height / 2;
+        this.draw();
     }
 
     setupCanvas() {
@@ -1369,33 +1412,10 @@ class EnvironmentControl extends ConfigControl {
         this.widthSlider = null;
     }
 
-    getAspectRatio() {
-        const app = window.kataraApp;
-        let domainAspect = null;
-        if (app?.module?._getSimDomainWidth && app?.module?._getSimDomainHeight) {
-            const domainWidth = app.module._getSimDomainWidth();
-            const domainHeight = app.module._getSimDomainHeight();
-            if (domainWidth > 0 && domainHeight > 0) {
-                domainAspect = domainWidth / domainHeight;
-            }
-        }
-
-        const inkAspect = app?.inkAspectRatio;
-        // After image upload, inkAspectRatio updates immediately but sim domain may stay stale until reload.
-        if (inkAspect > 0 && domainAspect !== null) {
-            const drift = Math.abs(inkAspect - domainAspect) / Math.max(domainAspect, 0.001);
-            if (drift > 0.02) return inkAspect;
-            return domainAspect;
-        }
-        if (inkAspect > 0) return inkAspect;
-        if (domainAspect !== null) return domainAspect;
-        return 1.0;
-    }
-
     updateCanvasContainerAspect() {
         const container = this.canvas?.parentElement;
         if (!container) return;
-        container.style.aspectRatio = `${this.getAspectRatio()}`;
+        container.style.aspectRatio = `${getSimCanvasAspectRatio()}`;
     }
 
     refreshLayout() {
@@ -1543,7 +1563,7 @@ class EnvironmentControl extends ConfigControl {
     computeLayout() {
         const w = this.canvas.width;
         const h = this.canvas.height;
-        const aspect = this.getAspectRatio();
+        const aspect = getSimCanvasAspectRatio();
         const canvasPad = Math.max(12, Math.min(w, h) * 0.10);
         const edgeThickness = Math.max(5, Math.min(w, h) * 0.05);
         const inner = fitCenteredRect(
@@ -1957,7 +1977,7 @@ class SettingsPanel {
         const refresh = () => {
             this.sections.forEach((section) => {
                 section.getAllControls().forEach((control) => {
-                    if (control instanceof EnvironmentControl) {
+                    if (control instanceof EnvironmentControl || control instanceof VorticityControl) {
                         control.refreshLayout();
                     }
                 });

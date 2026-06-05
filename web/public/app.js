@@ -984,70 +984,78 @@ class KataraWebApp {
     async processLoop() {
         try {
             if (!this.simulationPaused) {
-                if (!this.camerasEnabled) {
-                    if (!this.isMouseInput()) this.clearHandTracking();
-                } else {
-                    const video = this.videoElement;
-                    if (!(video instanceof HTMLVideoElement) || video.readyState < 2 || video.videoWidth === 0) {
-                        this.renderNoCameraMessage();
-                    } else if (this.isMouseInput()) {
-                        this.cameraCtx.drawImage(video, 0, 0, this.cameraCanvas.width, this.cameraCanvas.height);
-                        this.clearHandTracking();
-                    } else {
-                        const result = await this.handTracker.detectHands();
-                        this.cameraCtx.drawImage(video, 0, 0, this.cameraCanvas.width, this.cameraCanvas.height);
+                const video = this.videoElement;
+                const hasVideo = video instanceof HTMLVideoElement
+                    && video.readyState >= 2
+                    && video.videoWidth > 0;
 
+                if (this.isMouseInput()) {
+                    if (this.camerasEnabled) {
+                        if (hasVideo) {
+                            this.cameraCtx.drawImage(video, 0, 0, this.cameraCanvas.width, this.cameraCanvas.height);
+                        } else {
+                            this.renderNoCameraMessage();
+                        }
+                    }
+                    this.clearHandTracking();
+                } else if (hasVideo) {
+                    const result = await this.handTracker.detectHands();
+
+                    if (this.camerasEnabled) {
+                        this.cameraCtx.drawImage(video, 0, 0, this.cameraCanvas.width, this.cameraCanvas.height);
                         if (result.hands?.length > 0) {
                             this.drawKeypoints(result.hands);
                         }
-
-                        const allLandmarks = result.landmarks;
-                        if (allLandmarks?.length > 0) {
-                            const modes = this.getHandModes();
-                            if (result.hands) {
-                                const handCount = Math.min(result.hands.length, 2);
-                                for (let handIdx = 0; handIdx < handCount; handIdx++) {
-                                    const { activeSet } = getHandTrackingInfo(result.hands[handIdx], modes);
-                                    const base = handIdx * 21;
-                                    for (let i = 0; i < 21; i++) {
-                                        if (!activeSet.has(i)) allLandmarks[base + i].present = false;
-                                    }
-                                }
-                            }
-
-                            const ptrAll = this.module._malloc(allLandmarks.length * 16);
-                            const heap = this.module.HEAPF32;
-                            let offset = ptrAll / 4;
-                            for (let i = 0; i < allLandmarks.length; i++) {
-                                const lm = allLandmarks[i];
-                                heap[offset++] = 1.0 - lm.x;
-                                heap[offset++] = lm.y;
-                                heap[offset++] = lm.z;
-                                heap[offset++] = lm.present ? 1.0 : 0.0;
-                            }
-
-                            this.module._updateFingertips(ptrAll, allLandmarks.length);
-
-                            if (result.hands) {
-                                const handCount = Math.min(result.hands.length, 2);
-                                for (let handIdx = 0; handIdx < handCount; handIdx++) {
-                                    const { mode } = getHandTrackingInfo(result.hands[handIdx], modes);
-                                    if (mode === 'joints') {
-                                        const base = ptrAll / 4 + handIdx * 21 * 4;
-                                        for (let i = 0; i < 21; i++) {
-                                            heap[base + i * 4 + 3] = 0.0;
-                                        }
-                                    }
-                                }
-                            }
-
-                            this.module._updateLineSegments(ptrAll, allLandmarks.length);
-                            this.module._free(ptrAll);
-                            this.frameCount++;
-                        } else {
-                            this.clearHandTracking();
-                        }
                     }
+
+                    const allLandmarks = result.landmarks;
+                    if (allLandmarks?.length > 0) {
+                        const modes = this.getHandModes();
+                        if (result.hands) {
+                            const handCount = Math.min(result.hands.length, 2);
+                            for (let handIdx = 0; handIdx < handCount; handIdx++) {
+                                const { activeSet } = getHandTrackingInfo(result.hands[handIdx], modes);
+                                const base = handIdx * 21;
+                                for (let i = 0; i < 21; i++) {
+                                    if (!activeSet.has(i)) allLandmarks[base + i].present = false;
+                                }
+                            }
+                        }
+
+                        const ptrAll = this.module._malloc(allLandmarks.length * 16);
+                        const heap = this.module.HEAPF32;
+                        let offset = ptrAll / 4;
+                        for (let i = 0; i < allLandmarks.length; i++) {
+                            const lm = allLandmarks[i];
+                            heap[offset++] = 1.0 - lm.x;
+                            heap[offset++] = lm.y;
+                            heap[offset++] = lm.z;
+                            heap[offset++] = lm.present ? 1.0 : 0.0;
+                        }
+
+                        this.module._updateFingertips(ptrAll, allLandmarks.length);
+
+                        if (result.hands) {
+                            const handCount = Math.min(result.hands.length, 2);
+                            for (let handIdx = 0; handIdx < handCount; handIdx++) {
+                                const { mode } = getHandTrackingInfo(result.hands[handIdx], modes);
+                                if (mode === 'joints') {
+                                    const base = ptrAll / 4 + handIdx * 21 * 4;
+                                    for (let i = 0; i < 21; i++) {
+                                        heap[base + i * 4 + 3] = 0.0;
+                                    }
+                                }
+                            }
+                        }
+
+                        this.module._updateLineSegments(ptrAll, allLandmarks.length);
+                        this.module._free(ptrAll);
+                        this.frameCount++;
+                    } else {
+                        this.clearHandTracking();
+                    }
+                } else if (this.camerasEnabled) {
+                    this.renderNoCameraMessage();
                 }
             }
         } catch (err) {
