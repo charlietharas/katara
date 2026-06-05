@@ -85,10 +85,25 @@ struct UniformData {
 // TODO MAIN -- WIP ^_^
 // we in the browser baby
 
-// TODO wind tunnel & edges control panel
-// TODO ? restore mouse as control option
+// TODO bug: circle blue arrow interactivity
+// TODO hand circle sizes in display match size in circle UI
+// TODO combine hand and interaction pane
+// TODO no line segment mode
+// TODO disable cheese on no camera
+// TODO disable overrelaxation on frontend for gpu pressure solver
 
-// TODO info pane
+// TODO wind tunnel & edges control panel
+
+// TODO fix velocity appearance
+
+// TODO bug: jitter! (see clod)
+// TODO bug: maybe something wrong with the volume calculations
+// TODO entropy behavior is now weird; lots of things got messed up with last claude run on jitter, may want to rewind
+
+// TODO restore mouse as control option
+// TODO new mouse drag option
+
+// TODO info pane, prep spec skeleton
 
 // TODO gravity basically broken
 
@@ -97,16 +112,16 @@ struct UniformData {
 //  - python script for modifying simParams struct uniformly
 // TODO unify cpu and gpu stuff
 // TODO rebuild desktop version, test sth basic still works
-// TODO writeup html file; interactive architectural diagram
-
-// TODO LATER custom renderer??
+// TODO writeup html file; interactive architectural diagram; website changes
 
 /*
-// TODO examine differences in pressure/velocity histograms between GPU/CPU
+// TODO LATER custom renderer??
+
+// TODO LATER examine differences in pressure/velocity histograms between GPU/CPU
 - see plotting script
 // TODO LATER swap to different pressure solver
 
-// TODO up/right wind tunnel behaves differently from down/left
+// TODO LATER up/right wind tunnel behaves differently from down/left
 likely because of the forward texture accesses (e.g. asymmetric +1) somewhere
 or it could be something else...
 - there are still some subtle bugs with gpu sim (bot left corner, circle detection)
