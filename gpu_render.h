@@ -28,7 +28,7 @@ struct alignas(16) UniformData {
     float cellSize;
     float pressureMin;
     float pressureMax;
-    int drawVelocities;
+    int gpuInkMode; // 0=hybrid (R32 at bindings 6-8), 1=gpu (RGBA at binding 6)
     float velScale;
     float windowWidth;
     float windowHeight;
@@ -156,14 +156,10 @@ private:
     WGPUTextureFormat surfaceFormat;
     WGPUBuffer uniformBuffer = nullptr;
     WGPUSampler sampler = nullptr;
-    // for cpu sim
     WGPURenderPipeline renderPipeline = nullptr;
     WGPUBindGroup uniformBindGroup = nullptr;
-    WGPUBindGroupLayout bindGroupLayout = nullptr;
-    // for gpu sim
-    WGPURenderPipeline renderPipelineGPU = nullptr;
     WGPUBindGroup uniformBindGroupGPU = nullptr;
-    WGPUBindGroupLayout bindGroupLayoutGPU = nullptr;
+    WGPUBindGroupLayout bindGroupLayout = nullptr;
 
     // textures and views
     DECLARE_TEXTURE_AND_VIEW(pressure)

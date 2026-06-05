@@ -1,4 +1,5 @@
 {
+    "inputMode": "hand",
     "pipeline": "device",
     "window": {
         "baseSize": 900,
@@ -17,7 +18,7 @@
             "autoScaleIterations": true,
             "motionScaleIterations": 2000,
             "motionCooldownFrames": 10,
-            "motionThreshold": 5.0
+            "motionThreshold": 10.0
         },
         "vorticity": {
             "enabled": true,
@@ -32,24 +33,24 @@
         },
         "circle": {
             "radius": 0.02,
-            "momentumTransferStrength": 5,
-            "momentumTransferRadius": 1,
+            "momentumTransferStrength": 10,
+            "momentumTransferRadius": 2.0,
             "zScaling": {
                 "zMin": -0.1,
                 "zMax": 0.1,
                 "scaleMin": 2,
                 "scaleMax": 0.5
             },
-            "handSmoothingAlphaLow": 0.15,
-            "handSmoothingAlphaHigh": 0.7,
-            "handSpeedThreshold": 5.0,
-            "momentumTransferDeadZone": 20.0
+            "handSmoothingAlphaLow": 0.10,
+            "handSmoothingAlphaHigh": 0.95,
+            "handSpeedThreshold": 6.0,
+            "momentumTransferDeadZone": 22.0
         }
     },
     "rendering": {
         "target": 3,
         "showVelocityVectors": false,
-        "velocityScale": 0.04,
+        "velocityScale": 0.01,
         "disableHistograms": false
     },
     "hands": {
@@ -107,7 +108,7 @@
             "volume_time_series": {
                 "x": 0.25, "y": 0.25, "w": 0.25, "h": 0.25,
                 "px": 5, "py": 5,
-                "enabled": true
+                "enabled": false
             }
         }
     }

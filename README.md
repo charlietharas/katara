@@ -92,7 +92,7 @@ Main loop has two components, which are fully implemented on both the CPU and GP
 
 **Renderer** (abstract interface defined in `irenderer.h`)
 - CPU version in `render.cpp`
-- GPU version in `gpu_render.cpp`; shaders in `fragment.wgsl` (for HYBRID mode), `fragment_gpu.wgsl` (for GPU mode), and `vertex.wgsl`
+- GPU version in `gpu_render.cpp`; shaders in `fragment.wgsl` and `vertex.wgsl`
 
 **Simulator** (abstract interface defined in `isimulator.h`)
 - CPU version in `sim.cpp`

@@ -27,6 +27,32 @@ Simulator::Simulator(const Config& config)
 
 Simulator::~Simulator() {}
 
+void ISimulator::recomputeWindTunnelCells(const Config& config) {
+    const int side = config.simulation.windTunnel.side;
+    windTunnelStart = config.simulation.windTunnel.startPosition;
+    windTunnelEnd = config.simulation.windTunnel.endPosition;
+    switch (side) {
+        case 0: // left
+        case 3: // right
+            windTunnelStartCell = static_cast<int>(windTunnelStart * gridY);
+            windTunnelEndCell = static_cast<int>(windTunnelEnd * gridY);
+            windTunnelStartCell = std::max(0, std::min(gridY - 1, windTunnelStartCell));
+            windTunnelEndCell = std::max(0, std::min(gridY - 1, windTunnelEndCell));
+            break;
+        case 1: // top
+        case 2: // bottom
+            windTunnelStartCell = static_cast<int>(windTunnelStart * gridX);
+            windTunnelEndCell = static_cast<int>(windTunnelEnd * gridX);
+            windTunnelStartCell = std::max(0, std::min(gridX - 1, windTunnelStartCell));
+            windTunnelEndCell = std::max(0, std::min(gridX - 1, windTunnelEndCell));
+            break;
+        default:
+            windTunnelStartCell = static_cast<int>(0.45f * gridY);
+            windTunnelEndCell = static_cast<int>(0.55f * gridY);
+    }
+    pipeHeight = windTunnelEndCell - windTunnelStartCell;
+}
+
 
 // MAIN SIM LOOP
 bool Simulator::init(const Config& config, const ImageData* imageData, float aspectRatio) {
@@ -52,11 +78,6 @@ bool Simulator::init(const Config& config, const ImageData* imageData, float asp
     xHeight = cellSize * gridX;
     yHeight = cellSize * gridY;
 
-#ifdef ENABLE_MOUSE_INPUT
-    // convert circle radius from world units to grid units
-    circleRadius = static_cast<int>(config.simulation.circle.radius / cellSize);
-#endif
-    
     // simulator fields
     x.resize(totalCells);
     y.resize(totalCells);
@@ -87,25 +108,16 @@ bool Simulator::init(const Config& config, const ImageData* imageData, float asp
         initializeFromImageData(config, imageData);
     }
 
-#ifdef ENABLE_MOUSE_INPUT
-    // setup circle
-    circleX = gridX / 2;
-    circleY = gridY / 2;
-    prevCircleX = circleX;
-    prevCircleY = circleY;
-    for (int i = circleX - circleRadius; i < circleX + circleRadius; i++) {
-        for (int j = circleY - circleRadius; j < circleY + circleRadius; j++) {
-            if (i >= 0 && i < gridX && j >= 0 && j < gridY) {
-                float dx = (i + 0.5f) - circleX;
-                float dy = (j + 0.5f) - circleY;
-                if (sqrt(dx * dx + dy * dy) <= circleRadius) {
-                    s[idx(i, j)] = 0.0f;
-                }
-            }
-        }
+    mouseCircleRadius = static_cast<int>(config.simulation.circle.radius / cellSize);
+
+    if (isMouseInput(g_config.inputMode)) {
+        mouseCircleX = gridX / 2;
+        mouseCircleY = gridY / 2;
+        mousePrevCircleX = mouseCircleX;
+        mousePrevCircleY = mouseCircleY;
     }
-#else
-    // initialize everything as not present
+
+    // initialize hand mode structures (for both modes, since they may be switched at runtime)
     for (int i = 0; i < HandTracking::MAX_CIRCLES; i++) {
         circles[i].present = false;
         circles[i].wasPresent = false;
@@ -126,7 +138,6 @@ bool Simulator::init(const Config& config, const ImageData* imageData, float asp
         segments[i].endRadius = 0.0f;
     }
     numSegments = 0;
-#endif
 
     // setup edges
     int cx = gridX / 2;
@@ -148,30 +159,7 @@ bool Simulator::init(const Config& config, const ImageData* imageData, float asp
     }
 
     // setup wind tunnel
-    // calculate wind tunnel grid coordinates
-    float windTunnelStart = config.simulation.windTunnel.startPosition;
-    float windTunnelEnd = config.simulation.windTunnel.endPosition;
-    switch (windTunnelSide) {
-        case 0: // left
-        case 3: // right
-            windTunnelStartCell = static_cast<int>(windTunnelStart * gridY);
-            windTunnelEndCell = static_cast<int>(windTunnelEnd * gridY);
-            windTunnelStartCell = std::max(0, std::min(gridY - 1, windTunnelStartCell));
-            windTunnelEndCell = std::max(0, std::min(gridY - 1, windTunnelEndCell));
-            break;
-        case 1: // top
-        case 2: // bottom
-            windTunnelStartCell = static_cast<int>(windTunnelStart * gridX);
-            windTunnelEndCell = static_cast<int>(windTunnelEnd * gridX);
-            windTunnelStartCell = std::max(0, std::min(gridX - 1, windTunnelStartCell));
-            windTunnelEndCell = std::max(0, std::min(gridX - 1, windTunnelEndCell));
-            break;
-        default:
-            windTunnelStartCell = static_cast<int>(0.45f * gridY);
-            windTunnelEndCell = static_cast<int>(0.55f * gridY);
-    }
-    
-    pipeHeight = windTunnelEndCell - windTunnelStartCell;
+    recomputeWindTunnelCells(config);
     if (windTunnelSide != -1) {
         switch (windTunnelSide) {
             case 0: // left
@@ -239,7 +227,6 @@ void Simulator::initializeFromImageData(const Config& config, const ImageData* i
     inkInitialized = true;
 }
 
-#ifndef ENABLE_MOUSE_INPUT
 // NOTE CPU fingertip input is known to be janky
 // oh well!
 int Simulator::scaleRadiusByZ(float z) {
@@ -264,6 +251,13 @@ void Simulator::updateCircles(const FingertipData* fingertips, int count) {
             newGridX = std::max(baseCircleRadius, std::min(newGridX, gridX - baseCircleRadius - 1));
             newGridY = std::max(baseCircleRadius, std::min(newGridY, gridY - baseCircleRadius - 1));
 
+            float handSpeed = 0.0f;
+            if (circle.wasPresent) {
+                float dx = static_cast<float>(newGridX) - circle.smoothedX;
+                float dy = static_cast<float>(newGridY) - circle.smoothedY;
+                handSpeed = std::sqrt(dx * dx + dy * dy) / timestep;
+            }
+
             applyHandSmoothing(newGridX, newGridY, circle.smoothedX, circle.smoothedY,
                                circle.x, circle.y, circle.wasPresent,
                                config->simulation.circle, timestep);
@@ -272,9 +266,8 @@ void Simulator::updateCircles(const FingertipData* fingertips, int count) {
 
             float instantVelX = (circle.x - circle.prevX) / timestep;
             float instantVelY = (circle.y - circle.prevY) / timestep;
-            float alpha = 0.3f;
-            circle.velX = alpha * instantVelX + (1.0f - alpha) * circle.velX;
-            circle.velY = alpha * instantVelY + (1.0f - alpha) * circle.velY;
+            applyCircleVelocitySmoothing(instantVelX, instantVelY, circle.velX, circle.velY,
+                                         handSpeed, config->simulation.circle);
 
             // Motion detection for adaptive solver
             float velocityMagnitude = std::sqrt(circle.velX * circle.velX + circle.velY * circle.velY);
@@ -478,7 +471,6 @@ void Simulator::updateLineSegmentSolidField(LineSegment& seg) {
         }
     }
 }
-#endif
 
 void Simulator::updateProjectionIterations() {
     if (!config->simulation.projection.autoScaleIterations) {
@@ -736,40 +728,35 @@ float Simulator::sample(float i, float j, int type) {
 
 
 // CIRCLE HELPERS
-#ifdef ENABLE_MOUSE_INPUT
 void Simulator::moveCircle(int newGridX, int newGridY) {
-    prevCircleX = circleX;
-    prevCircleY = circleY;
+    mousePrevCircleX = mouseCircleX;
+    mousePrevCircleY = mouseCircleY;
 
-    float instantVelX = (newGridX - circleX) / timestep;
-    float instantVelY = (newGridY - circleY) / timestep;
+    float instantVelX = (newGridX - mouseCircleX) / timestep;
+    float instantVelY = (newGridY - mouseCircleY) / timestep;
 
     // smoother circle velocity to reduce velocity jitter
     // (doesn't work that well D: )
     float alpha = 0.3f; // smoothing factor
-    circleVelX = alpha * instantVelX + (1.0f - alpha) * circleVelX;
-    circleVelY = alpha * instantVelY + (1.0f - alpha) * circleVelY;
+    mouseCircleVelX = alpha * instantVelX + (1.0f - alpha) * mouseCircleVelX;
+    mouseCircleVelY = alpha * instantVelY + (1.0f - alpha) * mouseCircleVelY;
 
     // Motion detection for adaptive solver
-    float velocityMagnitude = std::sqrt(circleVelX * circleVelX + circleVelY * circleVelY);
+    float velocityMagnitude = std::sqrt(mouseCircleVelX * mouseCircleVelX + mouseCircleVelY * mouseCircleVelY);
     if (velocityMagnitude > config->simulation.projection.motionThreshold) {
         motionDetected = true;
     }
 
-    circleX = newGridX;
-    circleY = newGridY;
+    mouseCircleX = newGridX;
+    mouseCircleY = newGridY;
 
-    updateCircle(prevCircleX, prevCircleY, circleX, circleY);
+    updateCircle(mousePrevCircleX, mousePrevCircleY, mouseCircleX, mouseCircleY);
 }
-#endif
 
-#ifdef ENABLE_MOUSE_INPUT
 void Simulator::updateCircle(int prevX, int prevY, int newX, int newY) {
-    updateCircleAreas(prevX, prevY, newX, newY, circleRadius, circleRadius);
     circleMomentumTransfer();
     enforceBoundaryConditions();
 }
-#endif
 
 void Simulator::enforceBoundaryConditions() {
     // clear velocity in all solid cells and their neighboring velocity components
@@ -832,79 +819,34 @@ void Simulator::enforceBoundaryConditions() {
     }
 }
 
-#ifdef ENABLE_MOUSE_INPUT
 void Simulator::circleMomentumTransfer() {
-    int deltaX = circleX - prevCircleX;
-    int deltaY = circleY - prevCircleY;
-    if (!shouldApplyMomentumTransfer(deltaX, deltaY, momentumTransferDeadZone)) return;
+    if (isMouseInput(g_config.inputMode)) {
+        if (!isMouseDragging) return;
 
-    float effectiveRadius = circleRadius + momentumTransferRadius;
+        // Pull mode: single circle while dragging
+        int deltaX = mouseCircleX - mousePrevCircleX;
+        int deltaY = mouseCircleY - mousePrevCircleY;
+        if (!shouldApplyMomentumTransfer(deltaX, deltaY, momentumTransferDeadZone)) return;
 
-    // apply momentum to fluid cells near ball surface
-    for (int i = circleX - static_cast<int>(effectiveRadius) - 1;
-         i <= circleX + static_cast<int>(effectiveRadius) + 1; i++) {
-        for (int j = circleY - static_cast<int>(effectiveRadius) - 1;
-             j <= circleY + static_cast<int>(effectiveRadius) + 1; j++) {
-
-            if (i >= 0 && i < gridX && j >= 0 && j < gridY) {
-                if (s[idx(i, j)] == 0.0f) continue;
-
-                float dx = (i + 0.5f) - circleX;
-                float dy = (j + 0.5f) - circleY;
-                float distance = sqrt(dx * dx + dy * dy);
-
-                // within influence radius but outside ball
-                if (distance > circleRadius && distance <= effectiveRadius) {
-                    // falloff is 1/r^2
-                    float normalizedDistance = (distance - circleRadius) / momentumTransferRadius;
-                    float falloff = 1.0f - normalizedDistance * normalizedDistance;
-                    falloff = std::max(0.0f, falloff);
-
-                    float densityFactor = d[idx(i, j)]; // weight velocity imparted by local density
-
-                    float momentumX = deltaX * momentumTransferStrength * falloff * densityFactor;
-                    float momentumY = deltaY * momentumTransferStrength * falloff * densityFactor;
-
-                    x[idx(i, j)] += momentumX;
-                    y[idx(i, j)] += momentumY;
-
-                    // NOTE [DISABLED]: max velocity clamping for force imparted by circle, for stability
-                    // float maxVel = 8.0f;
-                    // x[idx(i, j)] = std::max(-maxVel, std::min(maxVel, x[idx(i, j)]));
-                    // y[idx(i, j)] = std::max(-maxVel, std::min(maxVel, y[idx(i, j)]));
-                }
-            }
-        }
-    }
-}
-#else
-void Simulator::circleMomentumTransfer() {
-    for (int c = 0; c < HandTracking::MAX_CIRCLES; c++) {
-        const CircleState& circle = circles[c];
-        if (!circle.present) continue;
-        int deltaX = circle.x - circle.prevX;
-        int deltaY = circle.y - circle.prevY;
-        if (!shouldApplyMomentumTransfer(deltaX, deltaY, momentumTransferDeadZone)) continue;
-
-        float effectiveRadius = circle.scaledRadius + momentumTransferRadius;
+        float effectiveRadius = mouseCircleRadius + momentumTransferRadius;
 
         // apply momentum to fluid cells near ball surface
-        for (int i = circle.x - static_cast<int>(effectiveRadius) - 1;
-             i <= circle.x + static_cast<int>(effectiveRadius) + 1; i++) {
-            for (int j = circle.y - static_cast<int>(effectiveRadius) - 1;
-                 j <= circle.y + static_cast<int>(effectiveRadius) + 1; j++) {
+        for (int i = mouseCircleX - static_cast<int>(effectiveRadius) - 1;
+             i <= mouseCircleX + static_cast<int>(effectiveRadius) + 1; i++) {
+            for (int j = mouseCircleY - static_cast<int>(effectiveRadius) - 1;
+                 j <= mouseCircleY + static_cast<int>(effectiveRadius) + 1; j++) {
 
                 if (i >= 0 && i < gridX && j >= 0 && j < gridY) {
                     if (s[idx(i, j)] == 0.0f) continue;
 
-                    float dx = (i + 0.5f) - circle.x;
-                    float dy = (j + 0.5f) - circle.y;
+                    float dx = (i + 0.5f) - mouseCircleX;
+                    float dy = (j + 0.5f) - mouseCircleY;
                     float distance = sqrt(dx * dx + dy * dy);
 
                     // within influence radius but outside ball
-                    if (distance > circle.scaledRadius && distance <= effectiveRadius) {
+                    if (distance > mouseCircleRadius && distance <= effectiveRadius) {
                         // falloff is 1/r^2
-                        float normalizedDistance = (distance - circle.scaledRadius) / momentumTransferRadius;
+                        float normalizedDistance = (distance - mouseCircleRadius) / momentumTransferRadius;
                         float falloff = 1.0f - normalizedDistance * normalizedDistance;
                         falloff = std::max(0.0f, falloff);
 
@@ -924,9 +866,54 @@ void Simulator::circleMomentumTransfer() {
                 }
             }
         }
+    } else {
+        // Hand mode: multiple circles
+        for (int c = 0; c < HandTracking::MAX_CIRCLES; c++) {
+            const CircleState& circle = circles[c];
+            if (!circle.present) continue;
+            if (!shouldApplyMomentumTransferVelocity(circle.velX, circle.velY, momentumTransferDeadZone)) continue;
+
+            float effectiveRadius = circle.scaledRadius + momentumTransferRadius;
+
+            // apply momentum to fluid cells near ball surface
+            for (int i = circle.x - static_cast<int>(effectiveRadius) - 1;
+                 i <= circle.x + static_cast<int>(effectiveRadius) + 1; i++) {
+                for (int j = circle.y - static_cast<int>(effectiveRadius) - 1;
+                     j <= circle.y + static_cast<int>(effectiveRadius) + 1; j++) {
+
+                    if (i >= 0 && i < gridX && j >= 0 && j < gridY) {
+                        if (s[idx(i, j)] == 0.0f) continue;
+
+                        float dx = (i + 0.5f) - circle.x;
+                        float dy = (j + 0.5f) - circle.y;
+                        float distance = sqrt(dx * dx + dy * dy);
+
+                        // within influence radius but outside ball
+                        if (distance > circle.scaledRadius && distance <= effectiveRadius) {
+                            // falloff is 1/r^2
+                            float normalizedDistance = (distance - circle.scaledRadius) / momentumTransferRadius;
+                            float falloff = 1.0f - normalizedDistance * normalizedDistance;
+                            falloff = std::max(0.0f, falloff);
+
+                            float densityFactor = d[idx(i, j)]; // weight velocity imparted by local density
+
+                            float momentumX = circle.velX * timestep * momentumTransferStrength * falloff * densityFactor;
+                            float momentumY = circle.velY * timestep * momentumTransferStrength * falloff * densityFactor;
+
+                            x[idx(i, j)] += momentumX;
+                            y[idx(i, j)] += momentumY;
+
+                            // NOTE [DISABLED]: max velocity clamping for force imparted by circle, for stability
+                            // float maxVel = 8.0f;
+                            // x[idx(i, j)] = std::max(-maxVel, std::min(maxVel, x[idx(i, j)]));
+                            // y[idx(i, j)] = std::max(-maxVel, std::min(maxVel, y[idx(i, j)]));
+                        }
+                    }
+                }
+            }
+        }
     }
 }
-#endif
 
 void Simulator::updateCircleAreas(int prevX, int prevY, int newX, int newY,
                                     int prevRadius, int newRadius) {
@@ -978,16 +965,14 @@ void Simulator::updateSimParams(const Config& config) {
     gravity = config.simulation.gravity;
     windTunnelSide = config.simulation.windTunnel.side;
     windTunnelSpeed = config.simulation.windTunnel.velocity;
+    recomputeWindTunnelCells(config);
     momentumTransferStrength = config.simulation.circle.momentumTransferStrength;
     momentumTransferRadius = config.simulation.circle.momentumTransferRadius;
     momentumTransferDeadZone = config.simulation.circle.momentumTransferDeadZone;
 
     // Circle radius is specified in world units in config; convert to grid units for simulation.
-#ifdef ENABLE_MOUSE_INPUT
-    circleRadius = static_cast<int>(config.simulation.circle.radius / cellSize);
-#else
+    mouseCircleRadius = static_cast<int>(config.simulation.circle.radius / cellSize);
     baseCircleRadius = static_cast<int>(config.simulation.circle.radius / cellSize);
-#endif
 
     // Update stored config pointer to g_config
     this->config = &config;
@@ -1019,15 +1004,16 @@ void Simulator::resetFluidState(bool clearInk) {
     }
 
     // Reset circle state
-#ifdef ENABLE_MOUSE_INPUT
-    circleX = gridX / 2;
-    circleY = gridY / 2;
-    prevCircleX = circleX;
-    prevCircleY = circleY;
-    circleVelX = 0.0f;
-    circleVelY = 0.0f;
-    isDragging = false;
-#else
+    // Reset mouse circle
+    mouseCircleX = gridX / 2;
+    mouseCircleY = gridY / 2;
+    mousePrevCircleX = mouseCircleX;
+    mousePrevCircleY = mouseCircleY;
+    mouseCircleVelX = 0.0f;
+    mouseCircleVelY = 0.0f;
+    isMouseDragging = false;
+
+    // Reset hand circles and segments
     for (int i = 0; i < HandTracking::MAX_CIRCLES; i++) {
         circles[i].present = false;
         circles[i].wasPresent = false;
@@ -1057,7 +1043,6 @@ void Simulator::resetFluidState(bool clearInk) {
         segments[i].prevEndRadius = 0.0f;
     }
     numSegments = 0;
-#endif
 
     // Reapply edges (boundary conditions)
     int edgesMask = config->simulation.edges;

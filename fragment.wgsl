@@ -5,7 +5,7 @@ struct UniformData {
     cellSize: f32,
     pressureMin: f32,
     pressureMax: f32,
-    drawVelocities: i32,
+    gpuInkMode: i32, // 0=hybrid (R32 at bindings 6-8), 1=gpu (RGBA at binding 6)
     velScale: f32,
     windowWidth: f32,
     windowHeight: f32,
@@ -80,9 +80,45 @@ struct UniformData {
 @group(0) @binding(3) var densityTexture: texture_2d<f32>;
 @group(0) @binding(4) var velocityTexture: texture_2d<f32>;
 @group(0) @binding(5) var solidTexture: texture_2d<f32>;
-@group(0) @binding(6) var redInkTexture: texture_2d<f32>;
-@group(0) @binding(7) var greenInkTexture: texture_2d<f32>;
-@group(0) @binding(8) var blueInkTexture: texture_2d<f32>;
+@group(0) @binding(6) var inkTexture0: texture_2d<f32>; // R; RGBA in gpu mode
+@group(0) @binding(7) var inkTexture1: texture_2d<f32>; // G; unused in gpu mode
+@group(0) @binding(8) var inkTexture2: texture_2d<f32>; // B; unused in gpu mode
+
+// TODO MAIN -- WIP ^_^
+// we in the browser baby
+
+// TODO improve wind tunnel setup fidelity ?
+
+// TODO info pane
+
+// TODO gravity basically broken
+
+// TODO up/right wind tunnel behaves differently from down/left
+// likely because of the forward texture accesses (e.g. asymmetric +1) somewhere
+// TODO fluid leaking out of bottom edge
+// TODO bug: maybe something wrong with the volume, entropy calculations
+
+// TODO simple mobile version
+// TODO layout fixes for control panel
+
+// TODO big cleanup: test, unify, and document codebase, particularly build steps + config (& generally simplify flow of data/modularize)
+//  - fix outdated config stuff (e.g. rendering vs layout)
+//  - python script for modifying simParams struct uniformly
+// TODO unify cpu and gpu stuff (at least partially)
+// TODO rebuild desktop version, test sth basic still works
+// TODO writeup html file; interactive architectural diagram; website changes
+
+/*
+// TODO LATER custom renderer??
+
+// TODO LATER examine differences in pressure/velocity histograms between GPU/CPU
+- see plotting script
+// TODO LATER swap to different pressure solver
+
+// TODO LATER integrate gravity with gyroscope on the phone
+
+// TODO WAY LATER lots of tiny memory problems in valgrind, investigate if some of these are my fault
+*/
 
 // color helpers
 fn mapValueToColor(value: f32, min: f32, max: f32) -> vec3<f32> {
@@ -127,48 +163,6 @@ fn mapValueToHeatmap(value: f32, min: f32, max: f32) -> vec3<f32> {
 
     let k = (t - 0.66) / 0.34;
     return vec3<f32>(1.0, 1.0 - 0.75 * k, 0.0);
-}
-
-fn getViewportForPixel(pixelCoord: vec2<f32>) -> i32 {
-    if (uniforms.viewportCount == 0) {
-        return -1; // No viewports defined, use default rendering
-    }
-
-    for (var i = 0; i < uniforms.viewportCount; i++) {
-        let vx = f32(uniforms.viewportX[i]);
-        let vy = f32(uniforms.viewportY[i]);
-        let vw = f32(uniforms.viewportWidth[i]);
-        let vh = f32(uniforms.viewportHeight[i]);
-
-        if (pixelCoord.x >= vx && pixelCoord.x < vx + vw &&
-            pixelCoord.y >= vy && pixelCoord.y < vy + vh) {
-            return i;
-        }
-    }
-    return -1; // Not in any viewport
-}
-
-fn mapValueToVelocityColor(value: f32, min: f32, max: f32) -> vec3<f32> {
-    var clampedValue = clamp(value, min, max - 0.0001);
-    var delta = max - min;
-    var normalized = select(0.5, (clampedValue - min) / delta, delta != 0.0);
-    
-    if (normalized < 0.5) {
-        var t = normalized * 2.0;
-        return vec3<f32>(1.0, t * 0.647, 0.0); // orange to yellow
-    } else {
-        var t = (normalized - 0.5) * 2.0;
-        return vec3<f32>(1.0, 0.647 + t * 0.353, 0.0); // yellow to white
-    }
-}
-
-// unique to hybrid shader
-fn mapInkToColor(r: f32, g: f32, b: f32) -> vec3<f32> {
-    var r_clamped = clamp(r, 0.0, 1.0);
-    var g_clamped = clamp(g, 0.0, 1.0);
-    var b_clamped = clamp(b, 0.0, 1.0);
-
-    return vec3<f32>(r_clamped, g_clamped, b_clamped);
 }
 
 fn getClampedCoord(coord: vec2<i32>) -> vec2<i32> {
@@ -249,6 +243,54 @@ fn renderThresholdBloom(coord: vec2<i32>, centerDensity: f32) -> vec3<f32> {
     return clamp(base + glowColor, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
+fn getViewportForPixel(pixelCoord: vec2<f32>) -> i32 {
+    if (uniforms.viewportCount == 0) {
+        return -1; // No viewports defined, use default rendering
+    }
+
+    for (var i = 0; i < uniforms.viewportCount; i++) {
+        let vx = f32(uniforms.viewportX[i]);
+        let vy = f32(uniforms.viewportY[i]);
+        let vw = f32(uniforms.viewportWidth[i]);
+        let vh = f32(uniforms.viewportHeight[i]);
+
+        if (pixelCoord.x >= vx && pixelCoord.x < vx + vw &&
+            pixelCoord.y >= vy && pixelCoord.y < vy + vh) {
+            return i;
+        }
+    }
+    return -1; // Not in any viewport
+}
+
+fn mapValueToVelocityColor(value: f32, min: f32, max: f32) -> vec3<f32> {
+    var clampedValue = clamp(value, min, max - 0.0001);
+    var delta = max - min;
+    var normalized = select(0.5, (clampedValue - min) / delta, delta != 0.0);
+
+    if (normalized < 0.5) {
+        var t = normalized * 2.0;
+        return vec3<f32>(1.0, t * 0.647, 0.0); // orange to yellow
+    } else {
+        var t = (normalized - 0.5) * 2.0;
+        return vec3<f32>(1.0, 0.647 + t * 0.353, 0.0); // yellow to white
+    }
+}
+
+fn mapInkToColor(r: f32, g: f32, b: f32) -> vec3<f32> {
+    return vec3<f32>(clamp(r, 0.0, 1.0), clamp(g, 0.0, 1.0), clamp(b, 0.0, 1.0));
+}
+
+fn sampleInkColor(coord: vec2<i32>) -> vec3<f32> {
+    if (uniforms.gpuInkMode != 0) {
+        return textureLoad(inkTexture0, coord, 0).rgb;
+    }
+    return mapInkToColor(
+        textureLoad(inkTexture0, coord, 0).r,
+        textureLoad(inkTexture1, coord, 0).r,
+        textureLoad(inkTexture2, coord, 0).r
+    );
+}
+
 fn distanceToLineSegment(point: vec2<f32>, lineStart: vec2<f32>, lineEnd: vec2<f32>) -> f32 {
     var line = lineEnd - lineStart;
     var lineLength = length(line);
@@ -263,59 +305,91 @@ fn distanceToLineSegment(point: vec2<f32>, lineStart: vec2<f32>, lineEnd: vec2<f
     return distance(point, projection);
 }
 
-fn drawVelocityField(coord: vec2<f32>, gridX: i32, gridY: i32) -> vec4<f32> {
-    // bounds
+// VELOCITY OVERLAY
+const VELOCITY_STRIDE: i32 = 12;
+// segment length is expressed as a fraction of the stride spacing so glyphs stay
+// readable regardless of sim resolution / cells-per-pixel
+const VELOCITY_MIN_LEN_FRAC: f32 = 0.4;
+const VELOCITY_MAX_LEN_FRAC: f32 = 1.0;
+// skip only effectively stationary fluid; no fraction-of-max cutoff
+const VELOCITY_MIN_SPEED: f32 = 1e-5;
+const VELOCITY_LINE_WIDTH_PX: f32 = 1.0;
+
+fn sampleCenteredVelocity(gridX: i32, gridY: i32) -> vec2<f32> {
+    let iRight = min(gridX + 1, uniforms.gridX - 1);
+    let jUp = min(gridY + 1, uniforms.gridY - 1);
+
+    let velHere = textureLoad(velocityTexture, vec2<i32>(gridX, gridY), 0).xy;
+    let velRight = textureLoad(velocityTexture, vec2<i32>(iRight, gridY), 0).xy;
+    let velUp = textureLoad(velocityTexture, vec2<i32>(gridX, jUp), 0).xy;
+
+    let uCenter = 0.5 * (velHere.x + velRight.x);
+    let vCenter = 0.5 * (velHere.y + velUp.y);
+    return vec2<f32>(uCenter, vCenter);
+}
+
+fn drawVelocityField(coord: vec2<f32>, gridX: i32, gridY: i32, simUnitsPerPixel: f32) -> vec4<f32> {
     if (gridX < 0 || gridX >= uniforms.gridX ||
         gridY < 0 || gridY >= uniforms.gridY) {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
 
-    // load simulation data
-    var solid = textureLoad(solidTexture, vec2<i32>(gridX, gridY), 0);
-    var velocity = textureLoad(velocityTexture, vec2<i32>(gridX, gridY), 0);
+    // snap this pixel to its nearest stride anchor so the whole glyph (which can span
+    // many cells) is evaluated by every pixel it covers, not just the anchor cell itself
+    let halfStride = VELOCITY_STRIDE / 2;
+    let anchorX = clamp(((gridX + halfStride) / VELOCITY_STRIDE) * VELOCITY_STRIDE, 0, uniforms.gridX - 1);
+    let anchorY = clamp(((gridY + halfStride) / VELOCITY_STRIDE) * VELOCITY_STRIDE, 0, uniforms.gridY - 1);
 
-    // only show velocity in fluid cells
+    let solid = textureLoad(solidTexture, vec2<i32>(anchorX, anchorY), 0);
     if (solid.r <= 0.5) {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
 
-    var velX = velocity.x;
-    var velY = velocity.y;
-    
-    // normalize velocity to fixed length
-    var magnitude = sqrt(velX * velX + velY * velY);
-    var normalizedLength = 0.3;
-    if (magnitude > 0.001) {
-        velX = (velX / magnitude) * normalizedLength;
-        velY = (velY / magnitude) * normalizedLength;
+    let centeredVel = sampleCenteredVelocity(anchorX, anchorY);
+    let speed = length(centeredVel);
+    if (speed < VELOCITY_MIN_SPEED) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
 
-    // check if we're close enough to a velocity line to draw it
-    var hLineStart = vec2<f32>(f32(gridX) * uniforms.cellSize, (f32(gridY) + 0.5) * uniforms.cellSize);
-    var hLineEnd = vec2<f32>(hLineStart.x + velX * uniforms.velScale, hLineStart.y);
-    var vLineStart = vec2<f32>((f32(gridX) + 0.5) * uniforms.cellSize, f32(gridY) * uniforms.cellSize);
-    var vLineEnd = vec2<f32>(vLineStart.x, vLineStart.y - velY * uniforms.velScale);
+    let speedMin = uniforms.velocityHistogramMin;
+    let speedMax = max(uniforms.velocityHistogramMax, speedMin + 0.0001);
+    let speedNorm = clamp((speed - speedMin) / (speedMax - speedMin), 0.0, 1.0);
+    let strideWorld = f32(VELOCITY_STRIDE) * uniforms.cellSize;
+    let lengthFrac = mix(VELOCITY_MIN_LEN_FRAC, VELOCITY_MAX_LEN_FRAC, pow(speedNorm, 0.6));
+    let segmentLengthWorld = lengthFrac * strideWorld;
 
-    var lineWidth = 0.002;
-    var color = vec3<f32>(0.0, 0.0, 0.0);
+    let dir = centeredVel / speed;
+    let center = vec2<f32>(
+        (f32(anchorX) + 0.5) * uniforms.cellSize,
+        (f32(anchorY) + 0.5) * uniforms.cellSize
+    );
+    // center the glyph on the cell; brightness ramps tail -> tip to show direction
+    let lineStart = center - dir * segmentLengthWorld * 0.5;
+    let lineEnd = center + dir * segmentLengthWorld * 0.5;
 
-    // check distance to horizontal line
-    if (abs(velX) > 0.001) {
-        var hDist = distanceToLineSegment(coord, hLineStart, hLineEnd);
-        if (hDist < lineWidth) {
-            color = vec3<f32>(1.0, 1.0, 1.0);
-        }
+    let lineWidthWorld = VELOCITY_LINE_WIDTH_PX * simUnitsPerPixel;
+    let edgeWidthWorld = max(simUnitsPerPixel, uniforms.cellSize * 0.05);
+    let line = lineEnd - lineStart;
+    let lineLenSq = max(dot(line, line), 0.00000001);
+    let t = clamp(dot(coord - lineStart, line) / lineLenSq, 0.0, 1.0);
+    let projected = lineStart + t * line;
+    let dist = distance(coord, projected);
+
+    // teardrop profile: width tapers toward the tail so each glyph reads as a brush
+    // stroke / comet rather than a blunt bar; the tip keeps a full rounded cap
+    let widthProfile = mix(0.12, 1.0, t);
+    let halfWidth = lineWidthWorld * widthProfile;
+    let strokeAlpha = 1.0 - smoothstep(halfWidth, halfWidth + edgeWidthWorld, dist);
+
+    // strength via velocity histogram palette; tail -> tip luminance keeps direction readable
+    let velColor = mapValueToVelocityColor(speed, speedMin, speedMax);
+    let headBrightness = mix(0.45, 1.0, smoothstep(0.0, 1.0, t));
+    let alpha = strokeAlpha * headBrightness * 0.85;
+    if (alpha > 0.0) {
+        return vec4<f32>(velColor * headBrightness, alpha);
     }
 
-    // check distance to vertical line
-    if (abs(velY) > 0.001) {
-        var vDist = distanceToLineSegment(coord, vLineStart, vLineEnd);
-        if (vDist < lineWidth) {
-            color = vec3<f32>(1.0, 1.0, 1.0);
-        }
-    }
-
-    return vec4<f32>(color, 0.5);
+    return vec4<f32>(0.0, 0.0, 0.0, 0.0);
 }
 
 fn getBinCount(vec: vec4<i32>, component: i32) -> i32 {
@@ -695,7 +769,7 @@ fn fs_main(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
         let normY = (pixelCoord.y - vy) / vh;
         let worldCoord = vec2<f32>(
             normX * uniforms.simWidth,
-            (1.0 - normY) * uniforms.simHeight
+            (1.0 - normY) * uniforms.simHeight  // flip Y for WebGL convention
         );
 
         // Convert to grid coordinates
@@ -711,13 +785,10 @@ fn fs_main(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
         // Use viewport's render target
         let viewportRenderTarget = uniforms.viewportRenderTarget[viewportIndex];
 
-        // Load simulation data
+        // Load and render simulation data
         let pressure = textureLoad(pressureTexture, texCoord, 0).r;
         let density = textureLoad(densityTexture, texCoord, 0).r;
         let solid = textureLoad(solidTexture, texCoord, 0).r;
-        let redInk = textureLoad(redInkTexture, texCoord, 0).r;
-        let greenInk = textureLoad(greenInkTexture, texCoord, 0).r;
-        let blueInk = textureLoad(blueInkTexture, texCoord, 0).r;
 
         if (solid > 0.5) {
             if (viewportRenderTarget == 0) {
@@ -729,7 +800,7 @@ fn fs_main(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
                 finalColor = finalColor - density * vec3<f32>(1.0, 1.0, 1.0);
                 finalColor = max(finalColor, vec3<f32>(0.0, 0.0, 0.0));
             } else if (viewportRenderTarget == 3) {
-                finalColor = mapInkToColor(redInk, greenInk, blueInk);
+                finalColor = sampleInkColor(texCoord);
             } else if (viewportRenderTarget == 4) {
                 let divergence = computeDivergenceFromVelocity(texCoord);
                 let divergenceScale = computeLocalDivergenceScale(texCoord);
@@ -745,15 +816,16 @@ fn fs_main(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
             finalColor = vec3<f32>(0.47);
         }
 
-        // Draw velocity field if enabled
-        if (uniforms.drawVelocities != 0) {
-            var velColor = drawVelocityField(worldCoord, texCoord.x, texCoord.y);
+        // Draw velocity field if enabled for this viewport
+        if (uniforms.viewportRenderVelocity[viewportIndex] != 0) {
+            let simUnitsPerPixel = max(uniforms.simWidth / vw, uniforms.simHeight / vh);
+            var velColor = drawVelocityField(worldCoord, texCoord.x, texCoord.y, simUnitsPerPixel);
             if (velColor.a > 0.0) {
                 finalColor = velColor.rgb * velColor.a + finalColor * (1.0 - velColor.a);
             }
         }
     } else {
-        // background (charliemax.dev --offblack)
+        // background (matches charliemax.dev --offblack)
         finalColor = vec3<f32>(5.0 / 255.0);
     }
 

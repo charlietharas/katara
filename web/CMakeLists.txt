@@ -5,11 +5,6 @@ project(katara_web C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_C_STANDARD 11)
 
-# mouse input
-# OFF = hand tracking
-# ON = single circle mouse control
-option(ENABLE_MOUSE_INPUT "Enable mouse input mode (OFF=hand tracking)" OFF)
-
 # I trust Claude here ngl
 # for Emscripten, create interface targets that use the built-in ports
 # the EMSCRIPTEN variable is set by the Emscripten toolchain after project()
@@ -48,23 +43,13 @@ set(SOURCES
 
 add_executable(katara ${SOURCES})
 
-if(ENABLE_MOUSE_INPUT)
-    target_compile_definitions(katara PRIVATE ENABLE_MOUSE_INPUT)
-    target_compile_options(katara PRIVATE "SHELL:-D ENABLE_MOUSE_INPUT")
-endif()
-
 target_link_libraries(katara PRIVATE SDL2::SDL2 SDL2_image webgpu sdl2webgpu)
 
 # suppress deprecated literal operator warnings from json.hpp
 target_compile_options(katara PRIVATE -Wno-deprecated-literal-operator)
 
 # emscripten linker flags
-if(ENABLE_MOUSE_INPUT)
-    set(EXPORTED_FUNCTIONS "\"_main\",\"_malloc\",\"_free\"")
-else()
-    # hand tracking mode needs to make extra functions available to web app
-    set(EXPORTED_FUNCTIONS "\"_main\",\"_malloc\",\"_free\",\"_setSimulatorPointer\",\"_updateFingertips\",\"_updateLineSegments\",\"_update\"")
-endif()
+set(EXPORTED_FUNCTIONS "\"_main\",\"_malloc\",\"_free\",\"_setSimulatorPointer\",\"_updateFingertips\",\"_updateLineSegments\",\"_update\",\"_setInputMode\",\"_onMouseDown\",\"_onMouseUp\",\"_onMouseDrag\",\"_getSimDomainWidth\",\"_getSimDomainHeight\",\"_getSimCellSize\"")
 
 target_link_options(katara PUBLIC
     "SHELL:-s WASM=1"
@@ -86,13 +71,7 @@ set(EMBED_STAGE_DIR ${CMAKE_CURRENT_BINARY_DIR}/embed)
 file(MAKE_DIRECTORY ${EMBED_STAGE_DIR})
 file(GLOB SHADER_FILES "${PROJECT_ROOT}/*.wgsl")
 
-# compute_circle has two WGSL variants; pick based on ENABLE_MOUSE_INPUT
-# essentially we inject the correct variant as compute_circle.wgsl so gpu_sim.cpp can pick it up at runtime
-if(ENABLE_MOUSE_INPUT)
-    set(COMPUTE_CIRCLE_SRC "${PROJECT_ROOT}/compute_circle_mouse.wgsl")
-else()
-    set(COMPUTE_CIRCLE_SRC "${PROJECT_ROOT}/compute_circle_fingertip.wgsl")
-endif()
+set(COMPUTE_CIRCLE_SRC "${PROJECT_ROOT}/compute_circle_fingertip.wgsl")
 configure_file(${COMPUTE_CIRCLE_SRC} "${EMBED_STAGE_DIR}/compute_circle.wgsl" COPYONLY)
 
 foreach(SHADER ${SHADER_FILES})

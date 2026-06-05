@@ -8,6 +8,14 @@
 #include "config.h"
 #include "circle_state.h"
 
+inline float computeHandSmoothingAlpha(float speed, const CircleConfig& cfg) {
+    if (speed > cfg.handSpeedThreshold) {
+        return cfg.handSmoothingAlphaHigh;
+    }
+    return cfg.handSmoothingAlphaLow +
+        (cfg.handSmoothingAlphaHigh - cfg.handSmoothingAlphaLow) * (speed / cfg.handSpeedThreshold);
+}
+
 inline void applyHandSmoothing(
     int rawGridX, int rawGridY,
     float& smoothedX, float& smoothedY,
@@ -20,14 +28,7 @@ inline void applyHandSmoothing(
         float dx = static_cast<float>(rawGridX) - smoothedX;
         float dy = static_cast<float>(rawGridY) - smoothedY;
         float speed = std::sqrt(dx * dx + dy * dy) / timestep;
-
-        float adaptiveAlpha = cfg.handSmoothingAlphaLow;
-        if (speed > cfg.handSpeedThreshold) {
-            adaptiveAlpha = cfg.handSmoothingAlphaHigh;
-        } else {
-            adaptiveAlpha = cfg.handSmoothingAlphaLow +
-                (cfg.handSmoothingAlphaHigh - cfg.handSmoothingAlphaLow) * (speed / cfg.handSpeedThreshold);
-        }
+        float adaptiveAlpha = computeHandSmoothingAlpha(speed, cfg);
 
         smoothedX = adaptiveAlpha * static_cast<float>(rawGridX) + (1.0f - adaptiveAlpha) * smoothedX;
         smoothedY = adaptiveAlpha * static_cast<float>(rawGridY) + (1.0f - adaptiveAlpha) * smoothedY;
@@ -41,12 +42,29 @@ inline void applyHandSmoothing(
     }
 }
 
+inline void applyCircleVelocitySmoothing(
+    float instantVelX, float instantVelY,
+    float& velX, float& velY,
+    float handSpeed,
+    const CircleConfig& cfg)
+{
+    float alpha = computeHandSmoothingAlpha(handSpeed, cfg);
+    velX = alpha * instantVelX + (1.0f - alpha) * velX;
+    velY = alpha * instantVelY + (1.0f - alpha) * velY;
+}
+
 inline bool shouldApplyMomentumTransfer(int deltaX, int deltaY, float deadZone) {
     if (deltaX == 0 && deltaY == 0) return false;
     if (deadZone <= 0.0f) return true;
     float dx = static_cast<float>(deltaX);
     float dy = static_cast<float>(deltaY);
     return dx * dx + dy * dy >= deadZone * deadZone;
+}
+
+inline bool shouldApplyMomentumTransferVelocity(float velX, float velY, float deadZone) {
+    if (velX == 0.0f && velY == 0.0f) return false;
+    if (deadZone <= 0.0f) return true;
+    return velX * velX + velY * velY >= deadZone * deadZone;
 }
 
 inline int scaleRadiusByZ(float z, int baseRadius, const CircleConfig& cfg) {
@@ -88,18 +106,18 @@ public:
     float momentumTransferStrength;
     float momentumTransferRadius;
 
-#ifdef ENABLE_MOUSE_INPUT
-    int circleX = 0, circleY = 0;
-    int prevCircleX = 0, prevCircleY = 0;
-    float circleVelX = 0.0f, circleVelY = 0.0f; // only used by CPU simulator
-    int circleRadius = 0;
-    bool isDragging = false;
-#else
+    // Hand tracking circles (mouse mode uses index 0 only)
     CircleState circles[HandTracking::MAX_CIRCLES];
     int baseCircleRadius = 0;
     LineSegment segments[HandTracking::MAX_SEGMENTS];
     int numSegments = 0;
-#endif
+
+    // Mouse circle state (separate from hand circles array)
+    int mouseCircleX = 0, mouseCircleY = 0;
+    int mousePrevCircleX = 0, mousePrevCircleY = 0;
+    float mouseCircleVelX = 0.0f, mouseCircleVelY = 0.0f;
+    int mouseCircleRadius = 0;
+    bool isMouseDragging = false;
 
     // wind tunnel state
     float windTunnelStart; // 0-1 (pass this one in)
@@ -123,11 +141,36 @@ public:
     std::pair<int, int> screenToGridCoords(int screenX, int screenY, int windowWidth, int windowHeight) const {
         float simX = screenX / static_cast<float>(windowWidth) * domainWidth;
         float simY = (windowHeight - screenY) / static_cast<float>(windowHeight) * domainHeight;
-    
+
         int gridX = static_cast<int>(simX / cellSize);
         int gridY = static_cast<int>(simY / cellSize);
-    
+
         return {gridX, gridY};
+    }
+
+    // viewport-aware coordinate mapping for mouse input
+    std::pair<int, int> viewportAwareScreenToGrid(int screenX, int screenY, int canvasWidth, int canvasHeight) const {
+        // Check which viewport (if any) contains this screen coordinate
+        for (int i = 0; i < 4; i++) {
+            std::string vpName = "viewport_" + std::to_string(i + 1);
+            auto it = g_layoutPixels.components.find(vpName);
+            if (it == g_layoutPixels.components.end()) continue;
+            const PixelRect& vp = it->second;
+
+            if (screenX >= vp.x && screenX < vp.x + vp.width &&
+                screenY >= vp.y && screenY < vp.y + vp.height) {
+                // Map screen coords within viewport to sim grid coords (mirrors WGSL fragment shader)
+                float normX = (screenX - vp.x) / static_cast<float>(vp.width);
+                float normY = (screenY - vp.y) / static_cast<float>(vp.height);
+                float simX = normX * domainWidth;
+                float simY = (1.0f - normY) * domainHeight;
+                int gridXCoord = static_cast<int>(simX / cellSize);
+                int gridYCoord = static_cast<int>(simY / cellSize);
+                return {gridXCoord, gridYCoord};
+            }
+        }
+        // Not in any viewport -- return invalid coordinates
+        return {-1, -1};
     }
 
     // fields
@@ -143,44 +186,48 @@ public:
     // modes
     virtual bool isUsingGPU() const { return false; }
 
+    // Recompute windTunnelStartCell/windTunnelEndCell from config side and normalized span.
+    void recomputeWindTunnelCells(const Config& config);
+
     // Runtime config reload
     virtual void updateSimParams(const Config& config) {}
     virtual void reinitInk(const ImageData* imageData) {}
     virtual void resetFluidState(bool clearInk = true) {}
 
-#ifdef ENABLE_MOUSE_INPUT
     // mouse helpers
-    bool isInsideCircle(int i, int j) {
-        float dx = (i + 0.5f) - circleX;
-        float dy = (j + 0.5f) - circleY;
-        return sqrt(dx * dx + dy * dy) <= circleRadius;
+    bool isInsideMouseCircle(int i, int j) {
+        float dx = (i + 0.5f) - mouseCircleX;
+        float dy = (j + 0.5f) - mouseCircleY;
+        return sqrt(dx * dx + dy * dy) <= mouseCircleRadius;
     }
 
     void onMouseDown(int mouseX, int mouseY) {
-        isDragging = true;
+        isMouseDragging = true;
     }
 
     void onMouseUp() {
-        isDragging = false;
+        isMouseDragging = false;
+        mouseCircleVelX = 0.0f;
+        mouseCircleVelY = 0.0f;
+        mousePrevCircleX = mouseCircleX;
+        mousePrevCircleY = mouseCircleY;
     }
 
     void onMouseDrag(int mouseX, int mouseY) {
-        if (isDragging) {
+        if (isMouseDragging) {
             // clamp circle to bounds
-            int newX = std::max(circleRadius, std::min(mouseX, gridX - circleRadius - 1));
-            int newY = std::max(circleRadius, std::min(mouseY, gridY - circleRadius - 1));
-            if (newX != circleX || newY != circleY) {
+            int newX = std::max(mouseCircleRadius, std::min(mouseX, gridX - mouseCircleRadius - 1));
+            int newY = std::max(mouseCircleRadius, std::min(mouseY, gridY - mouseCircleRadius - 1));
+            if (newX != mouseCircleX || newY != mouseCircleY) {
                 moveCircle(newX, newY);
             }
         }
     }
 
     virtual void moveCircle(int newGridX, int newGridY) {}
-#else
     // fingertip mode helpers (fuck it, they're always here. I'm too tired for this)
     virtual void updateCircles(const FingertipData* fingertips, int count) {}
     virtual void updateLineSegments(const FingertipData* landmarks, int count) {}
-#endif
 };
 
 #endif

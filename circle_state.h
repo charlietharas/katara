@@ -22,7 +22,7 @@ struct CircleState {
     int x, y;
     int prevX, prevY;
     float smoothedX = 0.0f, smoothedY = 0.0f;
-    float velX = 0.0f, velY = 0.0f; // only used by CPU simulator
+    float velX = 0.0f, velY = 0.0f;
     float z;
     int scaledRadius;
     bool present;

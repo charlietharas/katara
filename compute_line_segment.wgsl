@@ -24,6 +24,8 @@ struct SimParams {
     circleScaledRadius: array<i32, 42>,
     circlePresent: array<i32, 42>,
     circleWasPresent: array<i32, 42>,
+    circleVelX: array<f32, 42>,
+    circleVelY: array<f32, 42>,
     numCircles: i32,
     baseCircleRadius: i32,
     segmentStartX: array<i32, 46>,

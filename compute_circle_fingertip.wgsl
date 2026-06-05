@@ -24,6 +24,8 @@ struct SimParams {
     circleScaledRadius: array<i32, 42>,
     circlePresent: array<i32, 42>,
     circleWasPresent: array<i32, 42>,
+    circleVelX: array<f32, 42>,
+    circleVelY: array<f32, 42>,
     numCircles: i32,
     baseCircleRadius: i32,
     segmentStartX: array<i32, 46>,
@@ -41,10 +43,12 @@ struct SimParams {
     segmentPresent: array<i32, 46>,
     segmentWasPresent: array<i32, 46>,
     numSegments: i32,
-    pad0: i32,
+    inputMode: i32,
     pad1: i32,
     pad2: i32,
 };
+
+const INPUT_MODE_MOUSE_PULL: i32 = 1;
 
 // new momentum transfer handler for multiple circles
 // (in this case corresponding to hand keypoints)
@@ -146,18 +150,22 @@ fn updateCircle(@builtin(global_invocation_id) id: vec3<u32>) {
 
     // zero velocity for cells that were in previous circle positions,
     // unless momentum was just applied by a moving circle
-    if (wasInAnyPrevCircle && !momentumWasApplied) {
-        vel = vec2<f32>(0.0, 0.0);
-    }
-
     // also zero velocity for cells that are currently inside circles
-    // (unless they just received momentum from a circle moving into them)
-    if (isInAnyCircle && !momentumWasApplied) {
-        vel = vec2<f32>(0.0, 0.0);
+    // unless they just received momentum from a circle moving into them
+    if (params.inputMode != INPUT_MODE_MOUSE_PULL) {
+        if (wasInAnyPrevCircle && !momentumWasApplied) {
+            vel = vec2<f32>(0.0, 0.0);
+        }
+        if (isInAnyCircle && !momentumWasApplied) {
+            vel = vec2<f32>(0.0, 0.0);
+        }
     }
 
-    // preserve segment solids when circle runs after line segments
-    if (isInAnyCircle) {
+    // mouse pull: momentum only, never write solids
+    if (params.inputMode == INPUT_MODE_MOUSE_PULL) {
+        textureStore(solidTexture, vec2<i32>(i, j), vec4<f32>(currentSolid, 0.0, 0.0, 0.0));
+    } else if (isInAnyCircle) {
+        // preserve segment solids when circle runs after line segments
         textureStore(solidTexture, vec2<i32>(i, j), vec4<f32>(0.0, 0.0, 0.0, 0.0));
     } else {
         textureStore(solidTexture, vec2<i32>(i, j), vec4<f32>(currentSolid, 0.0, 0.0, 0.0));

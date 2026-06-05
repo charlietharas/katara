@@ -14,12 +14,9 @@ public:
     bool init(const Config& config, const ImageData* imageData = nullptr, float aspectRatio = 1.5f) override;
     void update() override;
 
-#ifdef ENABLE_MOUSE_INPUT
     void moveCircle(int newGridX, int newGridY) override;
-#else
     void updateCircles(const FingertipData* fingertips, int count) override;
     void updateLineSegments(const FingertipData* landmarks, int count) override;
-#endif
 
     // Runtime config reload
     void updateSimParams(const Config& config) override;
@@ -76,14 +73,12 @@ private:
     void circleMomentumTransfer();
     void updateCircleAreas(int prevX, int prevY, int newX, int newY, int prevRadius, int newRadius);
 
-#ifndef ENABLE_MOUSE_INPUT
     int scaleRadiusByZ(float z);
     void clearCircleArea(int prevX, int prevY, int radius);
     void updateSingleCircle(CircleState& circle);
 
     bool isPointNearSegment(int px, int py, int x1, int y1, float r1, int x2, int y2, float r2);
     void updateLineSegmentSolidField(LineSegment& seg);
-#endif
 
 public:
     // image initialization helpers (public so GPU simulator can access via member)

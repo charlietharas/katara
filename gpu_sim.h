@@ -31,19 +31,14 @@ struct alignas(16) SimParams {
     float momentumTransferDeadZone;
     float vorticity;
     float vorticityLen;
-#ifdef ENABLE_MOUSE_INPUT
-    // we only need to track single circle state
-    int circleX, circleY, prevCircleX, prevCircleY;
-    int circleRadius;
-    int pad0, pad1, pad2;
-#else
-    // track 21 landmarks per hand
+    // track 21 landmarks per hand (mouse mode uses index 0 only)
     int circleX[HandTracking::MAX_CIRCLES], circleY[HandTracking::MAX_CIRCLES];
     int prevCircleX[HandTracking::MAX_CIRCLES], prevCircleY[HandTracking::MAX_CIRCLES];
     float circleZ[HandTracking::MAX_CIRCLES]; // we use this to scale radii by distance to wrist
     int circleScaledRadius[HandTracking::MAX_CIRCLES]; // pre-scaled
     int circlePresent[HandTracking::MAX_CIRCLES];
     int circleWasPresent[HandTracking::MAX_CIRCLES];
+    float circleVelX[HandTracking::MAX_CIRCLES], circleVelY[HandTracking::MAX_CIRCLES];
     int numCircles;
     int baseCircleRadius; // base radius from config
 
@@ -57,8 +52,8 @@ struct alignas(16) SimParams {
     int segmentPresent[HandTracking::MAX_SEGMENTS];
     int segmentWasPresent[HandTracking::MAX_SEGMENTS];
     int numSegments;
-    int pad0, pad1, pad2;
-#endif
+    int inputMode;
+    int pad1, pad2;
 };
 static_assert(sizeof(SimParams) % 16 == 0, "SimParams invalid alignment");
 
@@ -139,9 +134,7 @@ private:
     // workgroup size (initialized to ceil(gridDim / 16))
     uint32_t workgroupX = 0, workgroupY = 0;
 
-#ifndef ENABLE_MOUSE_INPUT
     int numCircles = 0;
-#endif
     float momentumTransferStrength;
     float momentumTransferRadius;
     float momentumTransferDeadZone;
@@ -184,9 +177,7 @@ private:
     DECLARE_PIPELINE_RESOURCES(vorticityCompute)
     DECLARE_PIPELINE_RESOURCES(vorticityApply)
     DECLARE_PIPELINE_RESOURCES(circle)
-#ifndef ENABLE_MOUSE_INPUT
     DECLARE_PIPELINE_RESOURCES(lineSegment)
-#endif
     DECLARE_PIPELINE_RESOURCES(pressureMinMax)
     DECLARE_PIPELINE_RESOURCES(histogramBins)
 
@@ -203,9 +194,7 @@ private:
     void dispatchBoundaryConditions(WGPUCommandEncoder encoder);
     void dispatchVorticity(WGPUCommandEncoder encoder);
     void dispatchCircle(WGPUCommandEncoder encoder);
-#ifndef ENABLE_MOUSE_INPUT
     void dispatchLineSegments(WGPUCommandEncoder encoder);
-#endif
     void dispatchPressureMinMax(int slotIndex);
     void dispatchHistogramBins(int slotIndex);
     void dispatchHistogramCompute(const struct HistogramDispatchDesc& desc); // async helper
@@ -216,12 +205,9 @@ private:
     void onMinMaxMapped(WGPUMapAsyncStatus status, int slotIndex);
     void onHistogramBinsMapped(WGPUMapAsyncStatus status, int slotIndex);
 
-#ifdef ENABLE_MOUSE_INPUT
     void moveCircle(int newGridX, int newGridY) override;
-#else
     void updateCircles(const FingertipData* fingertips, int count) override;
     void updateLineSegments(const FingertipData* landmarks, int count) override;
-#endif
 
     // Runtime config reload
     void updateSimParams(const Config& config) override;

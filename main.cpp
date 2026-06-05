@@ -120,19 +120,6 @@ void mainLoopCallback(void* arg) {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         if (event.type == SDL_QUIT) *(s->running) = false;
-#ifdef ENABLE_MOUSE_INPUT
-        else if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
-            auto coords = s->simulator->screenToGridCoords(event.button.x, event.button.y, s->windowWidth, s->windowHeight);
-            if (s->simulator->isInsideCircle(coords.first, coords.second))
-                s->simulator->onMouseDown(coords.first, coords.second);
-        }
-        else if (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT)
-            s->simulator->onMouseUp();
-        else if (event.type == SDL_MOUSEMOTION && event.motion.state & SDL_BUTTON_LMASK) {
-            auto coords = s->simulator->screenToGridCoords(event.motion.x, event.motion.y, s->windowWidth, s->windowHeight);
-            s->simulator->onMouseDrag(coords.first, coords.second);
-        }
-#endif
     }
 
     if (!g_simulationPaused) {
@@ -142,8 +129,25 @@ void mainLoopCallback(void* arg) {
 }
 
 extern "C" {
-#ifndef ENABLE_MOUSE_INPUT
     static ISimulator* g_simulator = nullptr;
+
+    static void applyInputModeTransition(InputMode prevMode, InputMode newMode) {
+        if (!g_simulator) return;
+
+        const bool wasMouse = isMouseInput(prevMode);
+        const bool isMouse = isMouseInput(newMode);
+        if (isMouse && !wasMouse) {
+            g_simulator->mouseCircleX = g_simulator->gridX / 2;
+            g_simulator->mouseCircleY = g_simulator->gridY / 2;
+            g_simulator->mousePrevCircleX = g_simulator->mouseCircleX;
+            g_simulator->mousePrevCircleY = g_simulator->mouseCircleY;
+            g_simulator->mouseCircleVelX = 0.0f;
+            g_simulator->mouseCircleVelY = 0.0f;
+            g_simulator->isMouseDragging = false;
+        } else if (!isMouse) {
+            g_simulator->isMouseDragging = false;
+        }
+    }
 
     EMSCRIPTEN_KEEPALIVE
     void setSimulatorPointer(void* ptr) {
@@ -170,7 +174,77 @@ extern "C" {
             g_simulator->update();
         }
     }
-#endif
+
+    EMSCRIPTEN_KEEPALIVE
+    void setInputMode(int modeInt) {
+        if (!g_simulator) return;
+
+        InputMode newMode;
+        switch (modeInt) {
+            case 0: newMode = InputMode::Hand; break;
+            case 1: newMode = InputMode::MousePull; break;
+            default: return;
+        }
+
+        const InputMode prevMode = g_config.inputMode;
+        g_config.inputMode = newMode;
+        applyInputModeTransition(prevMode, newMode);
+    }
+
+    EMSCRIPTEN_KEEPALIVE
+    void onMouseDown(int gridX, int gridY) {
+        if (g_simulator && isMouseInput(g_config.inputMode)) {
+            g_simulator->isMouseDragging = true;
+            g_simulator->mouseCircleX = gridX;
+            g_simulator->mouseCircleY = gridY;
+            g_simulator->mousePrevCircleX = gridX;
+            g_simulator->mousePrevCircleY = gridY;
+            g_simulator->mouseCircleVelX = 0.0f;
+            g_simulator->mouseCircleVelY = 0.0f;
+        }
+    }
+
+    EMSCRIPTEN_KEEPALIVE
+    void onMouseUp() {
+        if (g_simulator) {
+            g_simulator->isMouseDragging = false;
+            g_simulator->mouseCircleVelX = 0.0f;
+            g_simulator->mouseCircleVelY = 0.0f;
+            g_simulator->mousePrevCircleX = g_simulator->mouseCircleX;
+            g_simulator->mousePrevCircleY = g_simulator->mouseCircleY;
+        }
+    }
+
+    EMSCRIPTEN_KEEPALIVE
+    void onMouseDrag(int gridX, int gridY) {
+        if (g_simulator && isMouseInput(g_config.inputMode) && g_simulator->isMouseDragging) {
+            int r = g_simulator->mouseCircleRadius;
+            int newX = std::max(r, std::min(gridX, g_simulator->gridX - r - 1));
+            int newY = std::max(r, std::min(gridY, g_simulator->gridY - r - 1));
+            if (newX != g_simulator->mouseCircleX || newY != g_simulator->mouseCircleY) {
+                g_simulator->moveCircle(newX, newY);
+            }
+        }
+    }
+
+    // Helper functions for coordinate mapping
+    EMSCRIPTEN_KEEPALIVE
+    float getSimDomainWidth() {
+        if (g_simulator) return g_simulator->domainWidth;
+        return 0.0f;
+    }
+
+    EMSCRIPTEN_KEEPALIVE
+    float getSimDomainHeight() {
+        if (g_simulator) return g_simulator->domainHeight;
+        return 0.0f;
+    }
+
+    EMSCRIPTEN_KEEPALIVE
+    float getSimCellSize() {
+        if (g_simulator) return g_simulator->cellSize;
+        return 0.0f;
+    }
 
     EMSCRIPTEN_KEEPALIVE
     void setSimulationPaused(int paused) {
@@ -200,10 +274,12 @@ extern "C" {
     // Flags: INK=1, SIM=2, RENDER=4, LAYOUT=8
     EMSCRIPTEN_KEEPALIVE
     void reloadConfig(int flags) {
+        const InputMode prevMode = g_config.inputMode;
         Config newConfig = ConfigLoader::loadConfig("/config.json");
 
         // Always update the global
         g_config = newConfig;
+        applyInputModeTransition(prevMode, g_config.inputMode);
 
         // SIM: push new sim params to simulator
         if (flags & 2) {
@@ -444,9 +520,7 @@ int main(int argc, char** argv) {
     uint delay = config.simulation.timestep * 1000;
 
 #ifdef __EMSCRIPTEN__
-#ifndef ENABLE_MOUSE_INPUT
     setSimulatorPointer(simulator.get());
-#endif
     g_renderer = renderer.get();
     MainLoopState state{simulator.get(), renderer.get(), window, &running, windowWidth, windowHeight};
     emscripten_set_main_loop_arg(mainLoopCallback, &state, 0, true);
@@ -456,19 +530,21 @@ int main(int argc, char** argv) {
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
                 running = false;
-#ifdef ENABLE_MOUSE_INPUT
-            } else if (event.type == SDL_MOUSEBUTTONDOWN and event.button.button == SDL_BUTTON_LEFT) {
-                std::pair<int, int> gridCoords = simulator->screenToGridCoords(event.button.x, event.button.y, windowWidth, windowHeight);
-                if (simulator->isInsideCircle(gridCoords.first, gridCoords.second)) {
-                    simulator->onMouseDown(gridCoords.first, gridCoords.second);
+            } else if (isMouseInput(g_config.inputMode)) {
+                if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
+                    auto coords = simulator->viewportAwareScreenToGrid(event.button.x, event.button.y, windowWidth, windowHeight);
+                    if (coords.first >= 0) {
+                        simulator->onMouseDown(coords.first, coords.second);
+                    }
+                } else if (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT) {
+                    simulator->onMouseUp();
+                } else if (event.type == SDL_MOUSEMOTION && event.motion.state & SDL_BUTTON_LMASK) {
+                    auto coords = simulator->viewportAwareScreenToGrid(event.motion.x, event.motion.y, windowWidth, windowHeight);
+                    if (coords.first >= 0) {
+                        simulator->onMouseDrag(coords.first, coords.second);
+                    }
                 }
-            } else if (event.type == SDL_MOUSEBUTTONUP and event.button.button == SDL_BUTTON_LEFT) {
-                simulator->onMouseUp();
-            } else if (event.type == SDL_MOUSEMOTION and event.motion.state & SDL_BUTTON_LMASK) {
-                std::pair<int, int> gridCoords = simulator->screenToGridCoords(event.motion.x, event.motion.y, windowWidth, windowHeight);
-                simulator->onMouseDrag(gridCoords.first, gridCoords.second);
             }
-#endif
         }
 
         simulator->update();

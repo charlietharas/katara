@@ -64,6 +64,22 @@ enum class PipelineType {
     HYBRID // "hybrid"
 };
 
+enum class InputMode : int {
+    Hand = 0,
+    MousePull = 1,
+};
+
+inline bool isMouseInput(InputMode mode) {
+    return mode == InputMode::MousePull;
+}
+
+inline int inputModeToInt(InputMode mode) {
+    return static_cast<int>(mode);
+}
+
+InputMode parseInputMode(const std::string& mode);
+std::string inputModeToString(InputMode mode);
+
 struct SimulationConfig {
     int resolution;
     float timestep;
@@ -118,6 +134,7 @@ struct LayoutPixels {
 extern LayoutPixels g_layoutPixels;
 
 struct Config {
+    InputMode inputMode = InputMode::Hand;
     PipelineType pipeline;
     WindowConfig window;
     SimulationConfig simulation;

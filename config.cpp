@@ -543,6 +543,7 @@ Config ConfigLoader::loadConfig(const std::string& filename) {
         file.close();
 
         Config config;
+        config.inputMode = parseInputMode(j.value("inputMode", "hand"));
         config.pipeline = stringToPipelineType(j["pipeline"]);
         config.window = loadWindowConfig(j["window"]);
         config.simulation = loadSimulationConfig(j["simulation"]);
@@ -556,6 +557,26 @@ Config ConfigLoader::loadConfig(const std::string& filename) {
         std::cerr << "Ensure config.json has all required keys." << std::endl;
         exit(1);
     }
+}
+
+InputMode parseInputMode(const std::string& mode) {
+    if (mode == "hand") {
+        return InputMode::Hand;
+    }
+    if (mode == "mouse_pull") {
+        return InputMode::MousePull;
+    }
+    std::cerr << "CONFIG ERROR: invalid inputMode: " << mode << std::endl;
+    std::cerr << "Valid values: hand, mouse_pull" << std::endl;
+    exit(1);
+}
+
+std::string inputModeToString(InputMode mode) {
+    switch (mode) {
+        case InputMode::Hand: return "hand";
+        case InputMode::MousePull: return "mouse_pull";
+    }
+    return "hand";
 }
 
 PipelineType ConfigLoader::stringToPipelineType(const std::string& type) {

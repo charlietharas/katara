@@ -18,6 +18,7 @@
 
 // UPDATE RENDER PASS UNIFORM
 void GPURenderer::updateUniformBufferRender(const ISimulator& simulator) {
+    uniformData.gpuInkMode = usingGPUTextures ? 1 : 0;
     uniformData.gridX = simulator.gridX;
     uniformData.gridY = simulator.gridY;
     uniformData.cellSize = simulator.cellSize;
@@ -404,7 +405,6 @@ GPURenderer::GPURenderer(SDL_Window* window, const Config& config)
 
     uniformData = {};
     uniformData.drawTarget = g_config.rendering.target;
-    uniformData.drawVelocities = g_config.rendering.showVelocityVectors ? 1 : 0;
     uniformData.velScale = g_config.rendering.velocityScale;
     uniformData.windowWidth = static_cast<float>(windowWidth);
     uniformData.windowHeight = static_cast<float>(windowHeight);
@@ -439,11 +439,9 @@ GPURenderer::~GPURenderer() {
 
     // all the other stuff
     RELEASE_RENDER_PIPELINE(renderPipeline)
-    RELEASE_RENDER_PIPELINE(renderPipelineGPU)
     RELEASE_BIND_GROUP(uniformBindGroup)
     RELEASE_BIND_GROUP(uniformBindGroupGPU)
     RELEASE_BIND_GROUP_LAYOUT(bindGroupLayout)
-    RELEASE_BIND_GROUP_LAYOUT(bindGroupLayoutGPU)
     RELEASE_BUFFER(uniformBuffer)
     RELEASE_SAMPLER(sampler)
 
@@ -515,12 +513,10 @@ void GPURenderer::render(const ISimulator& simulator) {
         return;
     }
 
-    // set pipeline and bind groups based on mode
+    wgpuRenderPassEncoderSetPipeline(renderPassEncoder, renderPipeline);
     if (usingGPUTextures) {
-        wgpuRenderPassEncoderSetPipeline(renderPassEncoder, renderPipelineGPU);
         wgpuRenderPassEncoderSetBindGroup(renderPassEncoder, 0, uniformBindGroupGPU, 0, nullptr);
     } else {
-        wgpuRenderPassEncoderSetPipeline(renderPassEncoder, renderPipeline);
         wgpuRenderPassEncoderSetBindGroup(renderPassEncoder, 0, uniformBindGroup, 0, nullptr);
     }
 
@@ -599,9 +595,11 @@ void GPURenderer::updateTextures(const ISimulator& simulator) {
         bindGroupEntries.push_back(createTextureViewBindGroupEntry(3, densityTextureView));
         bindGroupEntries.push_back(createTextureViewBindGroupEntry(4, velocityTextureView));
         bindGroupEntries.push_back(createTextureViewBindGroupEntry(5, solidTextureView));
-        bindGroupEntries.push_back(createTextureViewBindGroupEntry(6, redInkTextureView)); // misleading; RGBA ink texture
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(6, redInkTextureView)); // RGBA ink texture
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(7, solidTextureView)); // unused in gpu ink mode
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(8, solidTextureView)); // unused in gpu ink mode
 
-        uniformBindGroupGPU = createBindGroup(bindGroupEntries.size(), bindGroupEntries.data(), bindGroupLayoutGPU);
+        uniformBindGroupGPU = createBindGroup(bindGroupEntries.size(), bindGroupEntries.data(), bindGroupLayout);
         uniformData.gridX = gridX;
         uniformData.gridY = gridY;
 
@@ -994,7 +992,7 @@ bool GPURenderer::initDevice() {
 }
 
 bool GPURenderer::initRenderPipeline() {
-    auto cpuResult = createRenderPipelineWithLayout(
+    auto result = createRenderPipelineWithLayout(
         "vertex.wgsl",
         "fragment.wgsl",
         "fs_main",
@@ -1003,24 +1001,10 @@ bool GPURenderer::initRenderPipeline() {
         WGPUShaderStage_Fragment,
         sizeof(UniformData)
     );
-    RETURN_FALSE_IF_FAIL(cpuResult.pipeline);
+    RETURN_FALSE_IF_FAIL(result.pipeline);
 
-    renderPipeline = cpuResult.pipeline;
-    bindGroupLayout = cpuResult.bindGroupLayout;
-
-    auto gpuResult = createRenderPipelineWithLayout(
-        "vertex.wgsl",
-        "fragment_gpu.wgsl",
-        "fs_main",
-        surfaceFormat,
-        5,
-        WGPUShaderStage_Fragment,
-        sizeof(UniformData)
-    );
-    RETURN_FALSE_IF_FAIL(gpuResult.pipeline);
-
-    renderPipelineGPU = gpuResult.pipeline;
-    bindGroupLayoutGPU = gpuResult.bindGroupLayout;
+    renderPipeline = result.pipeline;
+    bindGroupLayout = result.bindGroupLayout;
 
     return true;
 }

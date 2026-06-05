@@ -47,48 +47,62 @@ void GPUSimulator::updateUniformBufferSim() {
     params.windTunnelEnd = windTunnelEndCell;
     params.windTunnelSpeed = config->simulation.windTunnel.velocity;
 
-#ifdef ENABLE_MOUSE_INPUT
-    params.circleX = circleX;
-    params.circleY = circleY;
-    params.prevCircleX = prevCircleX;
-    params.prevCircleY = prevCircleY;
-    params.circleRadius = circleRadius;
-#else
-    static int uniformFrameCount = 0;
+    params.inputMode = inputModeToInt(g_config.inputMode);
 
-    for (int i = 0; i < HandTracking::MAX_CIRCLES; i++) {
-        params.circleX[i] = circles[i].x;
-        params.circleY[i] = circles[i].y;
-        params.prevCircleX[i] = circles[i].prevX;
-        params.prevCircleY[i] = circles[i].prevY;
-        params.circleZ[i] = circles[i].z;
-        params.circleScaledRadius[i] = circles[i].scaledRadius;
-        params.circlePresent[i] = circles[i].present ? 1 : 0;
-        params.circleWasPresent[i] = circles[i].wasPresent ? 1 : 0;
-    }
-    params.numCircles = numCircles;
-    params.baseCircleRadius = baseCircleRadius;
-    uniformFrameCount++;
+    if (isMouseInput(g_config.inputMode) && isMouseDragging) {
+        // Pull mode: circle only active while dragging
+        params.circleX[0] = mouseCircleX;
+        params.circleY[0] = mouseCircleY;
+        params.prevCircleX[0] = mousePrevCircleX;
+        params.prevCircleY[0] = mousePrevCircleY;
+        params.circleScaledRadius[0] = mouseCircleRadius;
+        params.circlePresent[0] = 1;
+        params.circleWasPresent[0] = 1;
+        params.circleVelX[0] = mouseCircleVelX;
+        params.circleVelY[0] = mouseCircleVelY;
+        params.circleZ[0] = 0.0f;
+        params.numCircles = 1;
+        params.baseCircleRadius = mouseCircleRadius;
+        params.numSegments = 0;
+    } else {
+        // Hand mode: copy from circles[] array
+        static int uniformFrameCount = 0;
 
-    // blahhh
-    for (int i = 0; i < HandTracking::MAX_SEGMENTS; i++) {
-        params.segmentStartX[i] = segments[i].startX;
-        params.segmentStartY[i] = segments[i].startY;
-        params.segmentEndX[i] = segments[i].endX;
-        params.segmentEndY[i] = segments[i].endY;
-        params.segmentPrevStartX[i] = segments[i].prevStartX;
-        params.segmentPrevStartY[i] = segments[i].prevStartY;
-        params.segmentPrevEndX[i] = segments[i].prevEndX;
-        params.segmentPrevEndY[i] = segments[i].prevEndY;
-        params.segmentStartRadius[i] = segments[i].startRadius;
-        params.segmentEndRadius[i] = segments[i].endRadius;
-        params.segmentPrevStartRadius[i] = segments[i].prevStartRadius;
-        params.segmentPrevEndRadius[i] = segments[i].prevEndRadius;
-        params.segmentPresent[i] = segments[i].present ? 1 : 0;
-        params.segmentWasPresent[i] = segments[i].wasPresent ? 1 : 0;
+        for (int i = 0; i < HandTracking::MAX_CIRCLES; i++) {
+            params.circleX[i] = circles[i].x;
+            params.circleY[i] = circles[i].y;
+            params.prevCircleX[i] = circles[i].prevX;
+            params.prevCircleY[i] = circles[i].prevY;
+            params.circleZ[i] = circles[i].z;
+            params.circleScaledRadius[i] = circles[i].scaledRadius;
+            params.circlePresent[i] = circles[i].present ? 1 : 0;
+            params.circleWasPresent[i] = circles[i].wasPresent ? 1 : 0;
+            params.circleVelX[i] = circles[i].velX;
+            params.circleVelY[i] = circles[i].velY;
+        }
+        params.numCircles = numCircles;
+        params.baseCircleRadius = baseCircleRadius;
+        uniformFrameCount++;
+
+        // blahhh
+        for (int i = 0; i < HandTracking::MAX_SEGMENTS; i++) {
+            params.segmentStartX[i] = segments[i].startX;
+            params.segmentStartY[i] = segments[i].startY;
+            params.segmentEndX[i] = segments[i].endX;
+            params.segmentEndY[i] = segments[i].endY;
+            params.segmentPrevStartX[i] = segments[i].prevStartX;
+            params.segmentPrevStartY[i] = segments[i].prevStartY;
+            params.segmentPrevEndX[i] = segments[i].prevEndX;
+            params.segmentPrevEndY[i] = segments[i].prevEndY;
+            params.segmentStartRadius[i] = segments[i].startRadius;
+            params.segmentEndRadius[i] = segments[i].endRadius;
+            params.segmentPrevStartRadius[i] = segments[i].prevStartRadius;
+            params.segmentPrevEndRadius[i] = segments[i].prevEndRadius;
+            params.segmentPresent[i] = segments[i].present ? 1 : 0;
+            params.segmentWasPresent[i] = segments[i].wasPresent ? 1 : 0;
+        }
+        params.numSegments = numSegments;
     }
-    params.numSegments = numSegments;
-#endif
     params.momentumTransferStrength = momentumTransferStrength;
     params.momentumTransferRadius = momentumTransferRadius;
     params.momentumTransferDeadZone = momentumTransferDeadZone;
@@ -206,7 +220,7 @@ GPUSimulator::GPUSimulator(const Config& config)
     momentumTransferStrength = config.simulation.circle.momentumTransferStrength;
     momentumTransferRadius = config.simulation.circle.momentumTransferRadius;
     momentumTransferDeadZone = config.simulation.circle.momentumTransferDeadZone;
-#ifndef ENABLE_MOUSE_INPUT
+
     baseCircleRadius = static_cast<int>(config.simulation.circle.radius / cpuSimulator.cellSize);
     for (int i = 0; i < HandTracking::MAX_CIRCLES; i++) {
         circles[i].x = 0;
@@ -218,7 +232,6 @@ GPUSimulator::GPUSimulator(const Config& config)
         circles[i].present = false;
         circles[i].wasPresent = false;
     }
-#endif
 }
 
 GPUSimulator::~GPUSimulator() {
@@ -235,6 +248,7 @@ GPUSimulator::~GPUSimulator() {
     RELEASE_PIPELINE_RESOURCES(vorticityCompute)
     RELEASE_PIPELINE_RESOURCES(vorticityApply)
     RELEASE_PIPELINE_RESOURCES(circle)
+    RELEASE_PIPELINE_RESOURCES(lineSegment)
     RELEASE_PIPELINE_RESOURCES(pressureMinMax)
     RELEASE_PIPELINE_RESOURCES(histogramBins)
 
@@ -374,15 +388,20 @@ void GPUSimulator::update() {
     if (gravity != 0.0f) {
         dispatchIntegrate(encoder);
     }
-    #ifndef ENABLE_MOUSE_INPUT
-    // only dispatch line segments if there are segments present
-    if (numSegments > 0) {
+
+    // only dispatch line segments if there are segments present (hand mode only)
+    if (!isMouseInput(g_config.inputMode) && numSegments > 0) {
         dispatchLineSegments(encoder);
     }
-    #endif
-    #ifndef ENABLE_MOUSE_INPUT
-    // only dispatch circle if there are circles present (after line segments so momentum is not wiped)
-    if (numCircles > 0) {
+
+    // dispatch circle for pull (while dragging) or hand mode
+    if (isMouseInput(g_config.inputMode)) {
+        if (isMouseDragging) {
+            dispatchCircle(encoder);
+            mousePrevCircleX = mouseCircleX;
+            mousePrevCircleY = mouseCircleY;
+        }
+    } else if (numCircles > 0) {
         dispatchCircle(encoder);
         // reset prev positions to current so next frame has zero delta if not moved
         for (int i = 0; i < numCircles; i++) {
@@ -390,11 +409,6 @@ void GPUSimulator::update() {
             circles[i].prevY = circles[i].y;
         }
     }
-    #else
-    dispatchCircle(encoder); // called every frame for pipeline consistency
-    prevCircleX = circleX; // reset prev position to current so next frame has zero delta if not moved
-    prevCircleY = circleY;
-    #endif
     // ^ fun fact, this is the only shader to not need access to other pixels (e.g. neighbors),
     // so it is fully parallelizable with read-write and so just one compute pass is chill
 
@@ -435,30 +449,29 @@ void GPUSimulator::update() {
 
 
 // MOUSE HELPERS
-#ifdef ENABLE_MOUSE_INPUT
 void GPUSimulator::moveCircle(int newGridX, int newGridY) {
-    prevCircleX = circleX;
-    prevCircleY = circleY;
+    // Keep mousePrev* from the last GPU frame so dispatchCircle can clear the
+    // previous solid footprint even when multiple drags land before the next update.
 
-    float instantVelX = (newGridX - circleX) / config->simulation.timestep;
-    float instantVelY = (newGridY - circleY) / config->simulation.timestep;
+    float instantVelX = (newGridX - mouseCircleX) / config->simulation.timestep;
+    float instantVelY = (newGridY - mouseCircleY) / config->simulation.timestep;
     float alpha = 0.3f;
-    circleVelX = alpha * instantVelX + (1.0f - alpha) * circleVelX;
-    circleVelY = alpha * instantVelY + (1.0f - alpha) * circleVelY;
+    mouseCircleVelX = alpha * instantVelX + (1.0f - alpha) * mouseCircleVelX;
+    mouseCircleVelY = alpha * instantVelY + (1.0f - alpha) * mouseCircleVelY;
 
     // Motion detection for adaptive solver
-    float velocityMagnitude = std::sqrt(circleVelX * circleVelX + circleVelY * circleVelY);
+    float velocityMagnitude = std::sqrt(mouseCircleVelX * mouseCircleVelX + mouseCircleVelY * mouseCircleVelY);
     if (velocityMagnitude > config->simulation.projection.motionThreshold) {
         motionDetected = true;
     }
 
-    circleX = newGridX;
-    circleY = newGridY;
+    mouseCircleX = newGridX;
+    mouseCircleY = newGridY;
 
     // the CPU version calls updateCircle here, but instead we call dispatchCircle() every frame
     // to make the pipeline consistent
 }
-#else
+
 int GPUSimulator::scaleRadiusByZ(float z, int baseRadius) {
     return ::scaleRadiusByZ(z, baseRadius, config->simulation.circle);
 }
@@ -483,7 +496,16 @@ void GPUSimulator::updateCircles(const FingertipData* fingertips, int count) {
             circles[i].y = 0;
             circles[i].smoothedX = 0.0f;
             circles[i].smoothedY = 0.0f;
+            circles[i].velX = 0.0f;
+            circles[i].velY = 0.0f;
         } else {
+            float handSpeed = 0.0f;
+            if (circles[i].wasPresent) {
+                float dx = static_cast<float>(newGridX) - circles[i].smoothedX;
+                float dy = static_cast<float>(newGridY) - circles[i].smoothedY;
+                handSpeed = std::sqrt(dx * dx + dy * dy) / timestep;
+            }
+
             applyHandSmoothing(newGridX, newGridY, circles[i].smoothedX, circles[i].smoothedY,
                                circles[i].x, circles[i].y, circles[i].wasPresent,
                                config->simulation.circle, timestep);
@@ -492,14 +514,11 @@ void GPUSimulator::updateCircles(const FingertipData* fingertips, int count) {
             circles[i].present = true;
             circles[i].wasPresent = true;
 
-            // Calculate velocity for motion detection
             float instantVelX = (circles[i].x - circles[i].prevX) / timestep;
             float instantVelY = (circles[i].y - circles[i].prevY) / timestep;
-            float alpha = 0.3f;
-            circles[i].velX = alpha * instantVelX + (1.0f - alpha) * circles[i].velX;
-            circles[i].velY = alpha * instantVelY + (1.0f - alpha) * circles[i].velY;
+            applyCircleVelocitySmoothing(instantVelX, instantVelY, circles[i].velX, circles[i].velY,
+                                         handSpeed, config->simulation.circle);
 
-            // Motion detection for adaptive solver
             float velocityMagnitude = std::sqrt(circles[i].velX * circles[i].velX + circles[i].velY * circles[i].velY);
             if (velocityMagnitude > config->simulation.projection.motionThreshold) {
                 motionDetected = true;
@@ -518,6 +537,8 @@ void GPUSimulator::updateCircles(const FingertipData* fingertips, int count) {
         circles[i].prevY = 0;
         circles[i].smoothedX = 0.0f;
         circles[i].smoothedY = 0.0f;
+        circles[i].velX = 0.0f;
+        circles[i].velY = 0.0f;
         circles[i].z = 0.0f;
         circles[i].scaledRadius = 0;
     }
@@ -595,7 +616,6 @@ void GPUSimulator::updateLineSegments(const FingertipData* landmarks, int count)
         segments[i].endRadius = 0.0f;
     }
 }
-#endif
 
 // DISPATCH COMPUTE SHADERS
 void GPUSimulator::dispatchIntegrate(WGPUCommandEncoder encoder) {
@@ -608,12 +628,10 @@ void GPUSimulator::dispatchCircle(WGPUCommandEncoder encoder) {
     copyTextureDeviceToDevice(encoder, newVelocityTexture, velocityTexture);
 }
 
-#ifndef ENABLE_MOUSE_INPUT
 void GPUSimulator::dispatchLineSegments(WGPUCommandEncoder encoder) {
     dispatchComputePass(encoder, lineSegmentPipeline, lineSegmentBindGroup);
     copyTextureDeviceToDevice(encoder, newVelocityTexture, velocityTexture);
 }
-#endif
 
 void GPUSimulator::dispatchBoundaryConditions(WGPUCommandEncoder encoder) {
     dispatchComputePass(encoder, boundaryPipeline, boundaryBindGroup);
@@ -988,18 +1006,22 @@ bool GPUSimulator::initSimData(const Config& cfg, const ImageData* imageData, fl
     workgroupY = (gridY + 15) / 16;
     windTunnelStartCell = cpuSimulator.windTunnelStartCell;
     windTunnelEndCell = cpuSimulator.windTunnelEndCell;
-    
-#ifdef ENABLE_MOUSE_INPUT
-    circleX = gridX / 2;
-    circleY = gridY / 2;
-    prevCircleX = circleX;
-    prevCircleY = circleY;
-    circleRadius = cpuSimulator.circleRadius;
-#else
+
+    mouseCircleRadius = static_cast<int>(config->simulation.circle.radius / cpuSimulator.cellSize);
+
+    if (isMouseInput(g_config.inputMode)) {
+        mouseCircleX = gridX / 2;
+        mouseCircleY = gridY / 2;
+        mousePrevCircleX = mouseCircleX;
+        mousePrevCircleY = mouseCircleY;
+        mouseCircleVelX = 0.0f;
+        mouseCircleVelY = 0.0f;
+    }
+
     baseCircleRadius = cpuSimulator.baseCircleRadius;
     numCircles = 0;
 
-    // initialize all circles to defaults
+    // initialize all circles to defaults (for hand mode)
     for (int i = 0; i < HandTracking::MAX_CIRCLES; i++) {
         circles[i].x = 0;
         circles[i].y = 0;
@@ -1009,9 +1031,10 @@ bool GPUSimulator::initSimData(const Config& cfg, const ImageData* imageData, fl
         circles[i].scaledRadius = baseCircleRadius;
         circles[i].present = false;
         circles[i].wasPresent = false;
+        circles[i].velX = 0.0f;
+        circles[i].velY = 0.0f;
     }
-#endif
-    
+
     inkInitialized = cpuSimulator.inkInitialized;
     gravity = cpuSimulator.gravity;
     return true;
@@ -1305,7 +1328,6 @@ bool GPUSimulator::initPipelineLayouts() {
     circlePipelineLayout = createPipelineLayout(&circleBindGroupLayout);
     RETURN_FALSE_IF_FAIL(circlePipelineLayout);
 
-#ifndef ENABLE_MOUSE_INPUT
     // line segment update [5]:
     // uniform
     // solid (read-write)
@@ -1323,7 +1345,6 @@ bool GPUSimulator::initPipelineLayouts() {
     RETURN_FALSE_IF_FAIL(lineSegmentBindGroupLayout);
     lineSegmentPipelineLayout = createPipelineLayout(&lineSegmentBindGroupLayout);
     RETURN_FALSE_IF_FAIL(lineSegmentPipelineLayout);
-#endif
 
     // pressure minmax [6]:
     // uniform
@@ -1507,7 +1528,6 @@ bool GPUSimulator::initBindGroups() {
     circleBindGroup = createBindGroup(5, circleEntries, circleBindGroupLayout);
     RETURN_FALSE_IF_FAIL(circleBindGroup);
 
-#ifndef ENABLE_MOUSE_INPUT
     // line segment bind group
     WGPUBindGroupEntry lineSegmentEntries[5] = {};
     lineSegmentEntries[0] = createUniformBufferBindGroupEntry(0, uniformBuffer, sizeof(SimParams));
@@ -1518,7 +1538,6 @@ bool GPUSimulator::initBindGroups() {
 
     lineSegmentBindGroup = createBindGroup(5, lineSegmentEntries, lineSegmentBindGroupLayout);
     RETURN_FALSE_IF_FAIL(lineSegmentBindGroup);
-#endif
 
     // histogram bind groups are created dynamically per-slot in dispatch methods
 
@@ -1559,10 +1578,8 @@ bool GPUSimulator::initPipelines() {
     circlePipeline = createComputePipeline("compute_circle.wgsl", "updateCircle", circlePipelineLayout);
     RETURN_FALSE_IF_FAIL(circlePipeline);
 
-#ifndef ENABLE_MOUSE_INPUT
     lineSegmentPipeline = createComputePipeline("compute_line_segment.wgsl", "updateLineSegments", lineSegmentPipelineLayout);
     RETURN_FALSE_IF_FAIL(lineSegmentPipeline);
-#endif
 
     pressureMinMaxPipeline = createComputePipeline("compute_pressure_minmax.wgsl", "computePressureMinMax", pressureMinMaxPipelineLayout);
     RETURN_FALSE_IF_FAIL(pressureMinMaxPipeline);
@@ -1579,20 +1596,24 @@ void GPUSimulator::updateSimParams(const Config& config) {
     gravity = config.simulation.gravity;
     windTunnelSide = config.simulation.windTunnel.side;
     windTunnelSpeed = config.simulation.windTunnel.velocity;
+    cpuSimulator.windTunnelSide = windTunnelSide;
+    cpuSimulator.windTunnelSpeed = windTunnelSpeed;
+    cpuSimulator.recomputeWindTunnelCells(config);
+    windTunnelStartCell = cpuSimulator.windTunnelStartCell;
+    windTunnelEndCell = cpuSimulator.windTunnelEndCell;
+    pipeHeight = cpuSimulator.pipeHeight;
     momentumTransferStrength = config.simulation.circle.momentumTransferStrength;
     momentumTransferRadius = config.simulation.circle.momentumTransferRadius;
     momentumTransferDeadZone = config.simulation.circle.momentumTransferDeadZone;
 
     // Circle radius is specified in world units in config; convert to grid units used by shaders.
-#ifdef ENABLE_MOUSE_INPUT
-    circleRadius = static_cast<int>(config.simulation.circle.radius / cpuSimulator.cellSize);
-#else
+    // Update both mouse and hand circle radii
+    mouseCircleRadius = static_cast<int>(config.simulation.circle.radius / cpuSimulator.cellSize);
     baseCircleRadius = static_cast<int>(config.simulation.circle.radius / cpuSimulator.cellSize);
     // Keep per-circle radii in sync immediately (otherwise user won't see changes until next detection event).
     for (int i = 0; i < HandTracking::MAX_CIRCLES; i++) {
         circles[i].scaledRadius = baseCircleRadius;
     }
-#endif
 
     // Update stored config pointer — updateUniformBufferSim() reads from this each frame
     this->config = &config;
@@ -1648,6 +1669,11 @@ void GPUSimulator::reinitInk(const ImageData* imageData) {
 }
 
 void GPUSimulator::resetFluidState(bool clearInk) {
+    for (int i = 0; i < HandTracking::MAX_CIRCLES; i++) {
+        circles[i].velX = 0.0f;
+        circles[i].velY = 0.0f;
+    }
+
     // Reset CPU simulator state
     cpuSimulator.resetFluidState(clearInk);
 

@@ -1,43 +1,49 @@
 import { MediaPipeHandTracker } from './mediapipe.js';
-import { SettingsPanel, createSkeletonSections } from './settings.js';
+import {
+    SettingsPanel,
+    createSkeletonSections,
+    INPUT_MODE_INT,
+    isMouseInputMode,
+    measureElementWidth,
+    measureElementHeight,
+    getSimViewportSize,
+    HAND_CONNECTIONS,
+    ACTIVE_LANDMARKS_BY_MODE,
+    HAND_COLORS,
+} from './settings.js';
+
+const VIEWPORT_NAMES = ['viewport_1', 'viewport_2', 'viewport_3', 'viewport_4'];
+
+function isValidLayoutRect(rect) {
+    return rect
+        && Number.isFinite(rect.x)
+        && Number.isFinite(rect.y)
+        && Number.isFinite(rect.width)
+        && Number.isFinite(rect.height);
+}
+
+function fsSyncfs(FS, populate) {
+    return new Promise((resolve) => {
+        FS.syncfs(populate, (err) => {
+            if (err) console.error('syncfs failed:', err);
+            else console.log('syncfs completed');
+            resolve();
+        });
+    });
+}
+
+function getHandTrackingInfo(hand, modes) {
+    const isLeftHand = hand.handedness === 'Right';
+    const mode = isLeftHand ? modes.left : modes.right;
+    return {
+        isLeftHand,
+        mode,
+        color: isLeftHand ? HAND_COLORS.left : HAND_COLORS.right,
+        activeSet: new Set(ACTIVE_LANDMARKS_BY_MODE[mode]),
+    };
+}
 
 class KataraWebApp {
-    static measureElementWidth(el) {
-        if (!el) return 0;
-        if (el.offsetWidth > 0) return el.offsetWidth;
-        const prevDisplay = el.style.display;
-        const prevVisibility = el.style.visibility;
-        el.style.visibility = 'hidden';
-        el.style.display = '';
-        const width = el.offsetWidth;
-        el.style.display = prevDisplay;
-        el.style.visibility = prevVisibility;
-        return width;
-    }
-
-    static measureElementHeight(el) {
-        if (!el) return 0;
-        if (el.offsetHeight > 0) return el.offsetHeight;
-        const prevDisplay = el.style.display;
-        const prevVisibility = el.style.visibility;
-        el.style.visibility = 'hidden';
-        el.style.display = '';
-        const height = el.offsetHeight;
-        el.style.display = prevDisplay;
-        el.style.visibility = prevVisibility;
-        return height;
-    }
-
-    getSimViewportSize() {
-        const viewport = document.querySelector('.sim-viewport');
-        if (!viewport) {
-            throw new Error('Sim viewport not found');
-        }
-        return {
-            width: viewport.clientWidth,
-            height: viewport.clientHeight
-        };
-    }
 
     async waitForNav() {
         if (document.querySelector('nav h2')) return;
@@ -62,17 +68,37 @@ class KataraWebApp {
 
     refreshSimLayout() {
         const simCanvas = document.querySelector('#canvas');
-        const size = this.getSimViewportSize();
+        const size = getSimViewportSize();
         simCanvas.width = size.width;
         simCanvas.height = size.height;
         this.syncLayoutStateFromConfig();
-        const layout = this.initLayoutFromCpp();
+        this.applyLayoutUI(this.initLayoutFromCpp());
+    }
+
+    applyLayoutUI(layout = this.layoutPixels) {
         this.positionCameraPanel(layout);
         this.updateCameraUi();
         this.updateSimControlsVisibility();
         this.positionControls(layout);
         this.updateViewportButtons();
         this.updatePlotLabels();
+    }
+
+    readConfig() {
+        if (!this.module?.FS) return null;
+        try {
+            const configText = this.module.FS.readFile('/config.json', { encoding: 'utf8' });
+            return JSON.parse(configText);
+        } catch (err) {
+            console.warn('Could not read /config.json:', err);
+            return null;
+        }
+    }
+
+    clearHandTracking() {
+        if (!this.module) return;
+        this.module._updateFingertips(0, 0);
+        this.module._updateLineSegments(0, 0);
     }
 
     async init() {
@@ -98,7 +124,7 @@ class KataraWebApp {
 
         // Canvas size will be updated after C++ resizes window
         const simCanvas = document.querySelector('#canvas');
-        const initialSize = this.getSimViewportSize();
+        const initialSize = getSimViewportSize();
         simCanvas.width = initialSize.width;
         simCanvas.height = initialSize.height;
 
@@ -127,13 +153,7 @@ class KataraWebApp {
         // Sync from IndexedDB and restore files if needed
         if (this.idbfsAvailable && needsRestore) {
             console.log('Syncing from IndexedDB...');
-            await new Promise((resolve) => {
-                FS.syncfs(true, (err) => {
-                    if (err) console.error('syncfs failed:', err);
-                    else console.log('syncfs completed');
-                    resolve();
-                });
-            });
+            await fsSyncfs(FS, true);
 
             // Check what's in /persist
             const contents = FS.readdir('/persist');
@@ -168,14 +188,13 @@ class KataraWebApp {
         await this.updateInkAspectRatioFromConfig();
 
         // Now canvas size matches the (possibly resized) window
-        const settledSize = this.getSimViewportSize();
+        const settledSize = getSimViewportSize();
         simCanvas.width = settledSize.width;
         simCanvas.height = settledSize.height;
         console.log('After C++ init: canvas size', simCanvas.width, 'x', simCanvas.height);
         console.log('Window AR:', (settledSize.width / settledSize.height).toFixed(3));
         const initialLayout = this.initLayoutFromCpp();
-        this.updateSimControlsVisibility();
-        this.positionControls(initialLayout);
+        this.applyLayoutUI(initialLayout);
         this.configured = true;
 
         // 2D context for camera + keypoints
@@ -209,13 +228,11 @@ class KataraWebApp {
         console.log('2D context created successfully');
 
         await this.setupCamera();
+        this.applyInputModeFromConfig();
 
         // Recompute after camera metadata is ready so camera frame can use stream AR.
         const cameraAlignedLayout = this.initLayoutFromCpp();
-        this.positionCameraPanel(cameraAlignedLayout);
-        this.updateCameraUi();
-        this.updateSimControlsVisibility();
-        this.positionControls(cameraAlignedLayout);
+        this.applyLayoutUI(cameraAlignedLayout);
 
         this.setupInkUpload();
         this.setupCameraCapture();
@@ -225,8 +242,7 @@ class KataraWebApp {
         this.setupKeyboardShortcuts();
         this.setupViewportButtons();
         this.setupPlotLabels();
-        this.updateViewportButtons();
-        this.updatePlotLabels();
+        this.applyLayoutUI();
 
         // mediapipe
         this.handTracker = new MediaPipeHandTracker();
@@ -261,27 +277,24 @@ class KataraWebApp {
         this.processLoop();
     }
 
-    async detectCameraAvailability() {
-        try {
-            if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
-                return false;
-            }
-
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            const videoDevices = devices.filter(device => device.kind === 'videoinput');
-            return videoDevices.length > 0;
-        } catch (error) {
-            console.error('Camera detection failed:', error);
-            return false;
-        }
+    canUseCameraInput() {
+        const video = this.videoElement;
+        return this.cameraDetected
+            && video instanceof HTMLVideoElement
+            && video.readyState >= 2
+            && video.videoWidth > 0;
     }
 
     async setupCamera() {
-        // Check camera availability
-        this.cameraDetected = await this.detectCameraAvailability();
-        console.log('Camera detected:', this.cameraDetected);
+        this.cameraDetected = false;
+        this.videoElement = null;
 
-        // Try to get camera stream
+        if (!navigator.mediaDevices?.getUserMedia) {
+            console.warn('Camera API unavailable');
+            this.renderNoCameraMessage();
+            return;
+        }
+
         try {
             const stream = await navigator.mediaDevices.getUserMedia({
                 video: { facingMode: 'user' }
@@ -296,7 +309,6 @@ class KataraWebApp {
             this.videoElement.play();
             await new Promise(resolve => this.videoElement.onloadeddata = resolve);
 
-            // Adjust camera canvas to match camera stream aspect ratio
             const videoWidth = this.videoElement.videoWidth;
             const videoHeight = this.videoElement.videoHeight;
             console.log('Camera stream dimensions:', videoWidth, videoHeight);
@@ -306,9 +318,13 @@ class KataraWebApp {
                 this.cameraCanvas.height = videoHeight;
                 this.cameraAspectRatio = videoWidth / videoHeight;
             }
+
+            this.cameraDetected = true;
+            console.log('Camera access granted');
         } catch (error) {
             console.warn('Camera access failed:', error.message);
-            // Render no camera message in canvas
+            this.cameraDetected = false;
+            this.videoElement = null;
             this.renderNoCameraMessage();
         }
     }
@@ -332,7 +348,7 @@ class KataraWebApp {
     }
 
     initLayoutFromCpp() {
-        const { width: canvasW, height: canvasH } = this.getSimViewportSize();
+        const { width: canvasW, height: canvasH } = getSimViewportSize();
         this.module._initLayout(canvasW, canvasH, this.inkAspectRatio, this.cameraAspectRatio);
         const jsonStr = this.module.FS.readFile('/layout_pixels.json', { encoding: 'utf8' });
         this.layoutPixels = JSON.parse(jsonStr);
@@ -341,33 +357,17 @@ class KataraWebApp {
     }
 
     syncLayoutStateFromConfig() {
-        if (!this.module || !this.module.FS) return;
-
-        try {
-            const configText = this.module.FS.readFile('/config.json', { encoding: 'utf8' });
-            const config = JSON.parse(configText);
-            this.isInkMode = config?.rendering?.target === 3;
-            this.labelsEnabled = config?.layout?.labelsEnabled !== false;
-            this.buttonsEnabled = config?.layout?.buttonsEnabled !== false;
-            this.camerasEnabled = config?.layout?.camerasEnabled !== false;
-        } catch (err) {
-            console.warn('Could not read /config.json for layout mode:', err);
-        }
+        const config = this.readConfig();
+        if (!config) return;
+        this.isInkMode = config?.rendering?.target === 3;
+        this.labelsEnabled = config?.layout?.labelsEnabled !== false;
+        this.buttonsEnabled = config?.layout?.buttonsEnabled !== false;
+        this.camerasEnabled = config?.layout?.camerasEnabled !== false;
     }
 
     async updateInkAspectRatioFromConfig() {
-        if (!this.module || !this.module.FS) return;
-
-        let config;
-        try {
-            const configText = this.module.FS.readFile('/config.json', { encoding: 'utf8' });
-            config = JSON.parse(configText);
-        } catch (err) {
-            console.warn('Could not parse /config.json for ink AR:', err);
-            return;
-        }
-
-        if (config?.rendering?.target !== 3) return;
+        const config = this.readConfig();
+        if (!config) return;
 
         const imagePath = config?.ink?.imagePath;
         if (!imagePath) return;
@@ -428,6 +428,10 @@ class KataraWebApp {
         }
     }
 
+    canCaptureFromCamera() {
+        return this.camerasEnabled && this.canUseCameraInput();
+    }
+
     updateCameraUi() {
         const camPanel = document.querySelector('.camera-panel');
         if (camPanel && !this.camerasEnabled) {
@@ -436,26 +440,27 @@ class KataraWebApp {
 
         const cheeseBtn = document.getElementById('cheeseBtn');
         if (cheeseBtn) {
-            const disabled = !this.camerasEnabled;
+            const disabled = !this.canCaptureFromCamera();
             cheeseBtn.disabled = disabled;
             cheeseBtn.classList.toggle('disabled', disabled);
+            if (disabled && !this.cameraDetected) {
+                cheeseBtn.title = 'No camera detected';
+            } else {
+                cheeseBtn.title = 'Take picture from webcam (C)';
+            }
         }
     }
 
     getGridBounds(layout) {
         if (!layout) return null;
 
-        const viewportNames = ['viewport_1', 'viewport_2', 'viewport_3'];
-        const viewportRects = viewportNames
+        const viewportRects = VIEWPORT_NAMES.slice(0, 3)
             .map(name => layout[name])
-            .filter(rect => rect && Number.isFinite(rect.x) && Number.isFinite(rect.y) &&
-                Number.isFinite(rect.width) && Number.isFinite(rect.height));
+            .filter(isValidLayoutRect);
 
         const candidateRects = viewportRects.length > 0
             ? viewportRects
-            : Object.values(layout).filter(rect =>
-                rect && Number.isFinite(rect.x) && Number.isFinite(rect.y) &&
-                Number.isFinite(rect.width) && Number.isFinite(rect.height));
+            : Object.values(layout).filter(isValidLayoutRect);
 
         if (candidateRects.length === 0) return null;
 
@@ -478,8 +483,8 @@ class KataraWebApp {
         if (!controls || !bounds) return;
 
         const margin = 16;
-        const controlsWidth = KataraWebApp.measureElementWidth(controls);
-        const controlsHeight = KataraWebApp.measureElementHeight(controls);
+        const controlsWidth = measureElementWidth(controls);
+        const controlsHeight = measureElementHeight(controls);
         const targetLeft = bounds.x + bounds.width - controlsWidth - margin;
         const targetTop = bounds.y + bounds.height - controlsHeight - margin;
 
@@ -547,28 +552,16 @@ class KataraWebApp {
             console.log('Files written, syncing to IndexedDB...');
 
             // Sync to IndexedDB
-            await new Promise((resolve) => {
-                FS.syncfs(false, (err) => {
-                    if (err) console.error('syncfs failed:', err);
-                    else console.log('syncfs completed');
-                    resolve();
-                });
-            });
+            await fsSyncfs(FS, false);
 
-            // Set flag so on reload we restore from /persist
             localStorage.setItem('katara_needs_restore', 'true');
 
-            // Reload config without page reload (INK + RENDER flags)
             console.log('Reloading config...');
             this.module._reloadConfig(1 | 4);
-            this.syncLayoutStateFromConfig();
-            const layout = this.initLayoutFromCpp();
-            this.positionCameraPanel(layout);
-            this.updateCameraUi();
-            this.updateSimControlsVisibility();
-            this.positionControls(layout);
-            this.updateViewportButtons();
-            this.updatePlotLabels();
+            this.refreshSimLayout();
+            if (this.settingsPanel?.isOpen) {
+                await this.settingsPanel.refreshEnvironmentControls();
+            }
 
         } catch (err) {
             console.error('Failed to upload image:', err);
@@ -584,7 +577,7 @@ class KataraWebApp {
         }
 
         cheeseBtn.addEventListener('click', () => {
-            if (!this.camerasEnabled) {
+            if (!this.canCaptureFromCamera()) {
                 return;
             }
             this.captureFromCamera();
@@ -647,10 +640,7 @@ class KataraWebApp {
         }
 
         if (this.simulationPaused) {
-            if (this.module) {
-                this.module._updateFingertips(0, 0);
-                this.module._updateLineSegments(0, 0);
-            }
+            this.clearHandTracking();
             pauseBtnIcon.innerHTML = '<polygon points="8,5 19,12 8,19"></polygon>';
             pauseBtnIcon.setAttribute('fill', 'currentColor');
             pauseBtnIcon.setAttribute('stroke', 'currentColor');
@@ -684,7 +674,7 @@ class KataraWebApp {
 
             switch (event.key.toLowerCase()) {
                 case 'c':
-                    if (!this.camerasEnabled) {
+                    if (!this.canCaptureFromCamera()) {
                         break;
                     }
                     event.preventDefault();
@@ -756,16 +746,12 @@ class KataraWebApp {
             if (!this.settingsPanel) {
                 this.settingsPanel = new SettingsPanel(this);
 
-                let currentConfig = {};
-                try {
-                    const configText = this.module.FS.readFile('/config.json', { encoding: 'utf8' });
-                    currentConfig = JSON.parse(configText);
-                    window.kataraConfig = currentConfig;
-                } catch (err) {
-                    console.error('Failed to load config for settings:', err);
-                }
+                let currentConfig = this.readConfig() ?? {};
+                window.kataraConfig = currentConfig;
 
-                const sections = createSkeletonSections(currentConfig);
+                const sections = createSkeletonSections(currentConfig, {
+                    cameraDetected: this.canUseCameraInput(),
+                });
                 sections.forEach(section => this.settingsPanel.addSection(section));
             }
 
@@ -782,10 +768,9 @@ class KataraWebApp {
     }
 
     getActiveViewportNames() {
-        const viewportNames = ['viewport_1', 'viewport_2', 'viewport_3', 'viewport_4'];
-        return viewportNames.filter((name) => {
+        return VIEWPORT_NAMES.filter((name) => {
             const rect = this.layoutPixels?.[name];
-            return rect && rect.width > 0 && rect.height > 0;
+            return isValidLayoutRect(rect) && rect.width > 0 && rect.height > 0;
         });
     }
 
@@ -928,7 +913,7 @@ class KataraWebApp {
     }
 
     async captureFromCamera() {
-        if (!this.camerasEnabled) {
+        if (!this.canCaptureFromCamera()) {
             return;
         }
 
@@ -953,34 +938,11 @@ class KataraWebApp {
         }, 'image/png');
     }
 
-    // hand skeleton connections (MediaPipe topology)
-    static HAND_CONNECTIONS = [
-        // thumb
-        [0, 1], [1, 2], [2, 3], [3, 4],
-        // index
-        [0, 5], [5, 6], [6, 7], [7, 8],
-        // middle
-        [0, 9], [9, 10], [10, 11], [11, 12],
-        // ring
-        [0, 13], [13, 14], [14, 15], [15, 16],
-        // pinky
-        [0, 17], [17, 18], [18, 19], [19, 20],
-        // palm
-        [5, 9], [9, 13], [13, 17]
-    ];
-
-    static ACTIVE_LANDMARKS_BY_MODE = {
-        'full': [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20],
-        'pointer': [5,6,7,8],
-        'pointer-tip': [8],
-        'none': []
-    };
-
     getHandModes() {
         const hands = window.kataraConfig?.hands;
         return {
             left: hands?.left || 'full',
-            right: hands?.right || 'full'
+            right: hands?.right || 'full',
         };
     }
 
@@ -989,18 +951,14 @@ class KataraWebApp {
         const width = this.cameraCanvas.width;
         const height = this.cameraCanvas.height;
         const modes = this.getHandModes();
-        const grey = 'rgba(255, 255, 255, 0.2)';
+        const grey = HAND_COLORS.overlayGrey;
 
         for (const hand of hands) {
-            const isLeftHand = hand.handedness === 'Right';
-            const mode = isLeftHand ? modes.left : modes.right;
-            const color = isLeftHand ? '#00ff88' : '#ff9933';
-            const activeSet = new Set(KataraWebApp.ACTIVE_LANDMARKS_BY_MODE[mode]);
+            const { mode, color, activeSet } = getHandTrackingInfo(hand, modes);
 
-            // skeleton connections
             ctx.lineWidth = 3;
-            for (const [i, j] of KataraWebApp.HAND_CONNECTIONS) {
-                const bothActive = activeSet.has(i) && activeSet.has(j);
+            for (const [i, j] of HAND_CONNECTIONS) {
+                const bothActive = mode !== 'joints' && activeSet.has(i) && activeSet.has(j);
                 ctx.strokeStyle = bothActive ? color : grey;
                 const p1 = hand.landmarks[i];
                 const p2 = hand.landmarks[j];
@@ -1025,95 +983,229 @@ class KataraWebApp {
 
     async processLoop() {
         try {
-            if (this.simulationPaused) {
-                requestAnimationFrame(() => this.processLoop());
-                return;
-            }
+            if (!this.simulationPaused) {
+                if (!this.camerasEnabled) {
+                    if (!this.isMouseInput()) this.clearHandTracking();
+                } else {
+                    const video = this.videoElement;
+                    if (!(video instanceof HTMLVideoElement) || video.readyState < 2 || video.videoWidth === 0) {
+                        this.renderNoCameraMessage();
+                    } else if (this.isMouseInput()) {
+                        this.cameraCtx.drawImage(video, 0, 0, this.cameraCanvas.width, this.cameraCanvas.height);
+                        this.clearHandTracking();
+                    } else {
+                        const result = await this.handTracker.detectHands();
+                        this.cameraCtx.drawImage(video, 0, 0, this.cameraCanvas.width, this.cameraCanvas.height);
 
-            if (!this.camerasEnabled) {
-                if (this.module) {
-                    this.module._updateFingertips(0, 0);
-                    this.module._updateLineSegments(0, 0);
-                }
-                requestAnimationFrame(() => this.processLoop());
-                return;
-            }
+                        if (result.hands?.length > 0) {
+                            this.drawKeypoints(result.hands);
+                        }
 
-            const video = this.videoElement;
-            if (!(video instanceof HTMLVideoElement) || video.readyState < 2 || video.videoWidth === 0) {
-                // Render "no camera" message if video is not available
-                this.renderNoCameraMessage();
-                requestAnimationFrame(() => this.processLoop());
-                return;
-            }
-
-            // detect hands and get full landmark data with all 42 landmarks
-            const result = await this.handTracker.detectHands();
-
-            // camera frame to canvas
-            this.cameraCtx.drawImage(video, 0, 0, this.cameraCanvas.width, this.cameraCanvas.height);
-
-            // keypoints overlay
-            if (result.hands && result.hands.length > 0) {
-                this.drawKeypoints(result.hands);
-            }
-
-            // update simulation with line segments between landmarks
-            // circle momentum transfer gets all 42 landmarks (21 per hand)
-            const allLandmarks = result.landmarks;
-            if (allLandmarks && allLandmarks.length > 0) {
-                // filter landmarks by hand mode
-                const modes = this.getHandModes();
-                if (result.hands) {
-                    for (let handIdx = 0; handIdx < Math.min(result.hands.length, 2); handIdx++) {
-                        const hand = result.hands[handIdx];
-                        const isLeftHand = hand.handedness === 'Right';
-                        const mode = isLeftHand ? modes.left : modes.right;
-                        const activeLandmarks = new Set(KataraWebApp.ACTIVE_LANDMARKS_BY_MODE[mode]);
-
-                        for (let i = 0; i < 21; i++) {
-                            if (!activeLandmarks.has(i)) {
-                                allLandmarks[handIdx * 21 + i].present = false;
+                        const allLandmarks = result.landmarks;
+                        if (allLandmarks?.length > 0) {
+                            const modes = this.getHandModes();
+                            if (result.hands) {
+                                const handCount = Math.min(result.hands.length, 2);
+                                for (let handIdx = 0; handIdx < handCount; handIdx++) {
+                                    const { activeSet } = getHandTrackingInfo(result.hands[handIdx], modes);
+                                    const base = handIdx * 21;
+                                    for (let i = 0; i < 21; i++) {
+                                        if (!activeSet.has(i)) allLandmarks[base + i].present = false;
+                                    }
+                                }
                             }
+
+                            const ptrAll = this.module._malloc(allLandmarks.length * 16);
+                            const heap = this.module.HEAPF32;
+                            let offset = ptrAll / 4;
+                            for (let i = 0; i < allLandmarks.length; i++) {
+                                const lm = allLandmarks[i];
+                                heap[offset++] = 1.0 - lm.x;
+                                heap[offset++] = lm.y;
+                                heap[offset++] = lm.z;
+                                heap[offset++] = lm.present ? 1.0 : 0.0;
+                            }
+
+                            this.module._updateFingertips(ptrAll, allLandmarks.length);
+
+                            if (result.hands) {
+                                const handCount = Math.min(result.hands.length, 2);
+                                for (let handIdx = 0; handIdx < handCount; handIdx++) {
+                                    const { mode } = getHandTrackingInfo(result.hands[handIdx], modes);
+                                    if (mode === 'joints') {
+                                        const base = ptrAll / 4 + handIdx * 21 * 4;
+                                        for (let i = 0; i < 21; i++) {
+                                            heap[base + i * 4 + 3] = 0.0;
+                                        }
+                                    }
+                                }
+                            }
+
+                            this.module._updateLineSegments(ptrAll, allLandmarks.length);
+                            this.module._free(ptrAll);
+                            this.frameCount++;
+                        } else {
+                            this.clearHandTracking();
                         }
                     }
                 }
-                // allocate memory for all landmarks (used for both circles and line segments)
-                const allLandmarksDataLength = allLandmarks.length * 4;
-                const ptrAll = this.module._malloc(allLandmarksDataLength * 4);
-
-                const heap = this.module.HEAPF32;
-
-                // copy all landmark data
-                let offset = ptrAll / 4;
-                for (let i = 0; i < allLandmarks.length; i++) {
-                    const lm = allLandmarks[i];
-                    heap[offset++] = 1.0 - lm.x;  // horizontal reflection
-                    heap[offset++] = lm.y;
-                    heap[offset++] = lm.z;
-                    heap[offset++] = lm.present ? 1.0 : 0.0;  // use actual presence
-                }
-
-                // C++ calls
-                this.module._updateFingertips(ptrAll, allLandmarks.length);
-                this.module._updateLineSegments(ptrAll, allLandmarks.length);
-
-                this.module._free(ptrAll);
-
-                this.frameCount++;
-            } else {
-                // no hand detected
-                this.module._updateFingertips(0, 0);
-                this.module._updateLineSegments(0, 0);
             }
-
         } catch (err) {
-            // keep render loop alive even if hand tracking has a transient failure
             console.error('Hand tracking error:', err);
-            // don't send empty fingertips on err
         }
 
         requestAnimationFrame(() => this.processLoop());
+    }
+
+    isMouseInput() {
+        return isMouseInputMode(window.kataraConfig?.inputMode);
+    }
+
+    applyInputModeFromConfig() {
+        const config = this.readConfig();
+        if (!config) return;
+
+        window.kataraConfig = config;
+
+        let mode = config.inputMode ?? 'hand';
+        const shouldPersist = !this.canUseCameraInput() && mode === 'hand';
+        if (shouldPersist) {
+            mode = 'mouse_pull';
+        }
+
+        this.setInputMode(mode, { persist: shouldPersist });
+    }
+
+    teardownMouseInput() {
+        const canvas = document.querySelector('#canvas');
+        if (!canvas || !this._mouseInputHandlers) return;
+
+        const {
+            onMouseDown,
+            onMouseUp,
+            onMouseMove,
+            onMouseDownCursor,
+            onMouseUpCursor,
+        } = this._mouseInputHandlers;
+
+        canvas.removeEventListener('mousedown', onMouseDown);
+        canvas.removeEventListener('mouseup', onMouseUp);
+        canvas.removeEventListener('mousemove', onMouseMove);
+        canvas.removeEventListener('mousedown', onMouseDownCursor);
+        canvas.removeEventListener('mouseup', onMouseUpCursor);
+        canvas.style.cursor = 'default';
+        this._mouseInputHandlers = null;
+    }
+
+    setupMouseInput() {
+        this.teardownMouseInput();
+
+        const canvas = document.querySelector('#canvas');
+        if (!canvas) return;
+
+        const onMouseDown = (e) => {
+            if (!this.isMouseInput()) return;
+            const gridCoords = this.screenToViewportGrid(...this.getCanvasPointer(canvas, e));
+            if (gridCoords) this.module._onMouseDown(gridCoords.x, gridCoords.y);
+        };
+
+        const onMouseUp = () => {
+            if (!this.isMouseInput()) return;
+            this.module._onMouseUp();
+        };
+
+        const onMouseMove = (e) => {
+            if (!this.isMouseInput() || e.buttons !== 1) return;
+            const gridCoords = this.screenToViewportGrid(...this.getCanvasPointer(canvas, e));
+            if (gridCoords) this.module._onMouseDrag(gridCoords.x, gridCoords.y);
+        };
+
+        const onMouseDownCursor = () => { canvas.style.cursor = 'grabbing'; };
+        const onMouseUpCursor = () => { canvas.style.cursor = 'grab'; };
+
+        canvas.addEventListener('mousedown', onMouseDown);
+        canvas.addEventListener('mouseup', onMouseUp);
+        canvas.addEventListener('mousemove', onMouseMove);
+        canvas.style.cursor = 'grab';
+        canvas.addEventListener('mousedown', onMouseDownCursor);
+        canvas.addEventListener('mouseup', onMouseUpCursor);
+
+        this._mouseInputHandlers = {
+            onMouseDown,
+            onMouseUp,
+            onMouseMove,
+            onMouseDownCursor,
+            onMouseUpCursor,
+        };
+    }
+
+    getCanvasPointer(canvas, e) {
+        const rect = canvas.getBoundingClientRect();
+        return [e.clientX - rect.left, e.clientY - rect.top];
+    }
+
+    screenToViewportGrid(canvasX, canvasY) {
+        if (!this.layoutPixels) return null;
+
+        const cellSize = this.module._getSimCellSize();
+        const domainWidth = this.module._getSimDomainWidth();
+        const domainHeight = this.module._getSimDomainHeight();
+
+        for (const name of VIEWPORT_NAMES) {
+            const vp = this.layoutPixels[name];
+            if (!vp || vp.width <= 0 || vp.height <= 0) continue;
+
+            // Check if click is inside this viewport
+            if (canvasX >= vp.x && canvasX < vp.x + vp.width &&
+                canvasY >= vp.y && canvasY < vp.y + vp.height) {
+
+                // Mirror WGSL fragment shader transform
+                const normX = (canvasX - vp.x) / vp.width;
+                const normY = (canvasY - vp.y) / vp.height;
+                const simX = normX * domainWidth;
+                const simY = (1.0 - normY) * domainHeight;
+                const gridX = Math.floor(simX / cellSize);
+                const gridY = Math.floor(simY / cellSize);
+
+                return { x: gridX, y: gridY };
+            }
+        }
+        return null; // click was not in any viewport
+    }
+
+    setInputMode(mode, { persist = true } = {}) {
+        const mouseInput = isMouseInputMode(mode);
+
+        if (persist) {
+            const FS = this.module.FS;
+            const configText = FS.readFile('/config.json', { encoding: 'utf8' });
+            const config = JSON.parse(configText);
+            config.inputMode = mode;
+            FS.writeFile('/config.json', JSON.stringify(config, null, 4));
+            window.kataraConfig = config;
+        } else {
+            if (!window.kataraConfig) window.kataraConfig = {};
+            window.kataraConfig.inputMode = mode;
+        }
+
+        this.module._setInputMode(INPUT_MODE_INT[mode] ?? 0);
+
+        if (mouseInput && this.module) {
+            this.clearHandTracking();
+        }
+
+        this.positionCameraPanel(this.layoutPixels);
+        this.updateCameraUi();
+
+        if (mouseInput) {
+            this.setupMouseInput();
+        } else {
+            this.teardownMouseInput();
+        }
+
+        if (this.settingsPanel) {
+            this.settingsPanel.refresh();
+        }
     }
 }
 
@@ -1192,7 +1284,7 @@ class ViewportController {
         for (const btn of buttons) {
             btn.style.left = `${x}px`;
             btn.style.top = `${topY}px`;
-            x += KataraWebApp.measureElementWidth(btn) + gap;
+            x += measureElementWidth(btn) + gap;
         }
     }
 
