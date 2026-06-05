@@ -87,19 +87,13 @@ struct UniformData {
 // TODO MAIN -- WIP ^_^
 // we in the browser baby
 
-// TODO improve wind tunnel setup fidelity ?
-
-// TODO info pane
-
-// TODO gravity basically broken
-
-// TODO up/right wind tunnel behaves differently from down/left
+// TODO bug: up/right wind tunnel behaves differently from down/left
 // likely because of the forward texture accesses (e.g. asymmetric +1) somewhere
-// TODO fluid leaking out of bottom edge
+// TODO bug: fluid spotted (sometimes) leaking out of bottom edge
 // TODO bug: maybe something wrong with the volume, entropy calculations
+// TODO bug: gravity basically broken
 
-// TODO simple mobile version
-// TODO layout fixes for control panel
+// TODO bug: mouse fidelity bad because of hand smoothing
 
 // TODO big cleanup: test, unify, and document codebase, particularly build steps + config (& generally simplify flow of data/modularize)
 //  - fix outdated config stuff (e.g. rendering vs layout)

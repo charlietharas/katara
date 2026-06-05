@@ -111,6 +111,14 @@ function bindSliderRow(row, { onChange, format = String }) {
     return { input, display };
 }
 
+function formatSliderValue(value, step) {
+    const stepText = String(step);
+    const dot = stepText.indexOf('.');
+    const decimals = dot === -1 ? 0 : stepText.length - dot - 1;
+    if (decimals === 0) return String(Math.round(value));
+    return value.toFixed(decimals);
+}
+
 function preventCheckboxEnterDefault(checkbox) {
     checkbox.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -263,6 +271,7 @@ const HAND_LANDMARKS = [
 const ControlPalette = {
     spiral: 'rgba(255, 255, 255, 0.85)',
     circle: 'rgba(170, 170, 170, 0.95)',
+    circleMouse: 'rgba(170, 170, 170, 0.35)',
     radius: 'rgba(0, 255, 136, 0.95)',
     impact: 'rgba(100, 181, 246, 0.95)',
     effect: 'rgba(255, 153, 51, 0.75)',
@@ -452,16 +461,15 @@ class SliderControl extends ConfigControl {
     render() {
         const container = document.createElement('div');
         container.className = 'config-row';
+        const format = (value) => formatSliderValue(value, this.step);
         container.innerHTML = `
             <label>${this.label}</label>
             <input type="range" min="${this.min}" max="${this.max}" step="${this.step}" value="${this.initialValue}">
-            <span class="value-display">${this.initialValue}</span>
+            <span class="value-display">${format(this.initialValue)}</span>
         `;
-        const input = container.querySelector('input');
-        const display = container.querySelector('.value-display');
-        input.addEventListener('input', () => {
-            display.textContent = input.value;
-            this.currentValue = parseFloat(input.value);
+        bindSliderRow(container, {
+            onChange: (value) => { this.currentValue = value; },
+            format,
         });
         this.element = container;
         if (this.disabled) this.setDisabled(true);
@@ -627,8 +635,18 @@ class VorticityControl extends ConfigControl {
         this.updateCanvasContainerAspect();
         this.setupCanvas();
         this.setupInteraction();
+        this.updateInactiveState();
 
         return container;
+    }
+
+    isInactive() {
+        return this.strengthValue <= 0;
+    }
+
+    updateInactiveState() {
+        if (!this.element) return;
+        this.element.classList.toggle('vorticity-control-inactive', this.isInactive());
     }
 
     getValue() {
@@ -640,6 +658,7 @@ class VorticityControl extends ConfigControl {
         this.impactValue = impact;
         if (this.element) {
             this.updateDisplay();
+            this.updateInactiveState();
             this.draw();
         }
     }
@@ -688,7 +707,7 @@ class VorticityControl extends ConfigControl {
             const { up, right } = this.getTips();
             if (isNearPoint(pos, up)) {
                 this.isDraggingUp = true;
-            } else if (isNearPoint(pos, right)) {
+            } else if (!this.isInactive() && isNearPoint(pos, right)) {
                 this.isDraggingRight = true;
             }
         });
@@ -714,6 +733,7 @@ class VorticityControl extends ConfigControl {
             }
 
             this.updateDisplay();
+            this.updateInactiveState();
             this.draw();
         });
 
@@ -749,26 +769,31 @@ class VorticityControl extends ConfigControl {
         const ctx = this.ctx;
         ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
+        const inactive = this.isInactive();
         const { up, right } = this.getTips();
         const spiralRadius = this.centerY - up.y;
 
-        ctx.strokeStyle = ControlPalette.spiral;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        const turns = 2.5;
-        const points = 60;
-        for (let i = 0; i <= points; i++) {
-            const t = (i / points) * turns * Math.PI * 2;
-            const r = (i / points) * spiralRadius;
-            const px = this.centerX + r * Math.cos(t);
-            const py = this.centerY + r * Math.sin(t);
-            if (i === 0) ctx.moveTo(px, py);
-            else ctx.lineTo(px, py);
+        if (spiralRadius > 0) {
+            ctx.strokeStyle = ControlPalette.spiral;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            const turns = 2.5;
+            const points = 60;
+            for (let i = 0; i <= points; i++) {
+                const t = (i / points) * turns * Math.PI * 2;
+                const r = (i / points) * spiralRadius;
+                const px = this.centerX + r * Math.cos(t);
+                const py = this.centerY + r * Math.sin(t);
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.stroke();
         }
-        ctx.stroke();
 
         drawControlArrow(this.ctx, { x: this.centerX, y: this.centerY }, up, ControlPalette.radius, 'up');
-        drawControlArrow(this.ctx, up, right, ControlPalette.impact, 'left');
+        if (!inactive) {
+            drawControlArrow(this.ctx, up, right, ControlPalette.impact, 'left');
+        }
     }
 }
 
@@ -791,6 +816,7 @@ class CircleControl extends ConfigControl {
         this.centerX = 0;
         this.centerY = 0;
         this.radiusListeners = [];
+        this.mouseInputMode = false;
     }
 
     addRadiusListener(listener) {
@@ -801,6 +827,11 @@ class CircleControl extends ConfigControl {
         for (const listener of this.radiusListeners) {
             listener(this.radiusValue);
         }
+    }
+
+    setMouseInputMode(mouseInput) {
+        this.mouseInputMode = mouseInput;
+        if (this.element) this.draw();
     }
 
     render() {
@@ -979,7 +1010,8 @@ class CircleControl extends ConfigControl {
         }
 
         // Opaque body circle so the push ring cannot tint the interior
-        this.drawFilledCircle(this.radiusValue, ControlPalette.circle);
+        const circleColor = this.mouseInputMode ? ControlPalette.circleMouse : ControlPalette.circle;
+        this.drawFilledCircle(this.radiusValue, circleColor);
 
         drawControlArrow(
             this.ctx,
@@ -1089,6 +1121,11 @@ class InputModeControl extends ConfigControl {
         this.applyHandControlState();
     }
 
+    linkCircleControl(circleControl) {
+        this.circleControl = circleControl;
+        this.applyCircleControlState();
+    }
+
     normalizeValue(value) {
         const mode = value || 'hand';
         if (!this.cameraDetected && mode === 'hand') {
@@ -1132,6 +1169,7 @@ class InputModeControl extends ConfigControl {
             this.currentValue = 'mouse_pull';
             this.updateSelectionState();
             this.applyHandControlState();
+            this.applyCircleControlState();
         }
     }
 
@@ -1141,6 +1179,7 @@ class InputModeControl extends ConfigControl {
         this.currentValue = mode;
         this.updateSelectionState();
         this.applyHandControlState();
+        this.applyCircleControlState();
     }
 
     applyHandControlState() {
@@ -1169,6 +1208,11 @@ class InputModeControl extends ConfigControl {
         }
     }
 
+    applyCircleControlState() {
+        if (!this.circleControl) return;
+        this.circleControl.setMouseInputMode(isMouseInputMode(this.currentValue));
+    }
+
     updateSelectionState() {
         if (!this.element) return;
         this.element.querySelectorAll('.input-mode-btn').forEach((button) => {
@@ -1183,6 +1227,7 @@ class InputModeControl extends ConfigControl {
             this.updateSelectionState();
         }
         this.applyHandControlState();
+        this.applyCircleControlState();
     }
 
     getValue() {
@@ -1461,7 +1506,7 @@ class EnvironmentControl extends ConfigControl {
                 this.velocityValue = value;
                 this.draw();
             },
-            format: (value) => value.toFixed(2),
+            format: (value) => formatSliderValue(value, 0.01),
         });
 
         this.widthSlider = container.querySelector('.environment-width-row');
@@ -1470,7 +1515,7 @@ class EnvironmentControl extends ConfigControl {
                 this.widthValue = value;
                 this.draw();
             },
-            format: (value) => value.toFixed(2),
+            format: (value) => formatSliderValue(value, 0.01),
         });
 
         this.updateCanvasContainerAspect();
@@ -1867,7 +1912,7 @@ function loadControlValue(control, config) {
             const input = control.element.querySelector('input[type="range"]');
             const display = control.element.querySelector('.value-display');
             if (input) input.value = value;
-            if (display) display.textContent = value;
+            if (display) display.textContent = formatSliderValue(value, control.step);
         } else if (control instanceof CheckboxControl || control instanceof HeaderCheckboxControl) {
             const checkbox = control.element.querySelector('input[type="checkbox"]');
             if (checkbox) checkbox.checked = value;
@@ -2015,18 +2060,18 @@ class SettingsPanel {
             <div class="settings-panel-header">
                 <h2>Settings</h2>
                 <div class="settings-panel-buttons">
-                    <button class="settings-btn settings-btn-cancel" title="Discard (ESC)">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <button class="input-mode-btn settings-btn-cancel" title="Discard (ESC)">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <line x1="18" y1="6" x2="6" y2="18"></line>
                             <line x1="6" y1="6" x2="18" y2="18"></line>
                         </svg>
                         <span>[ESC]</span>
                     </button>
-                    <button class="settings-btn settings-btn-save" title="Save (Enter)">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <button class="input-mode-btn settings-btn-save" title="Save (Enter)">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <polyline points="20,6 9,17 4,12"></polyline>
                         </svg>
-                        <span>[Enter]</span>
+                        <span>[ENTER]</span>
                     </button>
                 </div>
             </div>
@@ -2276,6 +2321,7 @@ function createSkeletonSections(currentConfig, options = {}) {
     );
     handControl.linkCircleControl(circleControl);
     inputModeControl.linkHandControl(handControl, cameraDetected);
+    inputModeControl.linkCircleControl(circleControl);
     if (!cameraDetected) {
         handControl.collectWhenDisabled = true;
         handControl.setDisabled(true);

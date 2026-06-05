@@ -5,7 +5,7 @@
     box-sizing: border-box;
 }
 
-body {
+body:has(.sim-viewport) {
     background-color: var(--offblack);
     min-height: 100vh;
     overflow: hidden;
@@ -34,11 +34,27 @@ body.light-mode {
     font-weight: 700;
     text-transform: lowercase;
     letter-spacing: 0.04em;
+    text-decoration: none;
     color: rgba(255, 255, 255, 0.9);
 }
 
 body.light-mode .content.page-title h1 {
     color: rgba(0, 0, 0, 0.85);
+}
+
+.content.page-title h1 .page-nav-link {
+    color: inherit;
+    opacity: 0.55;
+    text-decoration: none;
+}
+
+.content.page-title h1 .page-nav-link:hover {
+    opacity: 1;
+    text-decoration: underline;
+}
+
+.content.page-title h1 .page-nav-current {
+    text-decoration: underline;
 }
 
 .sim-viewport {
@@ -257,31 +273,34 @@ video {
     gap: 8px;
 }
 
-.settings-btn {
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 0;
-    padding: 6px 10px;
-    cursor: pointer;
-    display: flex;
+.settings-panel-buttons .input-mode-btn {
+    display: inline-flex;
     align-items: center;
     gap: 6px;
-    transition: all 0.2s;
-    color: white;
-    font-size: 12px;
-}
-
-.settings-btn:hover {
-    background: rgba(255, 255, 255, 0.2);
-    transform: scale(1.05);
 }
 
 .settings-btn-save {
     color: #4CAF50;
+    border-color: rgba(76, 175, 80, 0.6);
+    background: rgba(76, 175, 80, 0.16);
+}
+
+.settings-btn-save:hover {
+    color: #66bb6a;
+    border-color: #4CAF50;
+    background: rgba(76, 175, 80, 0.24);
 }
 
 .settings-btn-cancel {
     color: #f44336;
+    border-color: rgba(244, 67, 54, 0.6);
+    background: rgba(244, 67, 54, 0.16);
+}
+
+.settings-btn-cancel:hover {
+    color: #ef5350;
+    border-color: #f44336;
+    background: rgba(244, 67, 54, 0.24);
 }
 
 .settings-panel-content {
@@ -306,6 +325,11 @@ video {
     min-height: 100%;
 }
 
+.settings-col-left,
+.settings-col-right {
+    min-width: 0;
+}
+
 .settings-col-right {
     display: grid;
     grid-template-rows: auto 1fr;
@@ -316,6 +340,8 @@ video {
 
 .settings-col-right-top {
     display: block;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .settings-col-right-bottom {
@@ -334,6 +360,8 @@ video {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .config-canvas-row > .circle-control,
@@ -344,16 +372,6 @@ video {
 .config-canvas-row .circle-canvas-container,
 .config-canvas-row .hand-canvas-container {
     aspect-ratio: 3 / 2;
-}
-
-@media (max-width: 900px) {
-    .settings-columns {
-        grid-template-columns: minmax(0, 1fr);
-    }
-
-    .config-canvas-row {
-        grid-template-columns: minmax(0, 1fr);
-    }
 }
 
 .settings-panel-content::-webkit-scrollbar {
@@ -491,13 +509,17 @@ video {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    min-width: 0;
 }
 
 .config-row {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 6px 8px;
+    gap: 8px;
+    padding: 6px 6px;
+    width: 100%;
+    box-sizing: border-box;
+    min-width: 0;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 0;
@@ -534,23 +556,31 @@ video {
 }
 
 .config-row label {
-    flex: 0 0 200px;
+    flex: 0 0 7rem;
+    min-width: 7rem;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: nowrap;
     color: rgba(255, 255, 255, 0.9);
-    font-size: 14px;
+    font-size: 13px;
 }
 
 .config-row input[type="range"] {
-    flex: 1;
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: 65%;
     accent-color: #4CAF50;
     height: 6px;
     cursor: pointer;
 }
 
 .config-row .value-display {
-    flex: 0 0 50px;
+    flex: 0 0 42px;
+    flex-shrink: 0;
+    min-width: 42px;
     text-align: right;
     color: rgba(255, 255, 255, 0.8);
-    font-size: 14px;
+    font-size: 13px;
 }
 
 /* 2x2 slider grid for the Simulation section */
@@ -558,21 +588,13 @@ video {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
+    width: 100%;
+    min-width: 0;
 }
 
 .config-grid .config-row {
-    padding: 6px 6px;
-    gap: 8px;
-}
-
-.config-grid .config-row label {
-    flex: 0 0 120px;
-    font-size: 13px;
-}
-
-.config-grid .config-row .value-display {
-    flex: 0 0 42px;
-    font-size: 13px;
+    width: 100%;
+    min-width: 0;
 }
 
 .config-grid-4 {
@@ -583,10 +605,11 @@ video {
     background: rgba(255, 255, 255, 0.05);
     border-radius: 0;
     padding: 6px 8px;
+    width: 100%;
+    min-width: 0;
 }
 
 .config-grid-4 .config-row.checkbox-row label {
-    justify-content: center;
     gap: 6px;
     font-size: 13px;
 }
@@ -602,6 +625,11 @@ video {
     gap: 8px;
     cursor: pointer;
     flex: 1;
+    justify-content: center;
+}
+
+.config-row.checkbox-row label input[type="checkbox"] {
+    flex-shrink: 0;
 }
 
 .config-row input[type="checkbox"] {
@@ -696,19 +724,14 @@ video {
     color: rgba(255, 255, 255, 0.95);
 }
 
-@media (max-width: 1150px) {
-    .layout-preset-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-}
-
-@media (max-width: 520px) {
-    .layout-preset-grid {
-        grid-template-columns: minmax(0, 1fr);
-    }
-}
-
 /* Vorticity Control */
+.vorticity-control,
+.circle-control,
+.hand-control {
+    min-width: 0;
+    box-sizing: border-box;
+}
+
 .vorticity-control {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.12);
@@ -720,6 +743,15 @@ video {
 .vorticity-control:hover {
     border-color: rgba(255, 255, 255, 0.45);
     background: rgba(255, 255, 255, 0.08);
+}
+
+.vorticity-control.vorticity-control-inactive {
+    opacity: 0.45;
+}
+
+.vorticity-control.vorticity-control-inactive:hover {
+    border-color: rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.05);
 }
 
 .vorticity-canvas-container {
@@ -736,16 +768,43 @@ video {
     cursor: crosshair;
 }
 
-.vorticity-values {
+.vorticity-values,
+.circle-values,
+.hand-values {
     display: flex;
-    gap: 16px;
+    flex-wrap: nowrap;
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
     font-size: 13px;
     color: rgba(255, 255, 255, 0.8);
 }
 
-.vorticity-value-item {
+.vorticity-value-item,
+.circle-value-item,
+.hand-value-item {
     display: flex;
     gap: 4px;
+    min-width: 0;
+}
+
+.settings-col-right-bottom .vorticity-value-item,
+.settings-col-right-bottom .circle-value-item,
+.settings-col-right-bottom .hand-value-item,
+.config-canvas-row .circle-value-item,
+.config-canvas-row .hand-value-item {
+    flex: 1 1 0;
+    overflow: hidden;
+}
+
+.settings-col-right-bottom .vorticity-value-item > :not(.vorticity-value-label),
+.settings-col-right-bottom .circle-value-item > :not(.circle-value-label),
+.settings-col-right-bottom .hand-value-item > :not(.hand-value-label),
+.config-canvas-row .circle-value-item > :not(.circle-value-label),
+.config-canvas-row .hand-value-item > :not(.hand-value-label) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .vorticity-value-label {
@@ -779,18 +838,6 @@ video {
     width: 100%;
     height: 100%;
     cursor: crosshair;
-}
-
-.circle-values {
-    display: flex;
-    gap: 16px;
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.8);
-}
-
-.circle-value-item {
-    display: flex;
-    gap: 4px;
 }
 
 .circle-value-label {
@@ -839,18 +886,6 @@ video {
     cursor: pointer;
 }
 
-.hand-values {
-    display: flex;
-    gap: 16px;
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.8);
-}
-
-.hand-value-item {
-    display: flex;
-    gap: 4px;
-}
-
 .hand-value-label {
     font-weight: 600;
 }
@@ -894,37 +929,124 @@ video {
     min-width: 0;
 }
 
-.environment-sliders .config-row {
-    margin-bottom: 0;
-    width: 100%;
-    box-sizing: border-box;
-    min-width: 0;
-    gap: 8px;
-    padding: 6px 6px;
-}
-
-.environment-sliders .config-row label {
-    flex: 0 0 60px;
-    min-width: 0;
-    font-size: 13px;
-}
-
-.environment-sliders .config-row input[type="range"] {
-    flex: 1 1 auto;
-    width: 100%;
-    max-width: 100%;
-    min-width: 0;
-}
-
-.environment-sliders .config-row .value-display {
-    flex: 0 0 42px;
-    min-width: 0;
-    font-size: 13px;
-}
-
 .settings-col-right-bottom > .config-section {
     display: flex;
     flex-direction: column;
     min-height: 0;
     min-width: 0;
+}
+
+/* Settings panel — mobile (single-column layout, tighter grids) */
+@media (max-width: 900px) {
+    .settings-columns {
+        grid-template-columns: minmax(0, 1fr);
+        min-height: auto;
+    }
+
+    .settings-panel-content {
+        overflow-x: clip;
+        padding: 12px 16px 0;
+    }
+
+    .settings-panel-content > .settings-columns {
+        flex: none;
+        min-height: auto;
+    }
+
+    .settings-columns::after {
+        content: '';
+        display: block;
+        height: 16px;
+    }
+
+    .config-section,
+    .config-section-content {
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    .config-section-header {
+        flex-wrap: wrap;
+        gap: 8px;
+        min-width: 0;
+    }
+
+    .config-section-header-controls {
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    .input-mode-options {
+        flex-wrap: wrap;
+    }
+
+    .config-canvas-row {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 8px;
+    }
+
+    .settings-col-right-top .circle-control,
+    .settings-col-right-top .hand-control {
+        padding: 8px;
+    }
+
+    .settings-col-right-bottom {
+        flex-direction: column;
+        min-height: auto;
+    }
+
+    .settings-col-right-bottom > * {
+        flex: 0 0 auto;
+        width: 100%;
+    }
+
+    .settings-col-right-bottom > .config-section {
+        min-height: auto;
+    }
+
+    .settings-col-right {
+        grid-template-rows: auto auto;
+        min-height: auto;
+    }
+
+    .config-row:not(.checkbox-row) label {
+        flex: 0 1 auto;
+        min-width: 0;
+        max-width: 5rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .config-row.checkbox-row label {
+        flex: 1;
+        max-width: none;
+        overflow: visible;
+        text-overflow: clip;
+    }
+
+    .config-row {
+        overflow: visible;
+    }
+
+    .config-row input[type="range"] {
+        flex: 1 1 auto;
+        min-width: 0;
+        max-width: none;
+        height: 1.125rem;
+        padding: 0 0.5rem;
+        box-sizing: border-box;
+    }
+
+    .environment-control {
+        overflow: visible;
+    }
+
+    .config-grid-4 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .layout-preset-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
 }
