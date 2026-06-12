@@ -4,22 +4,16 @@ struct SimParams {
     cellSize: f32,
     halfCellSize: f32,
     timestep: f32,
-    density: f32,
-    gravity: f32,
-    projectionIters: f32,
     windTunnelSide: i32,
     windTunnelStart: i32,
     windTunnelEnd: i32,
     windTunnelSpeed: f32,
+    edges: i32,
     momentumTransferStrength: f32,
     momentumTransferRadius: f32,
     momentumTransferDeadZone: f32,
     vorticity: f32,
     vorticityLen: f32,
-    pad0: i32,
-    pad1: i32,
-    pad2: i32,
-    pad3: i32,
 };
 
 @group(0) @binding(0) var<uniform> params: SimParams;

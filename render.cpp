@@ -1,598 +1,1146 @@
+#include "boilerplate.h"
 #include "render.h"
-#include "sim.h"
+#include "render_histogram.h"
+#include "sim_gpu.h"
+#include <sdl2webgpu.h>
+#include <iostream>
+#include <fstream>
+#include <sstream>
 #include <algorithm>
 #include <cmath>
-#include <iostream>
+#include <cstring>
+#include <cstdint>
+#include <limits>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
+// CONSTRUCTOR :250
+
+// UPDATE RENDER PASS UNIFORM
+void Renderer::updateUniformBufferRender(const ISimulator& simulator) {
+    uniformData.gridX = simulator.gridX;
+    uniformData.gridY = simulator.gridY;
+    uniformData.cellSize = simulator.cellSize;
+    uniformData.simWidth = uniformData.gridX * uniformData.cellSize;
+    uniformData.simHeight = uniformData.gridY * uniformData.cellSize;
+
+    // pressure range
+    if (usingGPUTextures) {
+        if (densityHistogramMin >= densityHistogramMax) {
+            // initialize with reasonable values to prevent glitch from snowballing
+            uniformData.pressureMin = -1.0f;
+            uniformData.pressureMax = 1.0f;
+        } else {
+            // grab from GPU (already computed)
+            uniformData.pressureMin = densityHistogramMin;
+            uniformData.pressureMax = densityHistogramMax;
+        }
+    } else if (densityHistogramMin < densityHistogramMax) {
+        uniformData.pressureMin = densityHistogramMin;
+        uniformData.pressureMax = densityHistogramMax;
+    } else {
+        uniformData.pressureMin = -1.0f;
+        uniformData.pressureMax = 1.0f;
+    }
+
+    uniformData.densityHistogramMin = densityHistogramMin;
+    uniformData.densityHistogramMax = densityHistogramMax;
+    uniformData.velocityHistogramMin = velocityHistogramMin;
+    uniformData.velocityHistogramMax = velocityHistogramMax;
+    uniformData.densityHistogramMaxCount = densityHistogramMaxCount;
+    uniformData.velocityHistogramMaxCount = velocityHistogramMaxCount;
+    for (int i = 0; i < 16; i++) {
+        uniformData.densityHistogramBins[i].x = densityHistogramBins[i * 4 + 0];
+        uniformData.densityHistogramBins[i].y = densityHistogramBins[i * 4 + 1];
+        uniformData.densityHistogramBins[i].z = densityHistogramBins[i * 4 + 2];
+        uniformData.densityHistogramBins[i].w = densityHistogramBins[i * 4 + 3];
+        uniformData.velocityHistogramBins[i].x = velocityHistogramBins[i * 4 + 0];
+        uniformData.velocityHistogramBins[i].y = velocityHistogramBins[i * 4 + 1];
+        uniformData.velocityHistogramBins[i].z = velocityHistogramBins[i * 4 + 2];
+        uniformData.velocityHistogramBins[i].w = velocityHistogramBins[i * 4 + 3];
+    }
+
+    // Update viewport configuration from g_layoutPixels
+    uniformData.viewportCount = 0;
+    for (int i = 0; i < 4; i++) {
+        std::string vpName = "viewport_" + std::to_string(i + 1);
+        auto it = g_layoutPixels.components.find(vpName);
+        if (it != g_layoutPixels.components.end()) {
+            uniformData.viewportX[i] = it->second.x;
+            uniformData.viewportY[i] = it->second.y;
+            uniformData.viewportWidth[i] = it->second.width;
+            uniformData.viewportHeight[i] = it->second.height;
+            auto cfgIt = g_config.layout.components.find(vpName);
+            uniformData.viewportRenderTarget[i] = (cfgIt != g_config.layout.components.end())
+                ? cfgIt->second.viewportTarget : 2;
+            uniformData.viewportRenderVelocity[i] = (cfgIt != g_config.layout.components.end())
+                ? (cfgIt->second.viewportVelocityViewEnabled ? 1 : 0) : 0;
+            uniformData.viewportRotation[i] = (cfgIt != g_config.layout.components.end())
+                ? cfgIt->second.rotation : 0;
+            uniformData.viewportCount++;
+        }
+    }
+
+    // Update histogram configuration from g_layoutPixels
+    auto dhIt = g_layoutPixels.components.find("density_histogram");
+    auto dhCfgIt = g_config.layout.components.find("density_histogram");
+    if (dhIt != g_layoutPixels.components.end() && dhCfgIt != g_config.layout.components.end()) {
+        uniformData.densityHistogramEnabled = dhCfgIt->second.histogramEnabled ? 1 : 0;
+        uniformData.densityHistogramX = dhIt->second.x;
+        uniformData.densityHistogramY = dhIt->second.y;
+        uniformData.densityHistogramWidth = dhIt->second.width;
+        uniformData.densityHistogramHeight = dhIt->second.height;
+    }
+
+    auto vhIt = g_layoutPixels.components.find("velocity_histogram");
+    auto vhCfgIt = g_config.layout.components.find("velocity_histogram");
+    if (vhIt != g_layoutPixels.components.end() && vhCfgIt != g_config.layout.components.end()) {
+        uniformData.velocityHistogramEnabled = vhCfgIt->second.histogramEnabled ? 1 : 0;
+        uniformData.velocityHistogramX = vhIt->second.x;
+        uniformData.velocityHistogramY = vhIt->second.y;
+        uniformData.velocityHistogramWidth = vhIt->second.width;
+        uniformData.velocityHistogramHeight = vhIt->second.height;
+    }
+
+    auto ethIt = g_layoutPixels.components.find("entropy_time_series");
+    if (ethIt == g_layoutPixels.components.end()) {
+        ethIt = g_layoutPixels.components.find("entropy_histogram");
+    }
+
+    auto ethCfgIt = g_config.layout.components.find("entropy_time_series");
+    if (ethCfgIt == g_config.layout.components.end()) {
+        ethCfgIt = g_config.layout.components.find("entropy_histogram");
+    }
+
+    if (ethIt != g_layoutPixels.components.end() && ethCfgIt != g_config.layout.components.end()) {
+        uniformData.entropyTimeSeriesEnabled = ethCfgIt->second.histogramEnabled ? 1 : 0;
+        uniformData.entropyTimeSeriesX = ethIt->second.x;
+        uniformData.entropyTimeSeriesY = ethIt->second.y;
+        uniformData.entropyTimeSeriesWidth = ethIt->second.width;
+        uniformData.entropyTimeSeriesHeight = ethIt->second.height;
+    } else {
+        uniformData.entropyTimeSeriesEnabled = 0;
+        uniformData.entropyTimeSeriesX = 0;
+        uniformData.entropyTimeSeriesY = 0;
+        uniformData.entropyTimeSeriesWidth = 0;
+        uniformData.entropyTimeSeriesHeight = 0;
+    }
+
+    uniformData.entropyHistoryCount = entropyHistoryCount;
+    uniformData.entropyHistoryWriteIndex = entropyHistoryWriteIndex;
+    uniformData.entropyPad0 = 0;
+    for (int i = 0; i < 16; i++) {
+        uniformData.entropyHistory[i].x = entropyHistory[i * 4 + 0];
+        uniformData.entropyHistory[i].y = entropyHistory[i * 4 + 1];
+        uniformData.entropyHistory[i].z = entropyHistory[i * 4 + 2];
+        uniformData.entropyHistory[i].w = entropyHistory[i * 4 + 3];
+    }
+
+    auto vtsIt = g_layoutPixels.components.find("volume_time_series");
+    auto vtsCfgIt = g_config.layout.components.find("volume_time_series");
+    if (vtsIt != g_layoutPixels.components.end() && vtsCfgIt != g_config.layout.components.end()) {
+        uniformData.volumeTimeSeriesEnabled = vtsCfgIt->second.histogramEnabled ? 1 : 0;
+        uniformData.volumeTimeSeriesX = vtsIt->second.x;
+        uniformData.volumeTimeSeriesY = vtsIt->second.y;
+        uniformData.volumeTimeSeriesWidth = vtsIt->second.width;
+        uniformData.volumeTimeSeriesHeight = vtsIt->second.height;
+    } else {
+        uniformData.volumeTimeSeriesEnabled = 0;
+        uniformData.volumeTimeSeriesX = 0;
+        uniformData.volumeTimeSeriesY = 0;
+        uniformData.volumeTimeSeriesWidth = 0;
+        uniformData.volumeTimeSeriesHeight = 0;
+    }
+
+    uniformData.volumeHistoryMax = volumeHistoryMax;
+    uniformData.volumeHistoryCount = volumeHistoryCount;
+    uniformData.volumeHistoryWriteIndex = volumeHistoryWriteIndex;
+    uniformData.volumePad0 = 0;
+    for (int i = 0; i < 16; i++) {
+        uniformData.volumeDomainHistory[i].x = volumeDomainHistory[i * 4 + 0];
+        uniformData.volumeDomainHistory[i].y = volumeDomainHistory[i * 4 + 1];
+        uniformData.volumeDomainHistory[i].z = volumeDomainHistory[i * 4 + 2];
+        uniformData.volumeDomainHistory[i].w = volumeDomainHistory[i * 4 + 3];
+
+        uniformData.volumeMassHistory[i].x = volumeMassHistory[i * 4 + 0];
+        uniformData.volumeMassHistory[i].y = volumeMassHistory[i * 4 + 1];
+        uniformData.volumeMassHistory[i].z = volumeMassHistory[i * 4 + 2];
+        uniformData.volumeMassHistory[i].w = volumeMassHistory[i * 4 + 3];
+    }
+
+    // Update runtime-modifiable background color
+    uniformData.backgroundColor = {backgroundColor.r, backgroundColor.g, backgroundColor.b, 0.0f};
+
+    // update uniform buffer
+    wgpuQueueWriteBuffer(queue, uniformBuffer, 0, &uniformData, sizeof(UniformData));
+}
+
+void Renderer::resetEntropyTimeSeries() {
+    entropyNormalized = 0.0f;
+    entropyHistoryWriteIndex = 0;
+    entropyHistoryCount = 0;
+    entropyHistory.fill(0.0f);
+
+    volumeHistoryWriteIndex = 0;
+    volumeHistoryCount = 0;
+    volumeHistoryMax = 1.0f;
+    volumeDomainHistory.fill(0.0f);
+    volumeMassHistory.fill(0.0f);
+}
+
+// BOILERPLATE INSTANTIATION HELPERS
+bool Renderer::createTexture(const TextureDesc& desc, WGPUTexture& texture, WGPUTextureView& view) {
+    texture = createTextureView(uniformData.gridX > 0 ? uniformData.gridX : 1,
+                                uniformData.gridY > 0 ? uniformData.gridY : 1,
+                                desc.format, desc.usage, view);
+    return texture != nullptr;
+}
+
+void Renderer::copyTextureHostToDevice(WGPUTexture texture, const float* data, size_t dataSize, int gridX, int gridY, int channelCount) {
+    WGPUImageCopyTexture copyTexture = {
+        .texture = texture,
+        .mipLevel = 0,
+        .origin = {0, 0, 0},
+        .aspect = WGPUTextureAspect_All
+    };
+
+    WGPUTextureDataLayout dataLayout = {
+        .offset = 0,
+        .bytesPerRow = static_cast<uint32_t>(gridX * channelCount * sizeof(float)),
+        .rowsPerImage = static_cast<uint32_t>(gridY)
+    };
+
+    WGPUExtent3D extent = {
+        .width = static_cast<uint32_t>(gridX),
+        .height = static_cast<uint32_t>(gridY),
+        .depthOrArrayLayers = 1
+    };
+
+    wgpuQueueWriteTexture(queue, &copyTexture, data, dataSize * sizeof(float), &dataLayout, &extent);
+}
+
+WGPUSurfaceConfiguration Renderer::createSurfaceConfiguration() {
+    WGPUSurfaceConfiguration config = {};
+    config.nextInChain = nullptr;
+    config.device = device;
+    config.format = surfaceFormat;
+    config.usage = WGPUTextureUsage_RenderAttachment;
+    config.width = windowWidth;
+    config.height = windowHeight;
+    config.presentMode = WGPUPresentMode_Fifo;
+    config.alphaMode = WGPUCompositeAlphaMode_Opaque;
+    return config;
+}
+
+// RENDER PIPELINE CREATION HELPERS
+WGPUBindGroupLayout Renderer::createRenderBindGroupLayout(int textureCount, WGPUShaderStage visibility, size_t uniformSize) {
+    std::vector<WGPUBindGroupLayoutEntry> entries;
+    
+    // uniform buffer
+    auto uniformEntry = createUniformBufferLayoutEntry(0, uniformSize);
+    uniformEntry.visibility = visibility;
+    entries.push_back(uniformEntry);
+    
+    // sampler
+    entries.push_back(createSamplerLayoutEntry(1, visibility));
+    
+    // textures
+    for (int i = 2; i < 2 + textureCount; i++) {
+        entries.push_back(createSampleTextureLayoutEntry(i, visibility));
+    }
+    
+    return createBindGroupLayout(entries.size(), entries.data());
+}
+
+WGPUBindGroupLayoutEntry Renderer::createSamplerLayoutEntry(int binding, WGPUShaderStage visibility) {
+    WGPUBindGroupLayoutEntry entry = {};
+    entry.binding = binding;
+    entry.visibility = visibility;
+    entry.sampler.type = WGPUSamplerBindingType_NonFiltering;
+    return entry;
+}
+
+WGPUBindGroupEntry Renderer::createSamplerBindGroupEntry(int binding, WGPUSampler sampler) {
+    WGPUBindGroupEntry entry = {};
+    entry.binding = binding;
+    entry.sampler = sampler;
+    return entry;
+}
+
+WGPURenderPassColorAttachment Renderer::createRenderPassColorAttachment(WGPUTextureView view, WGPULoadOp loadOp, WGPUStoreOp storeOp, WGPUColor clearValue) {
+    WGPURenderPassColorAttachment attachment = {};
+    attachment.view = view;
+    attachment.resolveTarget = nullptr;
+    attachment.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+    attachment.loadOp = loadOp;
+    attachment.storeOp = storeOp;
+    attachment.clearValue = clearValue;
+    return attachment;
+}
+
+WGPURenderPassDescriptor Renderer::createRenderPassDescriptor(WGPURenderPassColorAttachment* colorAttachment) {
+    WGPURenderPassDescriptor renderPassDesc = {};
+    renderPassDesc.nextInChain = nullptr;
+    renderPassDesc.colorAttachmentCount = 1;
+    renderPassDesc.colorAttachments = colorAttachment;
+    renderPassDesc.depthStencilAttachment = nullptr;
+    return renderPassDesc;
+}
+
+WGPUTextureViewDescriptor Renderer::createTextureViewDescriptor(WGPUTextureFormat format) {
+    WGPUTextureViewDescriptor viewDesc = {};
+    viewDesc.nextInChain = nullptr;
+    viewDesc.format = format;
+    viewDesc.dimension = WGPUTextureViewDimension_2D;
+    viewDesc.baseMipLevel = 0;
+    viewDesc.mipLevelCount = 1;
+    viewDesc.baseArrayLayer = 0;
+    viewDesc.arrayLayerCount = 1;
+    return viewDesc;
+}
+
+Renderer::RenderPipelineResult Renderer::createRenderPipelineWithLayout(
+    const char* vertexShaderFile,
+    const char* fragmentShaderFile,
+    const char* fragmentEntry,
+    WGPUTextureFormat surfaceFormat,
+    int textureCount,
+    WGPUShaderStage visibility,
+    size_t uniformSize) {
+    const std::string fragmentSource = ConfigLoader::readFile(fragmentShaderFile);
+    if (fragmentSource.empty()) {
+        return RenderPipelineResult{};
+    }
+    return createRenderPipelineWithFragmentSource(
+        vertexShaderFile,
+        fragmentSource,
+        fragmentEntry,
+        surfaceFormat,
+        textureCount,
+        visibility,
+        uniformSize
+    );
+}
+
+Renderer::RenderPipelineResult Renderer::createRenderPipelineWithFragmentSource(
+    const char* vertexShaderFile,
+    const std::string& fragmentSource,
+    const char* fragmentEntry,
+    WGPUTextureFormat surfaceFormat,
+    int textureCount,
+    WGPUShaderStage visibility,
+    size_t uniformSize) {
+    
+    RenderPipelineResult result;
+
+    // load shaders
+    WGPUShaderModule vertexShader = createShaderModule(vertexShaderFile);
+    if (!vertexShader) return result;
+    
+    WGPUShaderModule fragmentShader = createShaderModuleFromSource(fragmentSource);
+    if (!fragmentShader) {
+        wgpuShaderModuleRelease(vertexShader);
+        return result;
+    }
+
+    result.bindGroupLayout = createRenderBindGroupLayout(textureCount, visibility, uniformSize);
+    if (!result.bindGroupLayout) {
+        wgpuShaderModuleRelease(vertexShader);
+        wgpuShaderModuleRelease(fragmentShader);
+        return result;
+    }
+
+    WGPUPipelineLayout pipelineLayout = createPipelineLayout(&result.bindGroupLayout, 1);
+    if (!pipelineLayout) {
+        wgpuBindGroupLayoutRelease(result.bindGroupLayout);
+        wgpuShaderModuleRelease(vertexShader);
+        wgpuShaderModuleRelease(fragmentShader);
+        result.bindGroupLayout = nullptr;
+        return result;
+    }
+
+    WGPURenderPipelineDescriptor pipelineDesc = {};
+    pipelineDesc.nextInChain = nullptr;
+    pipelineDesc.layout = pipelineLayout;
+    
+    // vertex state
+    pipelineDesc.vertex.module = vertexShader;
+    pipelineDesc.vertex.entryPoint = WGPU_CSTR("vs_main");
+    pipelineDesc.vertex.constantCount = 0;
+    pipelineDesc.vertex.constants = nullptr;
+    pipelineDesc.vertex.bufferCount = 0;
+    pipelineDesc.vertex.buffers = nullptr;
+    
+    // primitive state
+    pipelineDesc.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+    pipelineDesc.primitive.stripIndexFormat = WGPUIndexFormat_Undefined;
+    pipelineDesc.primitive.frontFace = WGPUFrontFace_CCW;
+    pipelineDesc.primitive.cullMode = WGPUCullMode_None;
+    
+    // multisample state
+    pipelineDesc.multisample.count = 1;
+    pipelineDesc.multisample.mask = ~0u;
+    pipelineDesc.multisample.alphaToCoverageEnabled = false;
+    
+    // fragment state
+    WGPUColorTargetState colorTarget = {};
+    colorTarget.format = surfaceFormat;
+    colorTarget.blend = nullptr;
+    colorTarget.writeMask = WGPUColorWriteMask_All;
+    
+    WGPUFragmentState fragmentState = {};
+    fragmentState.module = fragmentShader;
+    fragmentState.entryPoint = WGPU_CSTR(fragmentEntry);
+    fragmentState.constantCount = 0;
+    fragmentState.constants = nullptr;
+    fragmentState.targetCount = 1;
+    fragmentState.targets = &colorTarget;
+    
+    pipelineDesc.fragment = &fragmentState;
+    pipelineDesc.depthStencil = nullptr;
+
+    // create pipeline
+    result.pipeline = wgpuDeviceCreateRenderPipeline(device, &pipelineDesc);
+
+    // clean up temporary objects
+    wgpuPipelineLayoutRelease(pipelineLayout);
+    wgpuShaderModuleRelease(vertexShader);
+    wgpuShaderModuleRelease(fragmentShader);
+
+    if (!result.pipeline) {
+        wgpuBindGroupLayoutRelease(result.bindGroupLayout);
+        result.bindGroupLayout = nullptr;
+    }
+
+    return result;
+}
 
 Renderer::Renderer(SDL_Window* window, const Config& config)
-    :
-    window(window),
-    frameCount(0),
+    : window(window) {
 
-    // histograms
-    densityHistogramBins(IRenderer::HISTOGRAM_BINS, 0),
-    densityHistogramMin(0.0f),
-    densityHistogramMax(0.0f),
-    velocityHistogramBins(IRenderer::HISTOGRAM_BINS, 0),
-    velocityHistogramMin(0.0f),
-    velocityHistogramMax(0.0f)
-{
     SDL_GetWindowSize(window, &windowWidth, &windowHeight);
 
-    // world coordinates set after simulator is available
-    simWidth = 1.0f;
-    simHeight = 1.0f;
-    canvasScale = std::min(windowWidth, windowHeight);
-
-    // pixel buffer
-    pixels = new Uint32[windowWidth * windowHeight];
+    uniformData = {};
+    uniformData.velScale = g_config.layout.velocityScale;
+    uniformData.windowWidth = static_cast<float>(windowWidth);
+    uniformData.windowHeight = static_cast<float>(windowHeight);
+    uniformData.disableHistograms = g_config.layout.disableHistograms ? 1 : 0;
+    uniformData.entropyHistoryCount = 0;
+    uniformData.entropyHistoryWriteIndex = 0;
+    uniformData.entropyPad0 = 0;
 }
 
 Renderer::~Renderer() {
-    if (texture) {
-        SDL_DestroyTexture(texture);
-        texture = nullptr;
-    }
-    if (renderer) {
-        SDL_DestroyRenderer(renderer);
-        renderer = nullptr;
-    }
-    delete[] pixels;
-}
+    if (!initialized) return;
 
+#ifdef WEBGPU_BACKEND_EMDAWNWEBGPU
+    if (instance) wgpuInstanceProcessEvents(instance);
+#else
+    if (device) wgpuDeviceTick(device);
+#endif
+
+    // textures
+    RELEASE_TEXTURE_WITH_STORAGE(pressure)
+    RELEASE_TEXTURE_WITH_STORAGE(solid)
+    RELEASE_TEXTURE(density)
+    RELEASE_TEXTURE(velocity)
+    RELEASE_TEXTURE(ink)
+
+    // all the other stuff
+    RELEASE_RENDER_PIPELINE(renderPipeline)
+    RELEASE_BIND_GROUP(uniformBindGroup)
+    RELEASE_BIND_GROUP(uniformBindGroupGPU)
+    RELEASE_BIND_GROUP_LAYOUT(bindGroupLayout)
+    RELEASE_BUFFER(uniformBuffer)
+    RELEASE_SAMPLER(sampler)
+
+    // release device resources
+    releaseResource(device, wgpuDeviceRelease);
+    releaseResource(adapter, wgpuAdapterRelease);
+    releaseResource(surface, wgpuSurfaceRelease);
+    releaseResource(instance, wgpuInstanceRelease);
+    initialized = false;
+}
 
 // MAIN RENDER LOOP
 bool Renderer::init(const Config& config) {
-    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-    if (!renderer) {
-        return false;
-    }
+    RETURN_FALSE_IF_FAIL(initDevice())
 
-    texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
-                               SDL_TEXTUREACCESS_STREAMING, windowWidth, windowHeight);
-    if (!texture) {
-        return false;
-    }
+#ifdef __EMSCRIPTEN__
+    // Browser WebGPU prefers rgba8unorm for canvases.
+    surfaceFormat = WGPUTextureFormat_RGBA8Unorm;
+#else
+    surfaceFormat = WGPUTextureFormat_BGRA8Unorm;
+#endif
+    auto surfaceConfig = createSurfaceConfiguration();
+    wgpuSurfaceConfigure(surface, &surfaceConfig);
+    
+    uniformBuffer = createBuffer(sizeof(UniformData), WGPUBufferUsage_CopyDst | WGPUBufferUsage_Uniform);
+    RETURN_FALSE_IF_FAIL(uniformBuffer);
 
+    sampler = createSampler(WGPUFilterMode_Nearest);
+    RETURN_FALSE_IF_FAIL(sampler);
+
+    RETURN_FALSE_IF_FAIL(initRenderPipeline())
+
+    initialized = true;
     return true;
 }
 
 void Renderer::render(const ISimulator& simulator) {
-    // Copy rendering config from g_config
-    const int drawTarget = g_config.rendering.target;
-    const bool drawVelocities = g_config.rendering.showVelocityVectors;
-    const bool disableHistograms = g_config.rendering.disableHistograms;
-    const float velScale = g_config.rendering.velocityScale;
-
-    simWidth = simulator.domainWidth;
-    simHeight = simulator.domainHeight;
-    float scaleX = windowWidth / simWidth;
-    float scaleY = windowHeight / simHeight;
-    canvasScale = std::min(scaleX, scaleY);
-
-    // clear bg
-    std::fill(pixels, pixels + windowWidth * windowHeight, 0xFF050505);
-
-    drawFluidField(simulator, drawTarget);
-    if (drawVelocities) {
-        drawVelocityField(simulator, velScale);
-    }
+    if (!initialized) return;
+    usingGPUTextures = simulator.isUsingGPU();
 
     // compute histograms every n frames
-    int histogramFrameInterval = 1;
-    if (!disableHistograms && frameCount++ % histogramFrameInterval == 0) {
+    if (!g_config.layout.disableHistograms && frameCount++ % HISTOGRAM_FRAME_INTERVAL == 0) {
         computeHistograms(simulator);
     }
 
-    // draw histograms every frame
-    if (!disableHistograms) {
-        drawHistograms();
+    updateUniformBufferRender(simulator);
+    updateTextures(simulator);
+
+    WGPUSurfaceTexture surfaceTexture;
+    wgpuSurfaceGetCurrentTexture(surface, &surfaceTexture);
+    WGPUTextureView nextTexture = wgpuTextureCreateView(surfaceTexture.texture, nullptr);
+
+    // command encoder
+    WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(device, nullptr);
+
+    // render pass
+    auto colorAttachment = createRenderPassColorAttachment(
+        nextTexture,
+        WGPULoadOp_Clear,
+        WGPUStoreOp_Store,
+        {5.0f / 255.0f, 5.0f / 255.0f, 5.0f / 255.0f, 1.0f}
+    );
+    auto renderPassDesc = createRenderPassDescriptor(&colorAttachment);
+
+    WGPURenderPassEncoder renderPassEncoder = wgpuCommandEncoderBeginRenderPass(encoder, &renderPassDesc);
+    if (!renderPassEncoder) {
+        wgpuTextureViewRelease(nextTexture);
+        wgpuCommandEncoderRelease(encoder);
+        return;
     }
 
-    SDL_UpdateTexture(texture, nullptr, pixels, windowWidth * sizeof(Uint32));
-
-    // render to screen
-    SDL_RenderClear(renderer);
-    SDL_RenderCopy(renderer, texture, nullptr, nullptr);
-    SDL_RenderPresent(renderer);
-}
-
-
-// RENDER HELPERS
-void Renderer::convertCoordinates(float simX, float simY, int& pixelX, int& pixelY) {
-    pixelX = static_cast<int>(simX * canvasScale);
-    pixelY = windowHeight - static_cast<int>(simY * canvasScale);
-}
-
-void Renderer::mapValueToColor(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b) {
-    value = std::max(min, std::min(max - 0.0001f, value));
-    float delta = max - min;
-    float normalized = delta == 0.0f ? 0.5f : (value - min) / delta;
-
-    float m = 0.25f;
-    int num = static_cast<int>(normalized / m);
-    float s = (normalized - num * m) / m;
-
-    float fr = 0.0f, fg = 0.0f, fb = 0.0f;
-
-    switch (num) {
-        case 0: fr = 0.0f; fg = s; fb = 1.0f; break;
-        case 1: fr = 0.0f; fg = 1.0f; fb = 1.0f - s; break;
-        case 2: fr = s; fg = 1.0f; fb = 0.0f; break;
-        case 3: fr = 1.0f; fg = 1.0f - s; fb = 0.0f; break;
-        default: fr = 1.0f; fg = 0.0f; fb = 0.0f; break;
-    }
-
-    r = static_cast<Uint8>(fr * 255);
-    g = static_cast<Uint8>(fg * 255);
-    b = static_cast<Uint8>(fb * 255);
-}
-
-void Renderer::mapValueToGreyscale(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b) {
-    float t = (value - min) / (max - min) * 255.0f;
-    t = std::max(0.0f, std::min(255.0f, t));
-    r = g = b = static_cast<Uint8>(t);
-}
-
-void Renderer::mapValueToHeatmap(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b) {
-    float t = (value - min) / (max - min);
-    t = std::max(0.0f, std::min(1.0f, t));
-
-    float fr = 0.0f;
-    float fg = 0.0f;
-    float fb = 0.0f;
-
-    if (t < 0.33f) {
-        float k = t / 0.33f;
-        fr = 0.0f;
-        fg = k;
-        fb = 1.0f;
-    } else if (t < 0.66f) {
-        float k = (t - 0.33f) / 0.33f;
-        fr = k;
-        fg = 1.0f;
-        fb = 1.0f - k;
+    wgpuRenderPassEncoderSetPipeline(renderPassEncoder, renderPipeline);
+    if (usingGPUTextures) {
+        wgpuRenderPassEncoderSetBindGroup(renderPassEncoder, 0, uniformBindGroupGPU, 0, nullptr);
     } else {
-        float k = (t - 0.66f) / 0.34f;
-        fr = 1.0f;
-        fg = 1.0f - 0.75f * k;
-        fb = 0.0f;
+        wgpuRenderPassEncoderSetBindGroup(renderPassEncoder, 0, uniformBindGroup, 0, nullptr);
     }
 
-    r = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, fr * 255.0f)));
-    g = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, fg * 255.0f)));
-    b = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, fb * 255.0f)));
-}
+    // draw fullscreen quad
+    wgpuRenderPassEncoderDraw(renderPassEncoder, 6, 1, 0, 0);
 
-void Renderer::mapDivergenceDebug(float divergence, float scale, Uint8& r, Uint8& g, Uint8& b) {
-    float normalized = divergence / std::max(scale, 1e-4f);
-    normalized = std::max(-1.0f, std::min(1.0f, normalized));
-    float magnitude = std::pow(std::abs(normalized), 0.65f);
+    // END render pass
+    wgpuRenderPassEncoderEnd(renderPassEncoder);
+    wgpuRenderPassEncoderRelease(renderPassEncoder);
 
-    float baseR = 0.02f;
-    float baseG = 0.02f;
-    float baseB = 0.025f;
+    // submit commands
+    WGPUCommandBufferDescriptor cmdBufferDesc = WGPUCommandBufferDescriptor{};
+    WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, &cmdBufferDesc);
+    wgpuQueueSubmit(queue, 1, &commands);
 
-    float tintR = normalized >= 0.0f ? 1.0f : 0.12f;
-    float tintG = normalized >= 0.0f ? 0.24f : 0.38f;
-    float tintB = normalized >= 0.0f ? 0.14f : 1.0f;
+    // On Emscripten/WebGPU, presentation is handled by the browser frame loop.
+#ifndef __EMSCRIPTEN__
+    wgpuSurfacePresent(surface);
+#endif
 
-    float outR = std::max(0.0f, std::min(1.0f, baseR + tintR * magnitude));
-    float outG = std::max(0.0f, std::min(1.0f, baseG + tintG * magnitude));
-    float outB = std::max(0.0f, std::min(1.0f, baseB + tintB * magnitude));
-
-    r = static_cast<Uint8>(outR * 255.0f);
-    g = static_cast<Uint8>(outG * 255.0f);
-    b = static_cast<Uint8>(outB * 255.0f);
-}
-
-void Renderer::mapValueToVelocityColor(float value, float min, float max, Uint8& r, Uint8& g, Uint8& b) {
-    value = std::max(min, std::min(max - 0.0001f, value));
-    float delta = max - min;
-    float normalized = delta == 0.0f ? 0.5f : (value - min) / delta;
-    
-    if (normalized < 0.5f) {
-        float t = normalized * 2.0f;
-        r = 255;
-        g = static_cast<Uint8>(t * 165.0f); // orange to yellow
-        b = 0;
-    } else {
-        float t = (normalized - 0.5f) * 2.0f;
-        r = 255;
-        g = static_cast<Uint8>(165.0f + t * 90.0f); // yellow to white
-        b = 0;
+    // release surface texture
+    if (surfaceTexture.texture) {
+        wgpuTextureRelease(surfaceTexture.texture);
     }
+
+    // clean up
+    wgpuCommandBufferRelease(commands);
+    wgpuCommandEncoderRelease(encoder);
+    wgpuTextureViewRelease(nextTexture);
+    wgpuInstanceProcessEvents(instance);
 }
 
-void Renderer::mapInkToColor(float r, float g, float b, Uint8& outR, Uint8& outG, Uint8& outB) {
-    r = std::max(0.0f, std::min(1.0f, r));
-    g = std::max(0.0f, std::min(1.0f, g));
-    b = std::max(0.0f, std::min(1.0f, b));
+void Renderer::updateTextures(const ISimulator& simulator) {
+    int gridX = simulator.gridX;
+    int gridY = simulator.gridY;
 
-    outR = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, r * 255.0f)));
-    outG = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, g * 255.0f)));
-    outB = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, b * 255.0f)));
-}
+    // GPU MODE
+    if (usingGPUTextures) {
+        const auto& gpuSim = static_cast<const GPUSimulator&>(simulator);
+        const WGPUTexture pressureTex = gpuSim.getPressureTexture();
+        const WGPUTexture densityTex = gpuSim.getDensityTexture();
+        const WGPUTexture velocityTex = gpuSim.getVelocityTexture();
+        const WGPUTexture solidTex = gpuSim.getSolidTexture();
+        const WGPUTexture inkTex = gpuSim.getInkTexture();
 
-void Renderer::setPixel(int x, int y, Uint8 r, Uint8 g, Uint8 b) {
-    if (x >= 0 && x < windowWidth && y >= 0 && y < windowHeight) {
-        pixels[y * windowWidth + x] = (0xFF << 24) | (r << 16) | (g << 8) | b;
+        const bool gpuTextureRefsChanged =
+            (gpuPressureTextureRef != pressureTex) ||
+            (gpuDensityTextureRef != densityTex) ||
+            (gpuVelocityTextureRef != velocityTex) ||
+            (gpuSolidTextureRef != solidTex) ||
+            (gpuInkTextureRef != inkTex);
+
+        if (!pressureTextureView || gpuTextureRefsChanged) {
+            RELEASE_TEXTURE_VIEW(pressure);
+            releaseResource(pressureTextureStorageView, wgpuTextureViewRelease);
+            RELEASE_TEXTURE_VIEW(density);
+            RELEASE_TEXTURE_VIEW(velocity);
+            RELEASE_TEXTURE_VIEW(solid);
+            releaseResource(solidTextureStorageView, wgpuTextureViewRelease);
+            RELEASE_TEXTURE_VIEW(ink);
+
+            auto viewDescR32 = createTextureViewDescriptor(WGPUTextureFormat_R32Float);
+            pressureTextureView = wgpuTextureCreateView(pressureTex, &viewDescR32);
+            pressureTextureStorageView = wgpuTextureCreateView(pressureTex, &viewDescR32);
+            densityTextureView = wgpuTextureCreateView(densityTex, &viewDescR32);
+            solidTextureView = wgpuTextureCreateView(solidTex, &viewDescR32);
+            solidTextureStorageView = wgpuTextureCreateView(solidTex, &viewDescR32);
+
+            auto viewDescRG32 = createTextureViewDescriptor(WGPUTextureFormat_RG32Float);
+            velocityTextureView = wgpuTextureCreateView(velocityTex, &viewDescRG32);
+
+            auto viewDescRGBA32 = createTextureViewDescriptor(WGPUTextureFormat_RGBA32Float);
+            inkTextureView = wgpuTextureCreateView(inkTex, &viewDescRGBA32);
+
+            gpuPressureTextureRef = pressureTex;
+            gpuDensityTextureRef = densityTex;
+            gpuVelocityTextureRef = velocityTex;
+            gpuSolidTextureRef = solidTex;
+            gpuInkTextureRef = inkTex;
+        }
+
+        RELEASE_BIND_GROUP(uniformBindGroupGPU);
+
+        std::vector<WGPUBindGroupEntry> bindGroupEntries;
+        bindGroupEntries.push_back(createUniformBufferBindGroupEntry(0, uniformBuffer, sizeof(UniformData)));
+        bindGroupEntries.push_back(createSamplerBindGroupEntry(1, sampler));
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(2, pressureTextureView));
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(3, densityTextureView));
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(4, velocityTextureView));
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(5, solidTextureView));
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(6, inkTextureView));
+
+        uniformBindGroupGPU = createBindGroup(bindGroupEntries.size(), bindGroupEntries.data(), bindGroupLayout);
+        uniformData.gridX = gridX;
+        uniformData.gridY = gridY;
+
+        return;
     }
-}
 
-void Renderer::drawFluidField(const ISimulator& simulator, int drawTarget) {
+    // CPU MODE
+    // create textures initially or on resize
+    if (!pressureTexture || textureGridX != gridX || textureGridY != gridY) {
+        // release old textures (views first, then textures)
+        RELEASE_TEXTURE_VIEW(pressure);
+        releaseResource(pressureTextureStorageView, wgpuTextureViewRelease);
+        RELEASE_TEXTURE_VIEW(density);
+        RELEASE_TEXTURE_VIEW(velocity);
+        RELEASE_TEXTURE_VIEW(solid);
+        RELEASE_TEXTURE_VIEW(ink);
+
+        releaseResource(pressureTexture, wgpuTextureRelease);
+        releaseResource(densityTexture, wgpuTextureRelease);
+        releaseResource(velocityTexture, wgpuTextureRelease);
+        releaseResource(solidTexture, wgpuTextureRelease);
+        releaseResource(inkTexture, wgpuTextureRelease);
+
+        // release old bind group before creating new textures
+        RELEASE_BIND_GROUP(uniformBindGroup);
+
+        // create new textures (CPU mode - simple textures)
+        pressureTexture = createTextureView(gridX, gridY, WGPUTextureFormat_R32Float, TEXTURE_BINDING_FLAGS, pressureTextureView);
+        densityTexture = createTextureView(gridX, gridY, WGPUTextureFormat_R32Float, TEXTURE_BINDING_FLAGS, densityTextureView);
+        velocityTexture = createTextureView(gridX, gridY, WGPUTextureFormat_RG32Float, TEXTURE_BINDING_FLAGS, velocityTextureView);
+        solidTexture = createTextureView(gridX, gridY, WGPUTextureFormat_R32Float, TEXTURE_BINDING_FLAGS, solidTextureView);
+        inkTexture = createTextureView(gridX, gridY, WGPUTextureFormat_RGBA32Float, TEXTURE_BINDING_FLAGS, inkTextureView);
+
+        textureGridX = gridX;
+        textureGridY = gridY;
+    }
+
+    // Always recreate bind group if it was released (e.g., after pipeline rebuild)
+    // This ensures bind group stays in sync with the current bindGroupLayout
+    if (!uniformBindGroup) {
+        // create bind groups
+        std::vector<WGPUBindGroupEntry> bindGroupEntries;
+        bindGroupEntries.push_back(createUniformBufferBindGroupEntry(0, uniformBuffer, sizeof(UniformData)));
+        bindGroupEntries.push_back(createSamplerBindGroupEntry(1, sampler));
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(2, pressureTextureView));
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(3, densityTextureView));
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(4, velocityTextureView));
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(5, solidTextureView));
+        bindGroupEntries.push_back(createTextureViewBindGroupEntry(6, inkTextureView));
+
+        uniformBindGroup = createBindGroup(bindGroupEntries.size(), bindGroupEntries.data(), bindGroupLayout);
+    }
+
+    // update texture data
     const auto& pressure = simulator.getPressure();
     const auto& density = simulator.getDensity();
     const auto& velocityX = simulator.getVelocityX();
     const auto& velocityY = simulator.getVelocityY();
     const auto& solid = simulator.getSolid();
 
-    float cellSize = simulator.cellSize;
-    int gridX = simulator.gridX;
-    int gridY = simulator.gridY;
+    if (!pressure.empty()) {
+        copyTextureHostToDevice(pressureTexture, pressure.data(), pressure.size(), gridX, gridY);
 
-    // pressure range
-    float minP = pressure[0];
-    float maxP = pressure[0];
-    for (int i = 0; i < gridX * gridY; i++) {
-        minP = std::min(minP, pressure[i]);
-        maxP = std::max(maxP, pressure[i]);
-    }
-
-    float maxAbsDiv = 0.0f;
-    if (drawTarget == 4) {
-        for (int i = 0; i < gridX; i++) {
-            for (int j = 0; j < gridY; j++) {
-                int idx = j * gridX + i;
-                int idxRight = j * gridX + std::min(i + 1, gridX - 1);
-                int idxTop = std::min(j + 1, gridY - 1) * gridX + i;
-                int idxBottom = std::max(j - 1, 0) * gridX + i;
-                float divergence = velocityX[idxRight] - velocityX[idx] + velocityY[idxTop] - velocityY[idxBottom];
-                maxAbsDiv = std::max(maxAbsDiv, std::abs(divergence));
-            }
+        if (!density.empty()) {
+            copyTextureHostToDevice(densityTexture, density.data(), density.size(), gridX, gridY);
         }
-        maxAbsDiv = std::max(maxAbsDiv, 1e-4f);
-    }
 
-    // get ink references if needed
-    bool inkInitialized = false;
-    const std::vector<float>* inkRed_ptr = nullptr;
-    const std::vector<float>* inkGreen_ptr = nullptr;
-    const std::vector<float>* inkBlue_ptr = nullptr;
-    if (drawTarget == 3 && simulator.inkInitialized) {
-        inkRed_ptr = &simulator.getRedInk();
-        inkGreen_ptr = &simulator.getGreenInk();
-        inkBlue_ptr = &simulator.getBlueInk();
-        inkInitialized = true;
-    }
+        // write velocity data to texture (interleaved RG format)
+        std::vector<float> velocityData;
+        velocityData.reserve(pressure.size() * 2);
+        for (size_t i = 0; i < pressure.size(); ++i) {
+            velocityData.push_back(velocityX[i]);
+            velocityData.push_back(velocityY[i]);
+        }
 
-    // draw cells
-    for (int i = 0; i < gridX; i++) {
-        for (int j = 0; j < gridY; j++) {
-            int idx = j * gridX + i;
+        if (!velocityData.empty()) {
+            copyTextureHostToDevice(velocityTexture, velocityData.data(), velocityData.size(), gridX, gridY, 2);
+        }
 
-            if (solid[idx] != 0.0f) {
-                Uint8 r, g, b;
+        if (!solid.empty()) {
+            copyTextureHostToDevice(solidTexture, solid.data(), solid.size(), gridX, gridY);
+        }
 
-                if (drawTarget == 0) {
-                    // draw pressure
-                    mapValueToColor(pressure[idx], minP, maxP, r, g, b);
-                } else if (drawTarget == 1) {
-                    // draw smoke/density
-                    mapValueToGreyscale(density[idx], 0.0f, 1.0f, r, g, b);
-                } else if (drawTarget == 4) {
-                    int idxRight = j * gridX + std::min(i + 1, gridX - 1);
-                    int idxTop = std::min(j + 1, gridY - 1) * gridX + i;
-                    int idxBottom = std::max(j - 1, 0) * gridX + i;
-                    float divergence = velocityX[idxRight] - velocityX[idx] + velocityY[idxTop] - velocityY[idxBottom];
-                    mapDivergenceDebug(divergence, maxAbsDiv, r, g, b);
-                } else if (drawTarget == 5) {
-                    mapValueToHeatmap(density[idx], 0.0f, 1.0f, r, g, b);
-                } else if (drawTarget == 6) {
-                    int idxLeft = j * gridX + std::max(i - 1, 0);
-                    int idxRight = j * gridX + std::min(i + 1, gridX - 1);
-                    int idxTop = std::min(j + 1, gridY - 1) * gridX + i;
-                    int idxBottom = std::max(j - 1, 0) * gridX + i;
-
-                    float dx = density[idxRight] - density[idxLeft];
-                    float dy = density[idxTop] - density[idxBottom];
-                    float nz = 1.0f;
-                    float nx = -dx * 4.0f;
-                    float ny = -dy * 4.0f;
-                    float normalLen = std::sqrt(nx * nx + ny * ny + nz * nz);
-                    if (normalLen > 0.0f) {
-                        nx /= normalLen;
-                        ny /= normalLen;
-                        nz /= normalLen;
-                    }
-
-                    const float lightX = 0.45f;
-                    const float lightY = -0.55f;
-                    const float lightZ = 0.70f;
-                    float diffuse = std::max(0.0f, nx * lightX + ny * lightY + nz * lightZ);
-                    float intensity = 0.20f + 0.80f * diffuse;
-                    Uint8 shade = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, intensity * 255.0f)));
-                    r = g = b = shade;
-                } else if (drawTarget == 7) {
-                    auto smoothstep = [](float edge0, float edge1, float x) {
-                        float t = (x - edge0) / (edge1 - edge0);
-                        t = std::max(0.0f, std::min(1.0f, t));
-                        return t * t * (3.0f - 2.0f * t);
-                    };
-
-                    const float threshold = 0.35f;
-                    const float softness = 0.10f;
-
-                    float centerDensity = density[idx];
-                    float thresholdMask = smoothstep(threshold, threshold + softness, centerDensity);
-
-                    float glowAccum = 0.0f;
-                    int glowSamples = 0;
-                    for (int oy = -1; oy <= 1; oy++) {
-                        for (int ox = -1; ox <= 1; ox++) {
-                            int sx = std::max(0, std::min(gridX - 1, i + ox));
-                            int sy = std::max(0, std::min(gridY - 1, j + oy));
-                            float d = density[sy * gridX + sx];
-                            glowAccum += std::max(0.0f, d - threshold);
-                            glowSamples++;
-                        }
-                    }
-
-                    float glow = (glowSamples > 0) ? (glowAccum / static_cast<float>(glowSamples)) : 0.0f;
-                    glow = std::min(1.0f, glow * 2.0f);
-
-                    Uint8 baseR, baseG, baseB;
-                    mapValueToHeatmap(centerDensity, 0.0f, 1.0f, baseR, baseG, baseB);
-
-                    float outR = static_cast<float>(baseR) * (1.0f - 0.35f * thresholdMask) + 255.0f * glow;
-                    float outG = static_cast<float>(baseG) * (1.0f - 0.35f * thresholdMask) + 190.0f * glow;
-                    float outB = static_cast<float>(baseB) * (1.0f - 0.35f * thresholdMask) + 80.0f * glow;
-
-                    r = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, outR)));
-                    g = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, outG)));
-                    b = static_cast<Uint8>(std::max(0.0f, std::min(255.0f, outB)));
-                } else if (drawTarget == 3) {
-                    // draw ink diffusion
-                    if (inkInitialized && inkRed_ptr->size() > idx) {
-                        mapInkToColor((*inkRed_ptr)[idx], (*inkGreen_ptr)[idx], (*inkBlue_ptr)[idx], r, g, b);
-                    } else {
-                        // default to white
-                        r = 255; g = 255; b = 255;
-                    }
-                } else {
-                    // draw pretty pressure + smoke
-                    float dens = density[idx];
-                    mapValueToColor(pressure[idx], minP, maxP, r, g, b);
-                    r = std::max(0, static_cast<int>(r) - static_cast<int>(255 * dens));
-                    g = std::max(0, static_cast<int>(g) - static_cast<int>(255 * dens));
-                    b = std::max(0, static_cast<int>(b) - static_cast<int>(255 * dens));
-                }
-
-                // pixel coords
-                int x0, y0;
-                convertCoordinates(i * cellSize, (j + 1) * cellSize, x0, y0);
-
-                int cellWidth = static_cast<int>(canvasScale * cellSize) + 1;
-                int cellHeight = static_cast<int>(canvasScale * cellSize) + 1;
-
-                // fill cell
-                for (int yi = y0; yi < y0 + cellHeight && yi < windowHeight; yi++) {
-                    for (int xi = x0; xi < x0 + cellWidth && xi < windowWidth; xi++) {
-                        setPixel(xi, yi, r, g, b);
-                    }
-                }
-            } else {
-                // boundaries in grey
-                int x0, y0;
-                convertCoordinates(i * cellSize, (j + 1) * cellSize, x0, y0);
-
-                int cellWidth = static_cast<int>(canvasScale * cellSize) + 1;
-                int cellHeight = static_cast<int>(canvasScale * cellSize) + 1;
-
-                for (int yi = y0; yi < y0 + cellHeight && yi < windowHeight; yi++) {
-                    for (int xi = x0; xi < x0 + cellWidth && xi < windowWidth; xi++) {
-                        setPixel(xi, yi, 125, 125, 125);
-                    }
-                }
+        if (simulator.inkInitialized) {
+            const auto& ink = simulator.getInk();
+            if (!ink.empty()) {
+                copyTextureHostToDevice(inkTexture, ink.data(), ink.size(), gridX, gridY, 4);
             }
         }
     }
 }
 
-void Renderer::drawVelocityField(const ISimulator& simulator, float velScale) {
-    const auto& velocityX = simulator.getVelocityX();
-    const auto& velocityY = simulator.getVelocityY();
-    const auto& solid = simulator.getSolid();
-
-    float cellSize = simulator.cellSize;
-    int gridX = simulator.gridX;
-    int gridY = simulator.gridY;
-
-    float VELOCITY_VECTOR_LENGTH = 0.3f;
-
-    // velocity vectors in white (normalized to unit length, then scaled)
-    for (int i = 0; i < gridX; i++) {
-        for (int j = 0; j < gridY; j++) {
-            int idx = j * gridX + i;
-
-            if (solid[idx] != 0.0f) {
-                float vx = velocityX[idx];
-                float vy = velocityY[idx];
-                float magnitude = std::sqrt(vx * vx + vy * vy);
-                
-                if (magnitude > 0.001f) {
-                    float normalizedLength = VELOCITY_VECTOR_LENGTH;
-                    vx = (vx / magnitude) * normalizedLength;
-                    vy = (vy / magnitude) * normalizedLength;
-                }
-                
-                // horizontal vel component
-                if (std::abs(vx) > 0.001f) {
-                    int x0, y0;
-                    convertCoordinates(i * cellSize, (j + 0.5f) * cellSize, x0, y0);
-                    int x1 = x0 + static_cast<int>(vx * velScale * canvasScale);
-
-                    // approx velocity line with pixels
-                    int steps = std::abs(x1 - x0);
-                    if (steps > 0) {
-                        for (int step = 0; step <= steps; step++) {
-                            int x = x0 + (x1 - x0) * step / steps;
-                            setPixel(x, y0, 255, 255, 255);
-                        }
-                    }
-                }
-
-                // vertical vel component
-                if (std::abs(vy) > 0.001f) {
-                    int x0, y0;
-                    convertCoordinates((i + 0.5f) * cellSize, j * cellSize, x0, y0);
-                    int y1 = y0 - static_cast<int>(vy * velScale * canvasScale);
-
-                    int steps = std::abs(y1 - y0);
-                    if (steps > 0) {
-                        for (int step = 0; step <= steps; step++) {
-                            int y = y0 + (y1 - y0) * step / steps;
-                            setPixel(x0, y, 255, 255, 255);
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-
-// HISTOGRAM HELPERS
+// HISTOGRAM HELPER
 void Renderer::computeHistograms(const ISimulator& simulator) {
-    IRenderer::HistogramData data;
-    data.densityHistogramBins = densityHistogramBins;
-    data.velocityHistogramBins = velocityHistogramBins;
-    
-    IRenderer::computeHistograms(simulator, data);
-    
-    densityHistogramMin = data.densityHistogramMin;
-    densityHistogramMax = data.densityHistogramMax;
-    velocityHistogramMin = data.velocityHistogramMin;
-    velocityHistogramMax = data.velocityHistogramMax;
-    densityHistogramBins = data.densityHistogramBins;
-    velocityHistogramBins = data.velocityHistogramBins;
-}
+    if (usingGPUTextures) {
+        // grab data from GPU simulator
+        const auto& gpuSim = static_cast<const GPUSimulator&>(simulator);
 
-void Renderer::drawHistograms() {
-    // Read histogram positions from global pixel layout
-    auto dhIt = g_layoutPixels.components.find("density_histogram");
-    auto vhIt = g_layoutPixels.components.find("velocity_histogram");
-    if (dhIt == g_layoutPixels.components.end() || vhIt == g_layoutPixels.components.end()) return;
+        int readySlot = -1;
+        const float* pressureMinMax = nullptr;
+        const float* velocityMinMax = nullptr;
+        const float* densityMinMax = nullptr;
+        const int* histogramBins = nullptr;
 
-    const int dhistX = dhIt->second.x;
-    const int dhistY = dhIt->second.y;
-    const int histWidth = dhIt->second.width;
-    const int histHeight = dhIt->second.height;
-    const int vhistX = vhIt->second.x;
-    const int vhistY = vhIt->second.y;
-    const int vhistWidth = vhIt->second.width;
-    const int vhistHeight = vhIt->second.height;
-    
-    int dmaxCount = 0;
-    int vmaxCount = 0;
-    for (int i = 0; i < IRenderer::HISTOGRAM_BINS; i++) {
-        dmaxCount = std::max(dmaxCount, densityHistogramBins[i]);
-        vmaxCount = std::max(vmaxCount, velocityHistogramBins[i]);
-    }
-    if (dmaxCount == 0 || vmaxCount == 0) return;
-    
-    // background
-    Uint8 bg = 40;
-    for (int y = dhistY; y < dhistY + histHeight; y++) {
-        for (int x = dhistX; x < dhistX + histWidth; x++) {
-            if (x >= 0 && x < windowWidth && y >= 0 && y < windowHeight) {
-                setPixel(x, y, bg, bg, bg);
+        uint32_t densitySumScaled = 0;
+        uint32_t fluidCellCount = 0;
+        if (gpuSim.getHistogramData(readySlot, pressureMinMax, velocityMinMax, densityMinMax, histogramBins, densitySumScaled, fluidCellCount)) {
+            if (densityMinMax[0] < densityMinMax[1]) {
+                densityHistogramMin = densityMinMax[0];
+                densityHistogramMax = densityMinMax[1];
             }
-        }
-    }
-    for (int y = vhistY; y < vhistY + vhistHeight; y++) {
-        for (int x = vhistX; x < vhistX + vhistWidth; x++) {
-            if (x >= 0 && x < windowWidth && y >= 0 && y < windowHeight) {
-                setPixel(x, y, bg, bg, bg);
+            if (velocityMinMax[0] < velocityMinMax[1]) {
+                velocityHistogramMin = velocityMinMax[0];
+                velocityHistogramMax = velocityMinMax[1];
             }
-        }
-    }
-    
-    // border
-    Uint8 border = 200;
-    for (int x = dhistX; x < dhistX + histWidth; x++) {
-        if (x >= 0 && x < windowWidth) {
-            if (dhistY >= 0 && dhistY < windowHeight) {
-                setPixel(x, dhistY, border, border, border); // top
-            }
-            if (dhistY + histHeight - 1 >= 0 && dhistY + histHeight - 1 < windowHeight) {
-                setPixel(x, dhistY + histHeight - 1, border, border, border); // bottom
-            }
-        }
-    }
-    for (int y = dhistY; y < dhistY + histHeight; y++) {
-        if (y >= 0 && y < windowHeight) {
-            if (dhistX >= 0 && dhistX < windowWidth) {
-                setPixel(dhistX, y, border, border, border); // left
-            }
-            if (dhistX + histWidth - 1 >= 0 && dhistX + histWidth - 1 < windowWidth) {
-                setPixel(dhistX + histWidth - 1, y, border, border, border); // right
-            }
-        }
-    }
-    for (int x = vhistX; x < vhistX + vhistWidth; x++) {
-        if (x >= 0 && x < windowWidth) {
-            if (vhistY >= 0 && vhistY < windowHeight) {
-                setPixel(x, vhistY, border, border, border); // top
-            }
-            if (vhistY + vhistHeight - 1 >= 0 && vhistY + vhistHeight - 1 < windowHeight) {
-                setPixel(x, vhistY + vhistHeight - 1, border, border, border); // bottom
-            }
-        }
-    }
-    for (int y = vhistY; y < vhistY + vhistHeight; y++) {
-        if (y >= 0 && y < windowHeight) {
-            if (vhistX >= 0 && vhistX < windowWidth) {
-                setPixel(vhistX, y, border, border, border); // left
-            }
-            if (vhistX + vhistWidth - 1 >= 0 && vhistX + vhistWidth - 1 < windowWidth) {
-                setPixel(vhistX + vhistWidth - 1, y, border, border, border); // right
-            }
-        }
-    }
 
-    int barWidth = histWidth / IRenderer::HISTOGRAM_BINS;
-    int vbarWidth = vhistWidth / IRenderer::HISTOGRAM_BINS;
-    int padding = 1;
-    
-    // bars
-    for (int i = 0; i < IRenderer::HISTOGRAM_BINS; i++) {
-        int barHeight = static_cast<int>((static_cast<float>(densityHistogramBins[i]) / dmaxCount) * (histHeight - 20));
-        int barX = dhistX + 10 + i * barWidth;
-        float normalized = static_cast<float>(i) / IRenderer::HISTOGRAM_BINS;
-        
-        for (int x = barX; x < barX + barWidth - padding && x < dhistX + histWidth - 10; x++) {
-            for (int y = dhistY + histHeight - 10; y >= dhistY + histHeight - 10 - barHeight && y >= dhistY + 10; y--) {
-                if (x >= 0 && x < windowWidth && y >= 0 && y < windowHeight) {
-                    Uint8 r, g, b;
-                    mapValueToColor(normalized, 0.0f, 1.0f, r, g, b);
-                    setPixel(x, y, r, g, b);
-                }
+            for (int i = 0; i < 64; i++) {
+                densityHistogramBins[i] = histogramBins[i];
+                velocityHistogramBins[i] = histogramBins[64 + i];
+            }
+
+            densityHistogramMaxCount = 0;
+            velocityHistogramMaxCount = 0;
+            for (int i = 0; i < RenderHistogram::HISTOGRAM_BINS; i++) {
+                densityHistogramMaxCount = std::max(densityHistogramMaxCount, densityHistogramBins[i]);
+                velocityHistogramMaxCount = std::max(velocityHistogramMaxCount, velocityHistogramBins[i]);
+            }
+
+            const float entropyValue = RenderHistogram::computeShannonEntropy(densityHistogramBins);
+            const float maxEntropy = std::log2(static_cast<float>(RenderHistogram::HISTOGRAM_BINS));
+            if (maxEntropy > ENTROPY_EPSILON) {
+                entropyNormalized = std::max(0.0f, std::min(1.0f, entropyValue / maxEntropy));
+            } else {
+                entropyNormalized = 0.0f;
+            }
+
+            entropyHistory[entropyHistoryWriteIndex] = entropyNormalized;
+            entropyHistoryWriteIndex = (entropyHistoryWriteIndex + 1) % ENTROPY_HISTORY_SAMPLES;
+            entropyHistoryCount = std::min(entropyHistoryCount + 1, ENTROPY_HISTORY_SAMPLES);
+
+            const float cellArea = simulator.cellSize * simulator.cellSize;
+            const float domainVolume = static_cast<float>(fluidCellCount) * cellArea;
+            const float smokeMass = (static_cast<float>(densitySumScaled) / VOLUME_DENSITY_SCALE) * cellArea;
+
+            volumeDomainHistory[volumeHistoryWriteIndex] = domainVolume;
+            volumeMassHistory[volumeHistoryWriteIndex] = smokeMass;
+            volumeHistoryWriteIndex = (volumeHistoryWriteIndex + 1) % VOLUME_HISTORY_SAMPLES;
+            volumeHistoryCount = std::min(volumeHistoryCount + 1, VOLUME_HISTORY_SAMPLES);
+            volumeHistoryMax = ENTROPY_EPSILON;
+            for (int i = 0; i < volumeHistoryCount; i++) {
+                volumeHistoryMax = std::max(volumeHistoryMax, std::max(volumeDomainHistory[i], volumeMassHistory[i]));
+            }
+
+            gpuSim.advanceHistogramReadIndex();
+        }
+    } else {
+        // hybrid mode: compute histograms from CPU sim field vectors
+        RenderHistogram::HistogramData data;
+        data.densityHistogramBins = densityHistogramBins;
+        data.velocityHistogramBins = velocityHistogramBins;
+
+        RenderHistogram::computeHistograms(simulator, data);
+
+        densityHistogramMin = data.densityHistogramMin;
+        densityHistogramMax = data.densityHistogramMax;
+        velocityHistogramMin = data.velocityHistogramMin;
+        velocityHistogramMax = data.velocityHistogramMax;
+        densityHistogramBins = data.densityHistogramBins;
+        velocityHistogramBins = data.velocityHistogramBins;
+
+        // compute max counts
+        densityHistogramMaxCount = 0;
+        velocityHistogramMaxCount = 0;
+        for (int i = 0; i < RenderHistogram::HISTOGRAM_BINS; i++) {
+            densityHistogramMaxCount = std::max(densityHistogramMaxCount, densityHistogramBins[i]);
+            velocityHistogramMaxCount = std::max(velocityHistogramMaxCount, velocityHistogramBins[i]);
+        }
+
+        const float entropyValue = RenderHistogram::computeShannonEntropy(densityHistogramBins);
+        const float maxEntropy = std::log2(static_cast<float>(RenderHistogram::HISTOGRAM_BINS));
+        if (maxEntropy > ENTROPY_EPSILON) {
+            entropyNormalized = std::max(0.0f, std::min(1.0f, entropyValue / maxEntropy));
+        } else {
+            entropyNormalized = 0.0f;
+        }
+
+        entropyHistory[entropyHistoryWriteIndex] = entropyNormalized;
+        entropyHistoryWriteIndex = (entropyHistoryWriteIndex + 1) % ENTROPY_HISTORY_SAMPLES;
+        entropyHistoryCount = std::min(entropyHistoryCount + 1, ENTROPY_HISTORY_SAMPLES);
+
+        const auto& density = simulator.getDensity();
+        const auto& solid = simulator.getSolid();
+        uint32_t fluidCells = 0;
+        double densitySum = 0.0;
+        const int totalCells = simulator.gridX * simulator.gridY;
+        for (int i = 0; i < totalCells && i < static_cast<int>(density.size()) && i < static_cast<int>(solid.size()); i++) {
+            if (solid[i] != 0.0f) {
+                fluidCells++;
+                const float d = std::max(0.0f, std::min(1.0f, density[i]));
+                densitySum += static_cast<double>(d);
             }
         }
 
-        barHeight = static_cast<int>((static_cast<float>(velocityHistogramBins[i]) / vmaxCount) * (vhistHeight - 20));
-        barX = vhistX + 10 + i * vbarWidth;
+        const float cellArea = simulator.cellSize * simulator.cellSize;
+        const float domainVolume = static_cast<float>(fluidCells) * cellArea;
+        const float smokeMass = static_cast<float>(densitySum) * cellArea;
 
-        for (int x = barX; x < barX + vbarWidth - padding && x < vhistX + vhistWidth - 10; x++) {
-            for (int y = vhistY + vhistHeight - 10; y >= vhistY + vhistHeight - 10 - barHeight && y >= vhistY + 10; y--) {
-                if (x >= 0 && x < windowWidth && y >= 0 && y < windowHeight) {
-                    Uint8 r, g, b;
-                    mapValueToVelocityColor(normalized, 0.0f, 1.0f, r, g, b);
-                    setPixel(x, y, r, g, b);
-                }
-            }
+        volumeDomainHistory[volumeHistoryWriteIndex] = domainVolume;
+        volumeMassHistory[volumeHistoryWriteIndex] = smokeMass;
+        volumeHistoryWriteIndex = (volumeHistoryWriteIndex + 1) % VOLUME_HISTORY_SAMPLES;
+        volumeHistoryCount = std::min(volumeHistoryCount + 1, VOLUME_HISTORY_SAMPLES);
+        volumeHistoryMax = ENTROPY_EPSILON;
+        for (int i = 0; i < volumeHistoryCount; i++) {
+            volumeHistoryMax = std::max(volumeHistoryMax, std::max(volumeDomainHistory[i], volumeMassHistory[i]));
         }
     }
 }
 
+// GPU INITIALIZATION _BOILERPLATE_
+bool Renderer::initDevice() {
+    WGPUInstanceDescriptor instanceDesc = {};
+    instanceDesc.nextInChain = nullptr;
+
+    instance = wgpuCreateInstance(&instanceDesc);
+    RETURN_FALSE_IF_FAIL(instance);
+
+    // get surface from SDL window
+    surface = SDL_GetWGPUSurface(instance, window);
+    RETURN_FALSE_IF_FAIL(surface);
+
+    struct UserData {
+        WGPUAdapter adapter = nullptr;
+        bool requestEnded = false;
+    };
+
+    UserData userData;
+
+    WGPURequestAdapterOptions adapterOptions = {};
+    adapterOptions.nextInChain = nullptr;
+    adapterOptions.compatibleSurface = surface;
+    adapterOptions.powerPreference = WGPUPowerPreference_HighPerformance;
+
+#ifdef WEBGPU_BACKEND_EMDAWNWEBGPU
+    auto onAdapterRequestEnded = [](WGPURequestAdapterStatus status, WGPUAdapter adapter, WGPUStringView message, void* userdata1, void* userdata2) {
+        (void)userdata2;
+        UserData* userData = static_cast<UserData*>(userdata1);
+        if (status == WGPURequestAdapterStatus_Success) {
+            userData->adapter = adapter;
+        } else {
+            std::cerr << "ERR getting WebGPU adapter: " << std::string(message.data, message.length) << std::endl;
+        }
+        userData->requestEnded = true;
+    };
+
+    WGPURequestAdapterCallbackInfo adapterCallbackInfo = {};
+    adapterCallbackInfo.mode = WGPUCallbackMode_AllowProcessEvents;
+    adapterCallbackInfo.callback = onAdapterRequestEnded;
+    adapterCallbackInfo.userdata1 = &userData;
+    wgpuInstanceRequestAdapter(instance, &adapterOptions, adapterCallbackInfo);
+#else
+    auto onAdapterRequestEnded = [](WGPURequestAdapterStatus status, WGPUAdapter adapter, char const* message, void* userdata) {
+        UserData* userData = static_cast<UserData*>(userdata);
+        if (status == WGPURequestAdapterStatus_Success) {
+            userData->adapter = adapter;
+        } else {
+            std::cerr << "ERR getting WebGPU adapter: " << message << std::endl;
+        }
+        userData->requestEnded = true;
+    };
+
+    wgpuInstanceRequestAdapter(instance, &adapterOptions, onAdapterRequestEnded, &userData);
+#endif
+
+    while (!userData.requestEnded) {
+        wgpuInstanceProcessEvents(instance);
+#ifdef __EMSCRIPTEN__
+        // Yield so the browser main thread stays responsive.
+        emscripten_sleep(0);
+#endif
+    }
+
+    if (!userData.adapter) {
+        std::cerr << "ERR getting WebGPU adapter" << std::endl;
+        return false;
+    }
+
+    adapter = userData.adapter;
+
+    struct DeviceData {
+        WGPUDevice device = nullptr;
+        bool requestEnded = false;
+    };
+
+    DeviceData deviceData;
+
+    WGPUDeviceDescriptor deviceDesc = {};
+    deviceDesc.nextInChain = nullptr;
+
+#ifdef WEBGPU_BACKEND_EMDAWNWEBGPU
+    // error callback is part of device descriptor in emdawnwebgpu
+    deviceDesc.uncapturedErrorCallbackInfo.callback = [](WGPUDevice const* dev, WGPUErrorType type, WGPUStringView message, void* userdata1, void* userdata2) {
+        (void)dev; (void)userdata1; (void)userdata2;
+        std::cerr << "WebGPU ERR: " << type << " - " << (message.data ? std::string(message.data, message.length) : "[NO MESSAGE]") << std::endl;
+    };
+
+    auto onDeviceRequestEnded = [](WGPURequestDeviceStatus status, WGPUDevice device, WGPUStringView message, void* userdata1, void* userdata2) {
+        (void)userdata2;
+        DeviceData* deviceData = static_cast<DeviceData*>(userdata1);
+        if (status == WGPURequestDeviceStatus_Success) {
+            deviceData->device = device;
+        } else {
+            std::cerr << "ERR getting WebGPU device: " << std::string(message.data, message.length) << std::endl;
+        }
+        deviceData->requestEnded = true;
+    };
+
+    WGPURequestDeviceCallbackInfo deviceCallbackInfo = {};
+    deviceCallbackInfo.mode = WGPUCallbackMode_AllowProcessEvents;
+    deviceCallbackInfo.callback = onDeviceRequestEnded;
+    deviceCallbackInfo.userdata1 = &deviceData;
+    wgpuAdapterRequestDevice(adapter, &deviceDesc, deviceCallbackInfo);
+#else
+    auto onDeviceRequestEnded = [](WGPURequestDeviceStatus status, WGPUDevice device, char const* message, void* userdata) {
+        DeviceData* deviceData = static_cast<DeviceData*>(userdata);
+        if (status == WGPURequestDeviceStatus_Success) {
+            deviceData->device = device;
+        } else {
+            std::cerr << "ERR getting WebGPU device: " << message << std::endl;
+        }
+        deviceData->requestEnded = true;
+    };
+
+    wgpuAdapterRequestDevice(adapter, &deviceDesc, onDeviceRequestEnded, &deviceData);
+#endif
+
+    while (!deviceData.requestEnded) {
+        wgpuInstanceProcessEvents(instance);
+#ifdef __EMSCRIPTEN__
+        // Yield so the browser main thread stays responsive.
+        emscripten_sleep(0);
+#endif
+    }
+
+    if (!deviceData.device) {
+        std::cerr << "ERR getting WebGPU device" << std::endl;
+        return false;
+    }
+
+    device = deviceData.device;
+    queue = wgpuDeviceGetQueue(device);
+
+#ifndef WEBGPU_BACKEND_EMDAWNWEBGPU
+    // error callback required (in emdawnwebgpu, this is set via device descriptor)
+    wgpuDeviceSetUncapturedErrorCallback(device,
+        [](WGPUErrorType type, const char* message, void* userdata) {
+            std::cerr << "WebGPU ERR: " << type << " - " << (message ? message : "[NO MESSAGE]") << std::endl;
+        }, nullptr);
+#endif
+
+    return true;
+}
+
+bool Renderer::initRenderPipeline() {
+    std::string registryError;
+    if (!loadBuiltinViewRegistry(builtinViews, registryError)) {
+        std::cerr << "Shader registry error: " << registryError << std::endl;
+        return false;
+    }
+
+    loadPersistedViewOverrides();
+
+    if (!rebuildFragmentPipelineFromActiveViews()) {
+        std::cerr << "Fragment pipeline init failed: " << lastShaderError << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+std::vector<ViewRegistryEntry> Renderer::buildActiveViewRegistry() const {
+    std::vector<ViewRegistryEntry> active = builtinViews;
+    for (int index = 0; index < kViewTargetCount; ++index) {
+        if (viewOverrides[index].has_value()) {
+            active[index].source = *viewOverrides[index];
+        }
+    }
+    return active;
+}
+
+bool Renderer::rebuildFragmentPipelineFromActiveViews() {
+    const std::vector<ViewRegistryEntry> activeViews = buildActiveViewRegistry();
+    const ShaderBundleResult bundled = bundleFragmentShader(activeViews);
+    if (!bundled.ok()) {
+        lastShaderError = bundled.error;
+        return false;
+    }
+
+    auto result = createRenderPipelineWithFragmentSource(
+        "vertex.wgsl",
+        bundled.wgsl,
+        "fs_main",
+        surfaceFormat,
+        5,
+        WGPUShaderStage_Fragment,
+        sizeof(UniformData)
+    );
+
+    if (!result.pipeline) {
+        if (lastShaderError.empty()) {
+            lastShaderError = "Failed to create render pipeline from bundled fragment shader";
+        }
+        if (result.bindGroupLayout) {
+            wgpuBindGroupLayoutRelease(result.bindGroupLayout);
+        }
+        return false;
+    }
+
+    if (renderPipeline) {
+        wgpuRenderPipelineRelease(renderPipeline);
+    }
+    if (bindGroupLayout && bindGroupLayout != result.bindGroupLayout) {
+        wgpuBindGroupLayoutRelease(bindGroupLayout);
+    }
+
+    renderPipeline = result.pipeline;
+    bindGroupLayout = result.bindGroupLayout;
+
+    if (uniformBindGroup) {
+        wgpuBindGroupRelease(uniformBindGroup);
+        uniformBindGroup = nullptr;
+    }
+    if (uniformBindGroupGPU) {
+        wgpuBindGroupRelease(uniformBindGroupGPU);
+        uniformBindGroupGPU = nullptr;
+    }
+
+    lastShaderError.clear();
+    return true;
+}
+
+bool Renderer::setViewSource(int index, const std::string& wgsl) {
+    if (index < 0 || index >= kViewTargetCount) {
+        lastShaderError = "View target index out of range";
+        return false;
+    }
+
+    std::string validationError;
+    if (!validateViewSource(index, wgsl, validationError)) {
+        lastShaderError = validationError;
+        return false;
+    }
+
+    viewOverrides[index] = wgsl;
+    lastShaderError.clear();
+    return true;
+}
+
+bool Renderer::resetViewSource(int index) {
+    if (index < 0 || index >= kViewTargetCount) {
+        lastShaderError = "View target index out of range";
+        return false;
+    }
+
+    viewOverrides[index].reset();
+    lastShaderError.clear();
+    return true;
+}
+
+bool Renderer::applyViewShaders() {
+    return rebuildFragmentPipelineFromActiveViews();
+}
+
+std::string Renderer::getViewSource(int index) const {
+    if (index < 0 || index >= kViewTargetCount) {
+        return {};
+    }
+    if (viewOverrides[index].has_value()) {
+        return *viewOverrides[index];
+    }
+    if (index >= 0 && index < static_cast<int>(builtinViews.size())) {
+        return builtinViews[index].source;
+    }
+    return {};
+}
+
+std::string Renderer::getLastShaderError() const {
+    return lastShaderError;
+}
+
+void Renderer::setBackgroundColor(float r, float g, float b) {
+    backgroundColor = {r, g, b};
+}
+
+void Renderer::onWindowResize(int width, int height) {
+    if (!initialized || width <= 0 || height <= 0) {
+        return;
+    }
+
+    windowWidth = width;
+    windowHeight = height;
+    uniformData.windowWidth = static_cast<float>(windowWidth);
+    uniformData.windowHeight = static_cast<float>(windowHeight);
+
+    auto surfaceConfig = createSurfaceConfiguration();
+    wgpuSurfaceConfigure(surface, &surfaceConfig);
+}
+
+void Renderer::loadPersistedViewOverrides() {
+    for (int index = 0; index < kViewTargetCount; ++index) {
+        const std::string path = "persist/views/" + std::to_string(index) + ".wgsl";
+        const std::string source = ConfigLoader::readFile(path.c_str());
+        if (source.empty()) {
+            continue;
+        }
+
+        std::string validationError;
+        if (!validateViewSource(index, source, validationError)) {
+            std::cerr << "Skipping invalid persisted view " << index << ": " << validationError << std::endl;
+            continue;
+        }
+
+        viewOverrides[index] = source;
+    }
+}

@@ -1,51 +1,72 @@
+fn packedI32Circle(arr: array<vec4<i32>, 11>, idx: i32) -> i32 {
+    let v = arr[u32(idx) / 4u];
+    switch idx % 4 {
+        case 0: { return v.x; }
+        case 1: { return v.y; }
+        case 2: { return v.z; }
+        default: { return v.w; }
+    }
+}
+
+fn packedF32Circle(arr: array<vec4<f32>, 11>, idx: i32) -> f32 {
+    let v = arr[u32(idx) / 4u];
+    switch idx % 4 {
+        case 0: { return v.x; }
+        case 1: { return v.y; }
+        case 2: { return v.z; }
+        default: { return v.w; }
+    }
+}
+
 struct SimParams {
     gridX: i32,
     gridY: i32,
     cellSize: f32,
     halfCellSize: f32,
     timestep: f32,
-    density: f32,
-    gravity: f32,
-    projectionIters: f32,
     windTunnelSide: i32,
     windTunnelStart: i32,
     windTunnelEnd: i32,
     windTunnelSpeed: f32,
+    edges: i32,
     momentumTransferStrength: f32,
     momentumTransferRadius: f32,
     momentumTransferDeadZone: f32,
     vorticity: f32,
     vorticityLen: f32,
-    circleX: array<i32, 42>,
-    circleY: array<i32, 42>,
-    prevCircleX: array<i32, 42>,
-    prevCircleY: array<i32, 42>,
-    circleZ: array<f32, 42>,
-    circleScaledRadius: array<i32, 42>,
-    circlePresent: array<i32, 42>,
-    circleWasPresent: array<i32, 42>,
-    circleVelX: array<f32, 42>,
-    circleVelY: array<f32, 42>,
+    _pad0: i32,
+    circleX: array<vec4<i32>, 11>,
+    circleY: array<vec4<i32>, 11>,
+    prevCircleX: array<vec4<i32>, 11>,
+    prevCircleY: array<vec4<i32>, 11>,
+    circleZ: array<vec4<f32>, 11>,
+    circleScaledRadius: array<vec4<i32>, 11>,
+    circlePresent: array<vec4<i32>, 11>,
+    circleWasPresent: array<vec4<i32>, 11>,
+    circleVelX: array<vec4<f32>, 11>,
+    circleVelY: array<vec4<f32>, 11>,
     numCircles: i32,
     baseCircleRadius: i32,
-    segmentStartX: array<i32, 46>,
-    segmentStartY: array<i32, 46>,
-    segmentEndX: array<i32, 46>,
-    segmentEndY: array<i32, 46>,
-    segmentPrevStartX: array<i32, 46>,
-    segmentPrevStartY: array<i32, 46>,
-    segmentPrevEndX: array<i32, 46>,
-    segmentPrevEndY: array<i32, 46>,
-    segmentStartRadius: array<f32, 46>,
-    segmentEndRadius: array<f32, 46>,
-    segmentPrevStartRadius: array<f32, 46>,
-    segmentPrevEndRadius: array<f32, 46>,
-    segmentPresent: array<i32, 46>,
-    segmentWasPresent: array<i32, 46>,
+    segmentStartX: array<vec4<i32>, 12>,
+    segmentStartY: array<vec4<i32>, 12>,
+    segmentEndX: array<vec4<i32>, 12>,
+    segmentEndY: array<vec4<i32>, 12>,
+    segmentPrevStartX: array<vec4<i32>, 12>,
+    segmentPrevStartY: array<vec4<i32>, 12>,
+    segmentPrevEndX: array<vec4<i32>, 12>,
+    segmentPrevEndY: array<vec4<i32>, 12>,
+    segmentStartRadius: array<vec4<f32>, 12>,
+    segmentEndRadius: array<vec4<f32>, 12>,
+    segmentPrevStartRadius: array<vec4<f32>, 12>,
+    segmentPrevEndRadius: array<vec4<f32>, 12>,
+    segmentPresent: array<vec4<i32>, 12>,
+    segmentWasPresent: array<vec4<i32>, 12>,
     numSegments: i32,
     inputMode: i32,
-    pad1: i32,
-    pad2: i32,
+    numPresentSegments: i32,
+    momentumLowMotionScale: f32,
+    momentumLowMotionSoftCeilingMul: f32,
+    _padEnd: i32,
 };
 
 const INPUT_MODE_MOUSE_PULL: i32 = 1;
@@ -75,19 +96,22 @@ fn updateCircle(@builtin(global_invocation_id) id: vec3<u32>) {
     let currentSolid = textureLoad(solidTexture, vec2<i32>(i, j)).r;
     var isInAnyCircle = false;
     var wasInAnyPrevCircle = false;
+    var shouldClearCircleSolid = false;
     var momentumWasApplied = false;
 
     // process all circles
     for (var c = 0; c < params.numCircles; c = c + 1) {
-        if (params.circlePresent[c] == 0) {
+        let isPresent = packedI32Circle(params.circlePresent, c) != 0;
+        let wasPresent = packedI32Circle(params.circleWasPresent, c) != 0;
+        if (!isPresent && !wasPresent) {
             continue;
         }
 
-        let circleX = params.circleX[c];
-        let circleY = params.circleY[c];
-        let prevCircleX = params.prevCircleX[c];
-        let prevCircleY = params.prevCircleY[c];
-        let radius = params.circleScaledRadius[c];
+        let circleX = packedI32Circle(params.circleX, c);
+        let circleY = packedI32Circle(params.circleY, c);
+        let prevCircleX = packedI32Circle(params.prevCircleX, c);
+        let prevCircleY = packedI32Circle(params.prevCircleY, c);
+        let radius = packedI32Circle(params.circleScaledRadius, c);
 
         // distance to current and previous circle positions
         let dx = f32(i) + 0.5 - f32(circleX);
@@ -100,9 +124,10 @@ fn updateCircle(@builtin(global_invocation_id) id: vec3<u32>) {
         let prevDist = sqrt(prevDx * prevDx + prevDy * prevDy);
         let wasInPrevCircle = prevDist <= f32(radius);
 
-        // if a cell exited this circle, reset density to 1
+        // if a cell exited this circle, reset density and clear the solid footprint
         if (wasInPrevCircle && !isInCircle) {
             textureStore(densityTexture, vec2<i32>(i, j), vec4<f32>(1.0, 0.0, 0.0, 0.0));
+            shouldClearCircleSolid = true;
         }
 
         // track if cell was in any previous circle position (for zeroing at end)
@@ -114,15 +139,53 @@ fn updateCircle(@builtin(global_invocation_id) id: vec3<u32>) {
             isInAnyCircle = true;
         }
 
+        if (!isPresent) {
+            continue;
+        }
+
         // apply momentum to fluid cells near each circle surface
-        let deltaX = f32(circleX - prevCircleX);
-        let deltaY = f32(circleY - prevCircleY);
-        let movementSq = deltaX * deltaX + deltaY * deltaY;
-        let deadZone = params.momentumTransferDeadZone;
-        let circleMoved = movementSq > 0.0 && (deadZone <= 0.0 || movementSq >= deadZone * deadZone);
+        var momentumX = 0.0;
+        var momentumY = 0.0;
+        var circleMoved = false;
+
+        if (params.inputMode == INPUT_MODE_MOUSE_PULL) {
+            // mouse: raw pixel delta, no dead zone — hand-tuned dead zone is in velocity units
+            let deltaX = f32(circleX - prevCircleX);
+            let deltaY = f32(circleY - prevCircleY);
+            let movementSq = deltaX * deltaX + deltaY * deltaY;
+            circleMoved = movementSq > 0.0;
+            if (circleMoved) {
+                momentumX = deltaX * params.momentumTransferStrength;
+                momentumY = deltaY * params.momentumTransferStrength;
+            }
+        } else {
+            // hand: smoothed velocity, dead zone filters tracking jitter
+            let circleVelX = packedF32Circle(params.circleVelX, c);
+            let circleVelY = packedF32Circle(params.circleVelY, c);
+            let velMagSq = circleVelX * circleVelX + circleVelY * circleVelY;
+            let deadZone = params.momentumTransferDeadZone;
+            circleMoved = velMagSq > 0.0 && (deadZone <= 0.0 || velMagSq >= deadZone * deadZone);
+            if (circleMoved) {
+                momentumX = circleVelX * params.timestep * params.momentumTransferStrength;
+                momentumY = circleVelY * params.timestep * params.momentumTransferStrength;
+
+                var impulseScale = 1.0;
+                if (params.momentumLowMotionScale < 1.0 && deadZone > 0.0) {
+                    let deadSq = deadZone * deadZone;
+                    let softCeilingSq = deadSq * params.momentumLowMotionSoftCeilingMul;
+                    if (velMagSq < softCeilingSq) {
+                        let t = (velMagSq - deadSq) / (softCeilingSq - deadSq);
+                        impulseScale = params.momentumLowMotionScale + (1.0 - params.momentumLowMotionScale) * t;
+                    }
+                }
+                momentumX *= impulseScale;
+                momentumY *= impulseScale;
+            }
+        }
+
         let effectiveRadius = f32(radius) + params.momentumTransferRadius;
 
-        if (circleMoved && !isInCircle && distance <= effectiveRadius) {
+        if (circleMoved && !isInCircle && !wasInPrevCircle && distance <= effectiveRadius) {
             // falloff is 1/r^2
             let normalizedDistance = (distance - f32(radius)) / params.momentumTransferRadius;
             var falloff = 1.0 - normalizedDistance * normalizedDistance;
@@ -130,29 +193,21 @@ fn updateCircle(@builtin(global_invocation_id) id: vec3<u32>) {
 
             let densityFactor = textureLoad(densityTexture, vec2<i32>(i, j)).x;
 
-            let momentumX = deltaX * params.momentumTransferStrength * falloff * densityFactor;
-            let momentumY = deltaY * params.momentumTransferStrength * falloff * densityFactor;
             let newVel = vec2<f32>(
-                vel.x + momentumX,
-                vel.y + momentumY
+                vel.x + momentumX * falloff * densityFactor,
+                vel.y + momentumY * falloff * densityFactor
             );
 
-            // disable velocity clamping
-            // let maxVel = 8.0;
-            // vel = vec2<f32>(
-            //     clamp(newVel.x, -maxVel, maxVel),
-            //     clamp(newVel.y, -maxVel, maxVel)
-            // );
             vel = newVel;
             momentumWasApplied = true;
         }
     }
 
-    // zero velocity for cells that were in previous circle positions,
-    // unless momentum was just applied by a moving circle
-    // also zero velocity for cells that are currently inside circles
-    // unless they just received momentum from a circle moving into them
-    if (params.inputMode != INPUT_MODE_MOUSE_PULL) {
+    // zero velocity for cells that left a solid circle footprint, and for
+    // cells inside circles, unless they just received nearby momentum
+    if (shouldClearCircleSolid) {
+        vel = vec2<f32>(0.0, 0.0);
+    } else if (params.inputMode != INPUT_MODE_MOUSE_PULL) {
         if (wasInAnyPrevCircle && !momentumWasApplied) {
             vel = vec2<f32>(0.0, 0.0);
         }
@@ -165,9 +220,12 @@ fn updateCircle(@builtin(global_invocation_id) id: vec3<u32>) {
     if (params.inputMode == INPUT_MODE_MOUSE_PULL) {
         textureStore(solidTexture, vec2<i32>(i, j), vec4<f32>(currentSolid, 0.0, 0.0, 0.0));
     } else if (isInAnyCircle) {
-        // preserve segment solids when circle runs after line segments
         textureStore(solidTexture, vec2<i32>(i, j), vec4<f32>(0.0, 0.0, 0.0, 0.0));
+    } else if (params.numPresentSegments == 0) {
+        // joints/pointer-tip: circles own the solid mask (same as line segment shader).
+        textureStore(solidTexture, vec2<i32>(i, j), vec4<f32>(1.0, 0.0, 0.0, 0.0));
     } else {
+        // full mode: line segments already ran and own clearing outside the skeleton.
         textureStore(solidTexture, vec2<i32>(i, j), vec4<f32>(currentSolid, 0.0, 0.0, 0.0));
     }
 

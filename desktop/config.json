@@ -1,11 +1,11 @@
 {
-    "inputMode": "hand",
+    "inputMode": "mouse_pull",
     "hands": {
         "left": "full",
         "right": "full"
     },
     "pipeline": "device",
-    "imagePath": "/img1.png",
+    "imagePath": "img1.png",
     "window": {
         "baseSize": 900,
         "defaultWidth": 1200,
@@ -46,7 +46,7 @@
         "preset": "default",
         "labelsEnabled": true,
         "buttonsEnabled": true,
-        "camerasEnabled": true,
+        "camerasEnabled": false,
         "disableHistograms": false,
         "velocityScale": 0.01,
         "components": {
@@ -92,7 +92,7 @@
             "volume_time_series": {
                 "x": 0.25, "y": 0.25, "w": 0.25, "h": 0.25,
                 "px": 5, "py": 5,
-                "histogramEnabled": false
+                "histogramEnabled": true
             }
         }
     }

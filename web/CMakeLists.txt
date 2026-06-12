@@ -77,9 +77,8 @@ set(COMPUTE_CIRCLE_SRC "${PROJECT_ROOT}/compute_circle_fingertip.wgsl")
 configure_file(${COMPUTE_CIRCLE_SRC} "${EMBED_STAGE_DIR}/compute_circle.wgsl" COPYONLY)
 
 set(MODULAR_FRAGMENT_FILES
-    fragment_bindings.wgsl
-    fragment_lib.wgsl
-    fragment_shell.wgsl
+    fragment_uniform.wgsl
+    fragment.wgsl
 )
 foreach(MODULAR_FILE ${MODULAR_FRAGMENT_FILES})
     configure_file("${PROJECT_ROOT}/${MODULAR_FILE}" "${EMBED_STAGE_DIR}/${MODULAR_FILE}" COPYONLY)
@@ -91,9 +90,7 @@ foreach(SHADER ${SHADER_FILES})
     get_filename_component(SHADER_NAME ${SHADER} NAME)
     if(NOT SHADER_NAME STREQUAL "compute_circle.wgsl"
        AND NOT SHADER_NAME STREQUAL "fragment.wgsl"
-       AND NOT SHADER_NAME STREQUAL "fragment_bindings.wgsl"
-       AND NOT SHADER_NAME STREQUAL "fragment_lib.wgsl"
-       AND NOT SHADER_NAME STREQUAL "fragment_shell.wgsl")
+       AND NOT SHADER_NAME STREQUAL "fragment_uniform.wgsl")
         configure_file(${SHADER} "${EMBED_STAGE_DIR}/${SHADER_NAME}" COPYONLY)
     endif()
 endforeach()

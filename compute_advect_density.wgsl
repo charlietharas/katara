@@ -4,9 +4,6 @@ struct SimParams {
     cellSize: f32,
     halfCellSize: f32,
     timestep: f32,
-    pad0: i32,
-    pad1: i32,
-    pad2: i32,
 };
 
 @group(0) @binding(0) var<uniform> params: SimParams;

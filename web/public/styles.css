@@ -35,7 +35,7 @@ body.light-mode {
     text-transform: lowercase;
     letter-spacing: 0.04em;
     text-decoration: none;
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--katara-white);
 }
 
 body.light-mode .content.page-title h1 {
@@ -90,21 +90,52 @@ body.light-mode .loading-overlay {
     font-weight: 700;
     text-transform: lowercase;
     letter-spacing: 0.04em;
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--katara-white);
 }
 
 body.light-mode .loading-overlay h2 {
     color: rgba(0, 0, 0, 0.85);
 }
 
+.camera-permission-panel {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    max-width: min(480px, calc(100% - 32px));
+    padding: 16px 20px;
+    background: var(--katara-surface);
+    border: var(--katara-border-style);
+    border-radius: 0;
+    box-shadow: 0 8px 32px var(--katara-panel-shadow);
+    z-index: 60;
+    font-family: monospace;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.5;
+    letter-spacing: 0.02em;
+    color: var(--katara-white-full);
+    text-align: center;
+}
+
+.camera-permission-panel.hidden {
+    display: none;
+}
+
+body.light-mode .camera-permission-panel {
+    color: rgba(0, 0, 0, 0.85);
+}
+
 .camera-panel {
     position: absolute;
-    background: #1a1a1a;
+    background: var(--katara-surface-raised);
     display: flex;
     align-items: center;
     justify-content: center;
     overflow: hidden;
     z-index: 10;
+    font-family: monospace;
+    text-transform: uppercase;
 }
 
 #canvas {
@@ -113,6 +144,7 @@ body.light-mode .loading-overlay h2 {
     width: 100%;
     height: 100%;
     z-index: 0;
+    background-color: var(--offblack);
 }
 
 #cameraCanvas {
@@ -134,12 +166,13 @@ body.light-mode .loading-overlay h2 {
 .control-btn,
 .viewport-target-btn,
 .viewport-velocity-btn,
-.viewport-screenshot-btn {
+.viewport-screenshot-btn,
+.viewport-rotate-btn {
     box-sizing: border-box;
     height: calc(12px * 1.2 + 4px);
     padding: 2px 6px;
-    background: rgba(0, 0, 0, 0.55);
-    color: rgba(255, 255, 255, 0.9);
+    background: var(--katara-overlay-dark);
+    color: var(--katara-white);
     font-size: 12px;
     font-weight: 700;
     line-height: 1.2;
@@ -153,7 +186,8 @@ body.light-mode .loading-overlay h2 {
 .control-btn,
 .viewport-target-btn,
 .viewport-velocity-btn,
-.viewport-screenshot-btn {
+.viewport-screenshot-btn,
+.viewport-rotate-btn {
     cursor: pointer;
     transition: background 0.15s ease, color 0.15s ease;
 }
@@ -161,9 +195,10 @@ body.light-mode .loading-overlay h2 {
 .control-btn:hover,
 .viewport-target-btn:hover,
 .viewport-velocity-btn:hover,
-.viewport-screenshot-btn:hover {
-    background: rgba(0, 0, 0, 0.7);
-    color: rgba(255, 255, 255, 1);
+.viewport-screenshot-btn:hover,
+.viewport-rotate-btn:hover {
+    background: var(--katara-overlay-dark-hover);
+    color: var(--katara-white-full);
 }
 
 .control-btn {
@@ -179,7 +214,8 @@ body.light-mode .loading-overlay h2 {
 
 .viewport-target-btn,
 .viewport-velocity-btn,
-.viewport-screenshot-btn {
+.viewport-screenshot-btn,
+.viewport-rotate-btn {
     position: absolute;
     z-index: 15;
     display: inline-flex;
@@ -200,7 +236,8 @@ body.light-mode .loading-overlay h2 {
     pointer-events: none;
 }
 
-.viewport-screenshot-btn svg {
+.viewport-screenshot-btn svg,
+.viewport-rotate-btn svg {
     display: block;
     width: 12px;
     height: 12px;
@@ -227,7 +264,7 @@ video {
     transform: translate(-50%, -50%);
     font-size: 120px;
     font-weight: bold;
-    color: white;
+    color: var(--katara-white-full);
     text-shadow: 2px 2px 8px rgba(0,0,0,0.8);
     z-index: 1000;
     pointer-events: none;
@@ -242,15 +279,28 @@ video {
     width: 1400px;
     max-width: 95%;
     max-height: 90vh;
-    background: rgba(26, 26, 26, 0.98);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: var(--katara-surface);
+    border: var(--katara-border-style);
     border-radius: 0;
     display: flex;
     flex-direction: column;
     z-index: 100;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 8px 32px var(--katara-panel-shadow);
     outline: none;
     font-family: monospace;
+    text-transform: uppercase;
+}
+
+.settings-panel label,
+.settings-panel button,
+.settings-panel select,
+.settings-panel option,
+.settings-panel .layout-preset-title,
+.settings-panel .value-display,
+.settings-panel .vorticity-values,
+.settings-panel .circle-values,
+.settings-panel .hand-values {
+    text-transform: uppercase;
 }
 
 .settings-panel-header {
@@ -258,14 +308,330 @@ video {
     justify-content: space-between;
     align-items: center;
     padding: 12px 16px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    border-bottom: var(--katara-border-style);
 }
 
 .settings-panel-header h2 {
     margin: 0;
-    color: white;
+    color: var(--katara-white-full);
     font-size: 18px;
     font-weight: 600;
+    text-transform: uppercase;
+}
+
+.settings-panel-tabs {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.settings-panel-body {
+    display: grid;
+    flex: 1;
+    min-height: 0;
+    grid-template-rows: minmax(0, 1fr);
+}
+
+.settings-tab-pane {
+    grid-area: 1 / 1;
+    min-height: 0;
+}
+
+.settings-tab-pane:not(.hidden) {
+    z-index: 2;
+}
+
+.settings-tab-pane.hidden {
+    visibility: hidden;
+    pointer-events: none;
+    overflow: hidden;
+    z-index: 1;
+}
+
+.shader-editor-pane {
+    background: #000;
+    color: #fff;
+    text-transform: none;
+    min-height: 0;
+    height: 100%;
+    padding: 0;
+}
+
+.shader-workspace {
+    display: grid;
+    grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+    min-height: 0;
+    height: 100%;
+}
+
+.shader-explorer {
+    border-right: var(--katara-border-width) solid var(--katara-border-input);
+    background: #000;
+    overflow-y: auto;
+    padding: 8px 0;
+    scrollbar-color: #fff #000;
+    scrollbar-width: thin;
+}
+
+.shader-explorer::-webkit-scrollbar {
+    width: 10px;
+}
+
+.shader-explorer::-webkit-scrollbar-track {
+    background: #000;
+    border-right: 1px solid #444;
+}
+
+.shader-explorer::-webkit-scrollbar-thumb {
+    background: #fff;
+    border: 1px solid #000;
+}
+
+.shader-explorer-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+}
+
+.shader-explorer-item.selected .shader-explorer-select {
+    color: var(--katara-button-green);
+    background: var(--katara-button-green-bg);
+    border-color: var(--katara-button-green-border);
+}
+
+.shader-explorer-item.locked .shader-explorer-select {
+    padding-right: 8px;
+}
+
+.shader-explorer-item.renaming {
+    gap: 0;
+    padding: 2px 6px;
+    font-family: monospace;
+    font-size: 12px;
+    color: #fff;
+}
+
+.shader-explorer-select {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    background: transparent;
+    border: var(--katara-border-width) solid transparent;
+    color: #fff;
+    font-family: monospace;
+    font-size: 12px;
+    padding: 6px 8px;
+    cursor: pointer;
+    text-transform: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.shader-explorer-select:hover {
+    border-color: var(--katara-border-input);
+    background: #0a0a0a;
+}
+
+.shader-explorer-rename {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    background: transparent;
+    border: var(--katara-border-width) solid var(--katara-border-input);
+    color: var(--katara-white-dim, #bbb);
+    cursor: pointer;
+}
+
+.shader-explorer-rename:hover {
+    color: var(--katara-button-green);
+    border-color: var(--katara-button-green-border);
+    background: var(--katara-button-green-bg);
+}
+
+.shader-explorer-prefix,
+.shader-explorer-suffix {
+    color: var(--katara-white-dim, #888);
+    font-family: monospace;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.shader-explorer-rename-input {
+    flex: 1;
+    min-width: 0;
+    background: #000;
+    border: var(--katara-border-width) solid var(--katara-button-green-border);
+    color: var(--katara-button-green);
+    font-family: monospace;
+    font-size: 12px;
+    padding: 5px 6px;
+    text-transform: uppercase;
+    user-select: text;
+    pointer-events: auto;
+}
+
+.shader-explorer-rename-input:focus {
+    outline: none;
+    border-color: var(--katara-button-green);
+}
+
+.shader-editor-column {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+    gap: 8px;
+    padding: 8px;
+}
+
+.shader-editor-toolbar {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex: 0 0 auto;
+}
+
+.shader-editor-toolbar .input-mode-btn.hidden {
+    display: none;
+}
+
+.shader-editor-save {
+    color: var(--katara-button-green);
+    border-color: var(--katara-button-green-border);
+    background: var(--katara-button-green-bg);
+}
+
+.shader-editor-cancel {
+    color: var(--katara-red);
+    border-color: var(--katara-red-border);
+    background: var(--katara-red-bg);
+}
+
+.shader-editor-shell {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border: var(--katara-border-width) solid #333;
+    background: #0a0a0a;
+    padding: 8px;
+}
+
+.shader-editor-shell.editing {
+    border-color: var(--katara-green);
+    background: #141414;
+}
+
+.shader-editor::selection {
+    background: color-mix(in srgb, var(--katara-green) 35%, transparent);
+    color: #fff;
+}
+
+.shader-editor-shell .shader-editor {
+    flex: 1;
+    min-height: 240px;
+    background: transparent;
+}
+
+.shader-editor-shell.editing .shader-editor {
+    color: #fff;
+    cursor: text;
+    user-select: text;
+    pointer-events: auto;
+}
+
+.shader-editor:read-only {
+    cursor: default;
+    color: #ccc;
+    user-select: text;
+}
+
+.shader-error-box {
+    border: var(--katara-border-width) solid var(--katara-red-border);
+    background: #120808;
+    color: var(--katara-red-hover);
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.4;
+    max-height: 120px;
+    overflow: auto;
+    cursor: pointer;
+    text-transform: none;
+    white-space: pre-wrap;
+    scrollbar-color: var(--katara-red-hover) #120808;
+    scrollbar-width: thin;
+}
+
+.shader-error-box.hidden {
+    display: none;
+}
+
+.shader-error-box::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+.shader-error-box::-webkit-scrollbar-track {
+    background: #120808;
+    border: 1px solid var(--katara-red-border);
+}
+
+.shader-error-box::-webkit-scrollbar-thumb {
+    background: var(--katara-red-hover);
+    border: 1px solid #120808;
+}
+
+.shader-error-box::-webkit-scrollbar-thumb:hover {
+    background: var(--katara-red);
+}
+
+.shader-editor {
+    flex: 1;
+    min-height: 280px;
+    resize: none;
+    border: none;
+    outline: none;
+    padding: 0;
+    background: transparent;
+    color: #fff;
+    font-family: monospace;
+    font-size: 13px;
+    line-height: 1.45;
+    tab-size: 4;
+    white-space: pre;
+    overflow: auto;
+    text-transform: none;
+    scrollbar-color: #fff #000;
+    scrollbar-width: thin;
+}
+
+.shader-editor::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+.shader-editor::-webkit-scrollbar-track {
+    background: #000;
+    border-left: 1px solid #444;
+}
+
+.shader-editor::-webkit-scrollbar-thumb {
+    background: #fff;
+    border: 1px solid #000;
+}
+
+.shader-editor::-webkit-scrollbar-thumb:hover {
+    background: #ccc;
+}
+
+.shader-editor::-webkit-scrollbar-corner {
+    background: #000;
 }
 
 .settings-panel-buttons {
@@ -280,27 +646,27 @@ video {
 }
 
 .settings-btn-save {
-    color: #4CAF50;
-    border-color: rgba(76, 175, 80, 0.6);
-    background: rgba(76, 175, 80, 0.16);
+    color: var(--katara-button-green);
+    border-color: var(--katara-button-green-border);
+    background: var(--katara-button-green-bg);
 }
 
 .settings-btn-save:hover {
-    color: #66bb6a;
-    border-color: #4CAF50;
-    background: rgba(76, 175, 80, 0.24);
+    color: var(--katara-button-green-hover);
+    border-color: var(--katara-button-green);
+    background: var(--katara-button-green-bg-hover);
 }
 
 .settings-btn-cancel {
-    color: #f44336;
-    border-color: rgba(244, 67, 54, 0.6);
-    background: rgba(244, 67, 54, 0.16);
+    color: var(--katara-red);
+    border-color: var(--katara-red-border);
+    background: var(--katara-red-bg);
 }
 
 .settings-btn-cancel:hover {
-    color: #ef5350;
-    border-color: #f44336;
-    background: rgba(244, 67, 54, 0.24);
+    color: var(--katara-red-hover);
+    border-color: var(--katara-red);
+    background: var(--katara-red-bg-hover);
 }
 
 .settings-panel-content {
@@ -379,17 +745,17 @@ video {
 }
 
 .settings-panel-content::-webkit-scrollbar-track {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--katara-surface-fill);
     border-radius: 0;
 }
 
 .settings-panel-content::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.2);
+    background: var(--katara-scrollbar-thumb);
     border-radius: 0;
 }
 
 .settings-panel-content::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.3);
+    background: var(--katara-scrollbar-thumb-hover);
 }
 
 .config-section {
@@ -409,13 +775,14 @@ video {
 
 .config-section-header h3 {
     margin: 0 0 2px 0;
-    color: white;
+    color: var(--katara-white-full);
     font-size: 15px;
     font-weight: 600;
+    text-transform: uppercase;
 }
 
 .config-section.config-section-disabled .config-section-header h3 {
-    color: rgba(255, 255, 255, 0.55);
+    color: var(--katara-white-faint);
     text-decoration: line-through;
 }
 
@@ -436,44 +803,45 @@ video {
 }
 
 .input-mode-btn {
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: var(--katara-surface-fill-subtle);
+    border: var(--katara-border-width) solid var(--katara-border-input);
     border-radius: 0;
-    color: white;
+    color: var(--katara-white-full);
     font-family: inherit;
     font-size: 12px;
     font-weight: 600;
     padding: 6px 10px;
     cursor: pointer;
+    text-transform: uppercase;
     transition: border-color 0.15s ease, transform 0.15s ease, background 0.15s ease;
 }
 
 .input-mode-btn:hover {
-    border-color: rgba(255, 255, 255, 0.45);
-    background: rgba(255, 255, 255, 0.08);
+    border-color: var(--katara-border-hover);
+    background: var(--katara-surface-fill-hover);
 }
 
 .input-mode-btn.selected {
-    border-color: #4CAF50;
-    background: rgba(76, 175, 80, 0.16);
+    border-color: var(--katara-button-green);
+    background: var(--katara-button-green-bg);
 }
 
 .input-mode-btn.input-mode-btn-disabled {
     opacity: 0.45;
     cursor: not-allowed;
-    color: rgba(255, 255, 255, 0.55);
+    color: var(--katara-white-faint);
     text-decoration: line-through;
 }
 
 .input-mode-btn.input-mode-btn-disabled:hover {
-    border-color: rgba(255, 255, 255, 0.2);
-    background: rgba(255, 255, 255, 0.04);
+    border-color: var(--katara-border-input);
+    background: var(--katara-surface-fill-subtle);
     transform: none;
 }
 
 .input-mode-btn.input-mode-btn-disabled.selected {
-    border-color: rgba(255, 255, 255, 0.2);
-    background: rgba(255, 255, 255, 0.04);
+    border-color: var(--katara-border-input);
+    background: var(--katara-surface-fill-subtle);
     transform: none;
 }
 
@@ -481,22 +849,22 @@ video {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--katara-white);
     font-size: 12px;
     user-select: none;
+    text-transform: uppercase;
 }
 
 .config-header-toggle input[type="checkbox"] {
     width: 15px;
     height: 15px;
-    accent-color: #4CAF50;
     cursor: pointer;
 }
 
 .config-header-toggle.config-header-toggle-disabled {
     opacity: 0.45;
     cursor: not-allowed;
-    color: rgba(255, 255, 255, 0.55);
+    color: var(--katara-white-faint);
     text-decoration: line-through;
 }
 
@@ -520,15 +888,27 @@ video {
     width: 100%;
     box-sizing: border-box;
     min-width: 0;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: var(--katara-surface-fill);
+    border: var(--katara-border-style);
     border-radius: 0;
     transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .config-row:hover {
-    border-color: rgba(255, 255, 255, 0.45);
-    background: rgba(255, 255, 255, 0.08);
+    border-color: var(--katara-border-hover);
+    background: var(--katara-surface-fill-hover);
+}
+
+.config-row.config-row-toggle.config-row-disabled {
+    cursor: grab;
+}
+
+.config-row.config-row-toggle:not(.config-row-disabled) input[type="range"] {
+    cursor: grab;
+}
+
+.config-row.config-row-toggle:not(.config-row-disabled) input[type="range"]:active {
+    cursor: grabbing;
 }
 
 .config-row.config-row-disabled {
@@ -537,22 +917,27 @@ video {
 }
 
 .config-row.config-row-disabled:hover {
-    border-color: rgba(255, 255, 255, 0.12);
-    background: rgba(255, 255, 255, 0.05);
+    border-color: var(--katara-border);
+    background: var(--katara-surface-fill);
 }
 
 .config-row.config-row-disabled label {
-    color: rgba(255, 255, 255, 0.55);
+    color: var(--katara-white-faint);
     text-decoration: line-through;
 }
 
+.config-row.config-row-disabled label,
+.config-row.config-row-disabled .value-display {
+    cursor: inherit;
+}
+
 .config-row.config-row-disabled input[type="range"] {
-    cursor: not-allowed;
+    cursor: inherit;
     pointer-events: none;
 }
 
 .config-row.config-row-disabled .value-display {
-    color: rgba(255, 255, 255, 0.45);
+    color: var(--katara-white-ghost);
 }
 
 .config-row label {
@@ -561,15 +946,16 @@ video {
     overflow: visible;
     text-overflow: clip;
     white-space: nowrap;
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--katara-white);
     font-size: 13px;
+    text-transform: uppercase;
 }
 
 .config-row input[type="range"] {
     flex: 1 1 auto;
     min-width: 0;
     max-width: 65%;
-    accent-color: #4CAF50;
+    accent-color: var(--katara-button-green);
     height: 6px;
     cursor: pointer;
 }
@@ -579,8 +965,9 @@ video {
     flex-shrink: 0;
     min-width: 42px;
     text-align: right;
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--katara-white-muted);
     font-size: 13px;
+    text-transform: uppercase;
 }
 
 /* 2x2 slider grid for the Simulation section */
@@ -602,7 +989,7 @@ video {
 }
 
 .config-grid-4 .config-row.checkbox-row {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--katara-surface-fill);
     border-radius: 0;
     padding: 6px 8px;
     width: 100%;
@@ -612,6 +999,7 @@ video {
 .config-grid-4 .config-row.checkbox-row label {
     gap: 6px;
     font-size: 13px;
+    text-transform: uppercase;
 }
 
 .config-row.checkbox-row {
@@ -626,43 +1014,64 @@ video {
     cursor: pointer;
     flex: 1;
     justify-content: center;
+    text-transform: uppercase;
 }
 
 .config-row.checkbox-row label input[type="checkbox"] {
     flex-shrink: 0;
 }
 
+.config-row input[type="checkbox"],
+.config-header-toggle input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    box-sizing: border-box;
+    border-radius: 0;
+    border: var(--katara-border-width) solid var(--katara-border-input);
+    background: var(--katara-surface-fill-input);
+    cursor: pointer;
+}
+
 .config-row input[type="checkbox"] {
     width: 18px;
     height: 18px;
-    accent-color: #4CAF50;
-    cursor: pointer;
+}
+
+.config-row input[type="checkbox"]:checked,
+.config-header-toggle input[type="checkbox"]:checked {
+    background-color: var(--katara-button-green);
+    border-color: var(--katara-button-green);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='white' stroke-width='2' d='M2 6l3 3 5-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 12px 12px;
 }
 
 .config-row select {
     flex: 1;
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: var(--katara-surface-fill-strong);
+    border: var(--katara-border-width) solid var(--katara-border-input);
     border-radius: 0;
     padding: 6px 8px;
-    color: white;
+    color: var(--katara-white-full);
     font-size: 14px;
     cursor: pointer;
+    text-transform: uppercase;
 }
 
 .config-row select:focus {
     outline: none;
-    border-color: rgba(255, 255, 255, 0.4);
+    border-color: var(--katara-border-focus);
 }
 
 .config-row select option {
-    background: #1a1a1a;
-    color: white;
+    background: var(--katara-surface-raised);
+    color: var(--katara-white-full);
 }
 
 .layout-preset-control {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: var(--katara-surface-fill);
+    border: var(--katara-border-style);
     border-radius: 0;
     padding: 10px;
 }
@@ -674,10 +1083,10 @@ video {
 }
 
 .layout-preset-btn {
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: var(--katara-surface-fill-subtle);
+    border: var(--katara-border-width) solid var(--katara-border-input);
     border-radius: 0;
-    color: white;
+    color: var(--katara-white-full);
     font-family: inherit;
     cursor: pointer;
     display: flex;
@@ -689,19 +1098,19 @@ video {
 }
 
 .layout-preset-btn:hover {
-    border-color: rgba(255, 255, 255, 0.45);
-    background: rgba(255, 255, 255, 0.08);
+    border-color: var(--katara-border-hover);
+    background: var(--katara-surface-fill-hover);
 }
 
 .layout-preset-btn.selected {
-    border-color: rgba(100, 181, 246, 0.95);
-    background: rgba(100, 181, 246, 0.16);
+    border-color: var(--katara-blue-selected-border);
+    background: var(--katara-blue-selected-bg);
 }
 
 .layout-preset-svg-wrap {
     width: 100%;
     aspect-ratio: 10 / 7;
-    background: rgba(0, 0, 0, 0.24);
+    background: var(--katara-layout-preview-bg);
     border-radius: 0;
     overflow: hidden;
 }
@@ -721,7 +1130,8 @@ video {
 .layout-preset-title {
     font-size: 13px;
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.95);
+    color: var(--katara-white-bright);
+    text-transform: uppercase;
 }
 
 /* Vorticity Control */
@@ -733,16 +1143,16 @@ video {
 }
 
 .vorticity-control {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: var(--katara-surface-fill);
+    border: var(--katara-border-style);
     border-radius: 0;
     padding: 12px;
     transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .vorticity-control:hover {
-    border-color: rgba(255, 255, 255, 0.45);
-    background: rgba(255, 255, 255, 0.08);
+    border-color: var(--katara-border-hover);
+    background: var(--katara-surface-fill-hover);
 }
 
 .vorticity-control.vorticity-control-inactive {
@@ -750,14 +1160,34 @@ video {
 }
 
 .vorticity-control.vorticity-control-inactive:hover {
-    border-color: rgba(255, 255, 255, 0.12);
-    background: rgba(255, 255, 255, 0.05);
+    border-color: var(--katara-border);
+    background: var(--katara-surface-fill);
+}
+
+.vorticity-control.control-display-clamped,
+.circle-control.control-display-clamped,
+.config-row.control-display-clamped {
+    border-color: var(--katara-warn-border);
+    background: var(--katara-warn-bg);
+    box-shadow: inset 0 0 0 1px var(--katara-warn-inset);
+}
+
+.vorticity-control.control-display-clamped:hover,
+.circle-control.control-display-clamped:hover,
+.config-row.control-display-clamped:hover {
+    border-color: var(--katara-warn-border-strong);
+    background: var(--katara-warn-bg-hover);
+}
+
+.vorticity-control.vorticity-control-inactive.control-display-clamped:hover {
+    border-color: var(--katara-warn-border);
+    background: var(--katara-warn-bg);
 }
 
 .vorticity-canvas-container {
     position: relative;
     width: 100%;
-    background: rgba(0, 0, 0, 0.3);
+    background: var(--katara-canvas-well);
     border-radius: 0;
     margin-bottom: 8px;
 }
@@ -765,7 +1195,6 @@ video {
 .vorticity-canvas {
     width: 100%;
     height: 100%;
-    cursor: crosshair;
 }
 
 .vorticity-values,
@@ -777,7 +1206,8 @@ video {
     width: 100%;
     min-width: 0;
     font-size: 13px;
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--katara-white-muted);
+    text-transform: uppercase;
 }
 
 .vorticity-value-item,
@@ -808,28 +1238,28 @@ video {
 }
 
 .vorticity-value-label {
-    color: rgba(255, 255, 255, 0.6);
+    color: var(--katara-white-soft);
 }
 
 /* Circle Control */
 .circle-control {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: var(--katara-surface-fill);
+    border: var(--katara-border-style);
     border-radius: 0;
     padding: 12px;
     transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .circle-control:hover {
-    border-color: rgba(255, 255, 255, 0.45);
-    background: rgba(255, 255, 255, 0.08);
+    border-color: var(--katara-border-hover);
+    background: var(--katara-surface-fill-hover);
 }
 
 .circle-canvas-container {
     position: relative;
     width: 100%;
     aspect-ratio: 3 / 2;
-    background: rgba(0, 0, 0, 0.3);
+    background: var(--katara-canvas-well);
     border-radius: 0;
     margin-bottom: 8px;
 }
@@ -837,24 +1267,23 @@ video {
 .circle-canvas {
     width: 100%;
     height: 100%;
-    cursor: crosshair;
 }
 
 .circle-value-label {
-    color: rgba(255, 255, 255, 0.6);
+    color: var(--katara-white-soft);
 }
 
 .hand-control {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: var(--katara-surface-fill);
+    border: var(--katara-border-style);
     border-radius: 0;
     padding: 12px;
     transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .hand-control:not(.hand-control-disabled):hover {
-    border-color: rgba(255, 255, 255, 0.45);
-    background: rgba(255, 255, 255, 0.08);
+    border-color: var(--katara-border-hover);
+    background: var(--katara-surface-fill-hover);
 }
 
 .hand-control.hand-control-disabled {
@@ -863,8 +1292,8 @@ video {
 }
 
 .hand-control.hand-control-disabled:hover {
-    border-color: rgba(255, 255, 255, 0.12);
-    background: rgba(255, 255, 255, 0.05);
+    border-color: var(--katara-border);
+    background: var(--katara-surface-fill);
 }
 
 .hand-control.hand-control-disabled .hand-canvas {
@@ -875,7 +1304,7 @@ video {
     position: relative;
     width: 100%;
     aspect-ratio: 3 / 2;
-    background: rgba(0, 0, 0, 0.3);
+    background: var(--katara-canvas-well);
     border-radius: 0;
     margin-bottom: 8px;
 }
@@ -892,8 +1321,8 @@ video {
 
 /* Environment Control */
 .environment-control {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: var(--katara-surface-fill);
+    border: var(--katara-border-style);
     border-radius: 0;
     padding: 12px;
     box-sizing: border-box;
@@ -903,14 +1332,14 @@ video {
 }
 
 .environment-control:hover {
-    border-color: rgba(255, 255, 255, 0.45);
-    background: rgba(255, 255, 255, 0.08);
+    border-color: var(--katara-border-hover);
+    background: var(--katara-surface-fill-hover);
 }
 
 .environment-canvas-container {
     position: relative;
     width: 100%;
-    background: rgba(0, 0, 0, 0.3);
+    background: var(--katara-canvas-well);
     border-radius: 0;
     margin-bottom: 8px;
 }
@@ -918,15 +1347,19 @@ video {
 .environment-canvas {
     width: 100%;
     height: 100%;
-    cursor: pointer;
 }
 
-.environment-sliders {
+.environment-sliders,
+.hand-sliders {
     display: flex;
     flex-direction: column;
     gap: 4px;
     width: 100%;
     min-width: 0;
+}
+
+.hand-sliders {
+    margin-top: 8px;
 }
 
 .settings-col-right-bottom > .config-section {
@@ -938,6 +1371,10 @@ video {
 
 /* Settings panel — mobile (single-column layout, tighter grids) */
 @media (max-width: 900px) {
+    .settings-tab-shader {
+        display: none;
+    }
+
     .settings-columns {
         grid-template-columns: minmax(0, 1fr);
         min-height: auto;

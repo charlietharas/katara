@@ -1,33 +1,13 @@
 #include "boilerplate.h"
-#include "gpu_sim.h"
+#include "sim_gpu.h"
 #include <iostream>
 #include <cstring>
 #include <fstream>
-#include <sstream>
 #include <vector>
 #include <limits>
 #include <cmath>
 
 // CONSTRUCTOR :150
-
-void GPUSimulator::updateProjectionIterations() {
-    if (!config->simulation.projection.autoScaleIterations) {
-        effectiveProjectionIters = config->simulation.projection.iterations;
-        return;
-    }
-
-    if (motionDetected) {
-        motionCooldownFrames = config->simulation.projection.motionCooldownFrames;
-        effectiveProjectionIters = config->simulation.projection.motionScaleIterations;
-    } else if (motionCooldownFrames > 0) {
-        motionCooldownFrames--;
-        effectiveProjectionIters = config->simulation.projection.motionScaleIterations;
-    } else {
-        effectiveProjectionIters = config->simulation.projection.iterations;
-    }
-
-    motionDetected = false;
-}
 
 // UPDATE SIM PARAMS UNIFORM
 void GPUSimulator::updateUniformBufferSim() {
@@ -36,49 +16,48 @@ void GPUSimulator::updateUniformBufferSim() {
     params.gridY = gridY;
     params.cellSize = cellSize;
     params.timestep = config->simulation.timestep;
-    params.gravity = config->simulation.gravity;
     params.vorticity = config->simulation.vorticity.strength;
     params.vorticityLen = config->simulation.vorticity.lengthScale;
-    params.projectionIters = static_cast<int>(effectiveProjectionIters);
-    params.density = config->simulation.fluidDensity;
 
     params.windTunnelSide = config->simulation.windTunnel.side;
     params.windTunnelStart = windTunnelStartCell;
     params.windTunnelEnd = windTunnelEndCell;
     params.windTunnelSpeed = config->simulation.windTunnel.velocity;
+    params.edges = config->simulation.edges;
 
     params.inputMode = inputModeToInt(g_config.inputMode);
 
     if (isMouseInput(g_config.inputMode) && isMouseDragging) {
         // Pull mode: circle only active while dragging
-        params.circleX[0] = mouseCircleX;
-        params.circleY[0] = mouseCircleY;
-        params.prevCircleX[0] = mousePrevCircleX;
-        params.prevCircleY[0] = mousePrevCircleY;
-        params.circleScaledRadius[0] = mouseCircleRadius;
-        params.circlePresent[0] = 1;
-        params.circleWasPresent[0] = 1;
-        params.circleVelX[0] = mouseCircleVelX;
-        params.circleVelY[0] = mouseCircleVelY;
-        params.circleZ[0] = 0.0f;
+        simPackedI32(params.circleX, 0) = mouseCircleX;
+        simPackedI32(params.circleY, 0) = mouseCircleY;
+        simPackedI32(params.prevCircleX, 0) = mousePrevCircleX;
+        simPackedI32(params.prevCircleY, 0) = mousePrevCircleY;
+        simPackedI32(params.circleScaledRadius, 0) = mouseCircleRadius;
+        simPackedI32(params.circlePresent, 0) = 1;
+        simPackedI32(params.circleWasPresent, 0) = 1;
+        simPackedF32(params.circleVelX, 0) = mouseCircleVelX;
+        simPackedF32(params.circleVelY, 0) = mouseCircleVelY;
+        simPackedF32(params.circleZ, 0) = 0.0f;
         params.numCircles = 1;
         params.baseCircleRadius = mouseCircleRadius;
         params.numSegments = 0;
+        params.numPresentSegments = 0;
     } else {
         // Hand mode: copy from circles[] array
         static int uniformFrameCount = 0;
 
         for (int i = 0; i < HandTracking::MAX_CIRCLES; i++) {
-            params.circleX[i] = circles[i].x;
-            params.circleY[i] = circles[i].y;
-            params.prevCircleX[i] = circles[i].prevX;
-            params.prevCircleY[i] = circles[i].prevY;
-            params.circleZ[i] = circles[i].z;
-            params.circleScaledRadius[i] = circles[i].scaledRadius;
-            params.circlePresent[i] = circles[i].present ? 1 : 0;
-            params.circleWasPresent[i] = circles[i].wasPresent ? 1 : 0;
-            params.circleVelX[i] = circles[i].velX;
-            params.circleVelY[i] = circles[i].velY;
+            simPackedI32(params.circleX, i) = circles[i].x;
+            simPackedI32(params.circleY, i) = circles[i].y;
+            simPackedI32(params.prevCircleX, i) = circles[i].prevX;
+            simPackedI32(params.prevCircleY, i) = circles[i].prevY;
+            simPackedF32(params.circleZ, i) = circles[i].z;
+            simPackedI32(params.circleScaledRadius, i) = circles[i].scaledRadius;
+            simPackedI32(params.circlePresent, i) = circles[i].present ? 1 : 0;
+            simPackedI32(params.circleWasPresent, i) = circles[i].wasPresent ? 1 : 0;
+            simPackedF32(params.circleVelX, i) = circles[i].velX;
+            simPackedF32(params.circleVelY, i) = circles[i].velY;
         }
         params.numCircles = numCircles;
         params.baseCircleRadius = baseCircleRadius;
@@ -86,26 +65,30 @@ void GPUSimulator::updateUniformBufferSim() {
 
         // blahhh
         for (int i = 0; i < HandTracking::MAX_SEGMENTS; i++) {
-            params.segmentStartX[i] = segments[i].startX;
-            params.segmentStartY[i] = segments[i].startY;
-            params.segmentEndX[i] = segments[i].endX;
-            params.segmentEndY[i] = segments[i].endY;
-            params.segmentPrevStartX[i] = segments[i].prevStartX;
-            params.segmentPrevStartY[i] = segments[i].prevStartY;
-            params.segmentPrevEndX[i] = segments[i].prevEndX;
-            params.segmentPrevEndY[i] = segments[i].prevEndY;
-            params.segmentStartRadius[i] = segments[i].startRadius;
-            params.segmentEndRadius[i] = segments[i].endRadius;
-            params.segmentPrevStartRadius[i] = segments[i].prevStartRadius;
-            params.segmentPrevEndRadius[i] = segments[i].prevEndRadius;
-            params.segmentPresent[i] = segments[i].present ? 1 : 0;
-            params.segmentWasPresent[i] = segments[i].wasPresent ? 1 : 0;
+            simPackedI32(params.segmentStartX, i) = segments[i].startX;
+            simPackedI32(params.segmentStartY, i) = segments[i].startY;
+            simPackedI32(params.segmentEndX, i) = segments[i].endX;
+            simPackedI32(params.segmentEndY, i) = segments[i].endY;
+            simPackedI32(params.segmentPrevStartX, i) = segments[i].prevStartX;
+            simPackedI32(params.segmentPrevStartY, i) = segments[i].prevStartY;
+            simPackedI32(params.segmentPrevEndX, i) = segments[i].prevEndX;
+            simPackedI32(params.segmentPrevEndY, i) = segments[i].prevEndY;
+            simPackedF32(params.segmentStartRadius, i) = segments[i].startRadius;
+            simPackedF32(params.segmentEndRadius, i) = segments[i].endRadius;
+            simPackedF32(params.segmentPrevStartRadius, i) = segments[i].prevStartRadius;
+            simPackedF32(params.segmentPrevEndRadius, i) = segments[i].prevEndRadius;
+            simPackedI32(params.segmentPresent, i) = segments[i].present ? 1 : 0;
+            simPackedI32(params.segmentWasPresent, i) = segments[i].wasPresent ? 1 : 0;
         }
         params.numSegments = numSegments;
+        params.numPresentSegments = numPresentSegments;
     }
     params.momentumTransferStrength = momentumTransferStrength;
     params.momentumTransferRadius = momentumTransferRadius;
-    params.momentumTransferDeadZone = momentumTransferDeadZone;
+    const HandSensitivityParams handSensitivity = resolveHandSensitivity(config->simulation.circle);
+    params.momentumTransferDeadZone = handSensitivity.momentumDeadZone;
+    params.momentumLowMotionScale = handSensitivity.lowMotionImpulseScale;
+    params.momentumLowMotionSoftCeilingMul = handSensitivity.lowMotionSoftCeilingMul;
     params.halfCellSize = cellSize * 0.5f;
 
     wgpuQueueWriteBuffer(queue, uniformBuffer, 0, &params, sizeof(SimParams));
@@ -219,7 +202,6 @@ GPUSimulator::GPUSimulator(const Config& config)
 {
     momentumTransferStrength = config.simulation.circle.momentumTransferStrength;
     momentumTransferRadius = config.simulation.circle.momentumTransferRadius;
-    momentumTransferDeadZone = config.simulation.circle.momentumTransferDeadZone;
 
     baseCircleRadius = static_cast<int>(config.simulation.circle.radius / cpuSimulator.cellSize);
     for (int i = 0; i < HandTracking::MAX_CIRCLES; i++) {
@@ -235,7 +217,6 @@ GPUSimulator::GPUSimulator(const Config& config)
 }
 
 GPUSimulator::~GPUSimulator() {
-    RELEASE_PIPELINE_RESOURCES(integrate)
     RELEASE_PIPELINE_RESOURCES(divergence)
     RELEASE_PIPELINE_RESOURCES(jacobi)
     RELEASE_PIPELINE_RESOURCES(jacobiPingPong)
@@ -279,40 +260,32 @@ GPUSimulator::~GPUSimulator() {
 // MAIN SIMULATION LOOP
 bool GPUSimulator::init(const Config& cfg, const ImageData* imageData, float aspectRatio) {
     RETURN_FALSE_IF_FAIL(initSimData(cfg, imageData, aspectRatio));
-    RETURN_FALSE_IF_FAIL(initTextures());
+    RETURN_FALSE_IF_FAIL(rebuildGridResources());
+    if (histogramSlots[0].minMaxBuffer == nullptr) {
+        RETURN_FALSE_IF_FAIL(initHistogramResources());
+    }
+
+    if (divergencePipeline != nullptr) {
+        return true;
+    }
+
     sampler = createSampler(WGPUFilterMode_Linear);
     RETURN_FALSE_IF_FAIL(sampler);
     RETURN_FALSE_IF_FAIL(initUniformBuffer());
     RETURN_FALSE_IF_FAIL(initPipelineLayouts());
     RETURN_FALSE_IF_FAIL(initBindGroups());
     RETURN_FALSE_IF_FAIL(initPipelines());
+    copyInitialDataToGPU();
 
     return true;
 }
 
 void GPUSimulator::copyInitialDataToGPU() {
-    if (!device) return;
+    if (!device || !uniformBuffer) return;
 
-    // grab universal textures
-    const auto& velX = cpuSimulator.getVelocityX();
-    const auto& velY = cpuSimulator.getVelocityY();
-    const auto& solid = cpuSimulator.getSolid();
-    const auto& density = cpuSimulator.getDensity();
+    uploadScalarGpuFieldsFromCpu();
 
-    // texture size is grid size
     WGPUExtent3D size = {static_cast<uint32_t>(gridX), static_cast<uint32_t>(gridY), 1};
-
-    // combine velocity data so we can write as single RG32Float texture
-    std::vector<float> velocityData(gridX * gridY * 2);
-    for (int j = 0; j < gridY; j++) {
-        for (int i = 0; i < gridX; i++) {
-            int idx = j * gridX + i;
-            velocityData[idx * 2] = velX[idx];
-            velocityData[idx * 2 + 1] = velY[idx];
-        }
-    }
-
-    // write velocity data to both ping-pong textures
     WGPUImageCopyTexture copy = {};
     copy.mipLevel = 0;
     copy.origin = {0, 0, 0};
@@ -320,53 +293,10 @@ void GPUSimulator::copyInitialDataToGPU() {
 
     WGPUTextureDataLayout layout = {};
     layout.offset = 0;
-    layout.bytesPerRow = gridX * 8;
     layout.rowsPerImage = gridY;
 
-    copy.texture = velocityTexture;
-    wgpuQueueWriteTexture(queue, &copy, velocityData.data(), velocityData.size() * sizeof(float), &layout, &size);
-    copy.texture = newVelocityTexture;
-    wgpuQueueWriteTexture(queue, &copy, velocityData.data(), velocityData.size() * sizeof(float), &layout, &size);
-
-    // write density data
-    layout.bytesPerRow = gridX * 4; // 1 float * 4 bytes
-    copy.texture = densityTexture;
-    wgpuQueueWriteTexture(queue, &copy, density.data(), density.size() * sizeof(float), &layout, &size);
-    copy.texture = newDensityTexture;
-    wgpuQueueWriteTexture(queue, &copy, density.data(), density.size() * sizeof(float), &layout, &size);
-
-    // write solid data to staging texture
-    layout.bytesPerRow = gridX * 4;
-    copy.texture = solidStagingTexture;
-    wgpuQueueWriteTexture(queue, &copy, solid.data(), solid.size() * sizeof(float), &layout, &size);
-
-    // copy from staging texture to storage texture
-    WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(device, nullptr);
-    copyTextureDeviceToDevice(encoder, solidStagingTexture, solidTexture);
-    WGPUCommandBufferDescriptor cmdDesc = {};
-    WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, &cmdDesc);
-    wgpuQueueSubmit(queue, 1, &commands);
-    wgpuCommandBufferRelease(commands);
-    wgpuCommandEncoderRelease(encoder);
-
-    // copy ink data if available
     if (inkInitialized) {
-        const auto& redInk = cpuSimulator.getRedInk();
-        const auto& greenInk = cpuSimulator.getGreenInk();
-        const auto& blueInk = cpuSimulator.getBlueInk();
-
-        // combine ink data so we can write as a single RGBA32Float texture
-        std::vector<float> inkData(gridX * gridY * 4);
-        for (int j = 0; j < gridY; j++) {
-            for (int i = 0; i < gridX; i++) {
-                int idx = j * gridX + i;
-                inkData[idx * 4] = redInk[idx];
-                inkData[idx * 4 + 1] = greenInk[idx];
-                inkData[idx * 4 + 2] = blueInk[idx];
-                inkData[idx * 4 + 3] = 1.0f; // alpha
-            }
-        }
-
+        const auto& inkData = cpuSimulator.getInk();
         copy.texture = inkTexture;
         layout.bytesPerRow = gridX * 16;
         wgpuQueueWriteTexture(queue, &copy, inkData.data(), inkData.size() * sizeof(float), &layout, &size);
@@ -378,19 +308,13 @@ void GPUSimulator::copyInitialDataToGPU() {
 }
 
 void GPUSimulator::update() {
-    updateProjectionIterations();
     updateUniformBufferSim();
 
     // encoder for the entire update
     WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(device, nullptr);
 
-    // standard update loop
-    if (gravity != 0.0f) {
-        dispatchIntegrate(encoder);
-    }
-
-    // only dispatch line segments if there are segments present (hand mode only)
-    if (!isMouseInput(g_config.inputMode) && numSegments > 0) {
+    // only dispatch line segments when at least one connection is active
+    if (!isMouseInput(g_config.inputMode) && numPresentSegments > 0) {
         dispatchLineSegments(encoder);
     }
 
@@ -403,22 +327,24 @@ void GPUSimulator::update() {
         }
     } else if (numCircles > 0) {
         dispatchCircle(encoder);
-        // reset prev positions to current so next frame has zero delta if not moved
         for (int i = 0; i < numCircles; i++) {
             circles[i].prevX = circles[i].x;
             circles[i].prevY = circles[i].y;
+            if (!circles[i].present) {
+                circles[i].wasPresent = false;
+            }
         }
     }
     // ^ fun fact, this is the only shader to not need access to other pixels (e.g. neighbors),
     // so it is fully parallelizable with read-write and so just one compute pass is chill
 
-    dispatchBoundaryConditions(encoder);
     dispatchProjection(encoder);
     dispatchExtrapolate(encoder);
     dispatchAdvect(encoder);
-    if (config->simulation.vorticity.enabled) {
+    if (config->simulation.vorticity.strength > 0.0f) {
         dispatchVorticity(encoder);
     }
+    dispatchBoundaryConditions(encoder);
 
     // submit all commands at once
     WGPUCommandBufferDescriptor cmdDesc = {};
@@ -455,15 +381,8 @@ void GPUSimulator::moveCircle(int newGridX, int newGridY) {
 
     float instantVelX = (newGridX - mouseCircleX) / config->simulation.timestep;
     float instantVelY = (newGridY - mouseCircleY) / config->simulation.timestep;
-    float alpha = 0.3f;
-    mouseCircleVelX = alpha * instantVelX + (1.0f - alpha) * mouseCircleVelX;
-    mouseCircleVelY = alpha * instantVelY + (1.0f - alpha) * mouseCircleVelY;
-
-    // Motion detection for adaptive solver
-    float velocityMagnitude = std::sqrt(mouseCircleVelX * mouseCircleVelX + mouseCircleVelY * mouseCircleVelY);
-    if (velocityMagnitude > config->simulation.projection.motionThreshold) {
-        motionDetected = true;
-    }
+    mouseCircleVelX = instantVelX;
+    mouseCircleVelY = instantVelY;
 
     mouseCircleX = newGridX;
     mouseCircleY = newGridY;
@@ -486,12 +405,14 @@ void GPUSimulator::updateCircles(const FingertipData* fingertips, int count) {
     for (int i = 0; i < updateCount; i++) {
         int newGridX = static_cast<int>((1.0f - fingertips[i].x) * gridX);
         int newGridY = static_cast<int>((1.0f - fingertips[i].y) * gridY);
+        newGridX = std::max(baseCircleRadius, std::min(newGridX, gridX - baseCircleRadius - 1));
+        newGridY = std::max(baseCircleRadius, std::min(newGridY, gridY - baseCircleRadius - 1));
 
         circles[i].prevX = circles[i].x;
         circles[i].prevY = circles[i].y;
 
         if (fingertips[i].present <= 0.5f) {
-            circles[i].wasPresent = false;
+            circles[i].present = false;
             circles[i].x = 0;
             circles[i].y = 0;
             circles[i].smoothedX = 0.0f;
@@ -519,10 +440,6 @@ void GPUSimulator::updateCircles(const FingertipData* fingertips, int count) {
             applyCircleVelocitySmoothing(instantVelX, instantVelY, circles[i].velX, circles[i].velY,
                                          handSpeed, config->simulation.circle);
 
-            float velocityMagnitude = std::sqrt(circles[i].velX * circles[i].velX + circles[i].velY * circles[i].velY);
-            if (velocityMagnitude > config->simulation.projection.motionThreshold) {
-                motionDetected = true;
-            }
         }
     }
     frameCount++;
@@ -547,6 +464,7 @@ void GPUSimulator::updateCircles(const FingertipData* fingertips, int count) {
 void GPUSimulator::updateLineSegments(const FingertipData* landmarks, int count) {
     // requires updateCircles to have run first
     numSegments = 0;
+    numPresentSegments = 0;
     int numHands = std::min(2, count / HandTracking::LANDMARKS_PER_HAND);
 
     for (int hand = 0; hand < numHands; hand++) {
@@ -590,6 +508,7 @@ void GPUSimulator::updateLineSegments(const FingertipData* landmarks, int count)
                 seg.endY = circles[endIdx].y;
                 seg.startRadius = static_cast<float>(scaleRadiusByZ(p1.z, baseCircleRadius));
                 seg.endRadius = static_cast<float>(scaleRadiusByZ(p2.z, baseCircleRadius));
+                numPresentSegments++;
             } else {
                 if (seg.wasPresent) {
                     // clear previous segment
@@ -618,11 +537,6 @@ void GPUSimulator::updateLineSegments(const FingertipData* landmarks, int count)
 }
 
 // DISPATCH COMPUTE SHADERS
-void GPUSimulator::dispatchIntegrate(WGPUCommandEncoder encoder) {
-    dispatchComputePass(encoder, integratePipeline, integrateBindGroup);
-    copyTextureDeviceToDevice(encoder, newVelocityTexture, velocityTexture);
-}
-
 void GPUSimulator::dispatchCircle(WGPUCommandEncoder encoder) {
     dispatchComputePass(encoder, circlePipeline, circleBindGroup);
     copyTextureDeviceToDevice(encoder, newVelocityTexture, velocityTexture);
@@ -667,7 +581,7 @@ void GPUSimulator::dispatchProjection(WGPUCommandEncoder encoder) {
     dispatchComputePass(encoder, divergencePipeline, divergenceBindGroup);
 
     // run jacobi pressure solver with ping-pong
-    int iterations = static_cast<int>(config->simulation.projection.iterations);
+    int iterations = config->simulation.projection.iterations;
     for (int iter = 0; iter < iterations; iter++) {
         bool writeToPressure = (iter % 2 == 1);
 
@@ -996,7 +910,13 @@ bool GPUSimulator::initSimData(const Config& cfg, const ImageData* imageData, fl
     if (!cpuSimulator.init(cfg, imageData, aspectRatio)) {
         return false;
     }
-    
+
+    syncGridFromCpu();
+    return true;
+}
+
+void GPUSimulator::syncGridFromCpu() {
+    resolution = g_config.simulation.resolution;
     cellSize = cpuSimulator.cellSize;
     gridX = cpuSimulator.gridX;
     gridY = cpuSimulator.gridY;
@@ -1006,41 +926,171 @@ bool GPUSimulator::initSimData(const Config& cfg, const ImageData* imageData, fl
     workgroupY = (gridY + 15) / 16;
     windTunnelStartCell = cpuSimulator.windTunnelStartCell;
     windTunnelEndCell = cpuSimulator.windTunnelEndCell;
+    pipeHeight = cpuSimulator.pipeHeight;
 
-    mouseCircleRadius = static_cast<int>(config->simulation.circle.radius / cpuSimulator.cellSize);
-
-    if (isMouseInput(g_config.inputMode)) {
-        mouseCircleX = gridX / 2;
-        mouseCircleY = gridY / 2;
-        mousePrevCircleX = mouseCircleX;
-        mousePrevCircleY = mouseCircleY;
-        mouseCircleVelX = 0.0f;
-        mouseCircleVelY = 0.0f;
-    }
+    mouseCircleRadius = cpuSimulator.mouseCircleRadius;
+    mouseCircleX = cpuSimulator.mouseCircleX;
+    mouseCircleY = cpuSimulator.mouseCircleY;
+    mousePrevCircleX = cpuSimulator.mousePrevCircleX;
+    mousePrevCircleY = cpuSimulator.mousePrevCircleY;
+    mouseCircleVelX = cpuSimulator.mouseCircleVelX;
+    mouseCircleVelY = cpuSimulator.mouseCircleVelY;
+    isMouseDragging = cpuSimulator.isMouseDragging;
 
     baseCircleRadius = cpuSimulator.baseCircleRadius;
-    numCircles = 0;
-
-    // initialize all circles to defaults (for hand mode)
+    numCircles = cpuSimulator.numCircles;
+    numSegments = cpuSimulator.numSegments;
+    numPresentSegments = cpuSimulator.numPresentSegments;
     for (int i = 0; i < HandTracking::MAX_CIRCLES; i++) {
-        circles[i].x = 0;
-        circles[i].y = 0;
-        circles[i].prevX = 0;
-        circles[i].prevY = 0;
-        circles[i].z = 0.0f;
-        circles[i].scaledRadius = baseCircleRadius;
-        circles[i].present = false;
-        circles[i].wasPresent = false;
-        circles[i].velX = 0.0f;
-        circles[i].velY = 0.0f;
+        circles[i] = cpuSimulator.circles[i];
+    }
+    for (int i = 0; i < HandTracking::MAX_SEGMENTS; i++) {
+        segments[i] = cpuSimulator.segments[i];
     }
 
     inkInitialized = cpuSimulator.inkInitialized;
-    gravity = cpuSimulator.gravity;
+}
+
+void GPUSimulator::releaseSimGridResources() {
+#define RELEASE_COMPUTE_BIND_GROUP(name) releaseResource(name##BindGroup, wgpuBindGroupRelease);
+
+    RELEASE_COMPUTE_BIND_GROUP(divergence)
+    RELEASE_COMPUTE_BIND_GROUP(jacobi)
+    RELEASE_COMPUTE_BIND_GROUP(jacobiPingPong)
+    RELEASE_COMPUTE_BIND_GROUP(velocityUpdate)
+    RELEASE_COMPUTE_BIND_GROUP(extrapolate)
+    RELEASE_COMPUTE_BIND_GROUP(advectVelocity)
+    RELEASE_COMPUTE_BIND_GROUP(advectDensity)
+    RELEASE_COMPUTE_BIND_GROUP(advectInk)
+    RELEASE_COMPUTE_BIND_GROUP(boundary)
+    RELEASE_COMPUTE_BIND_GROUP(vorticityCompute)
+    RELEASE_COMPUTE_BIND_GROUP(vorticityApply)
+    RELEASE_COMPUTE_BIND_GROUP(circle)
+    RELEASE_COMPUTE_BIND_GROUP(lineSegment)
+    RELEASE_COMPUTE_BIND_GROUP(pressureMinMax)
+    RELEASE_COMPUTE_BIND_GROUP(histogramBins)
+
+    for (int i = 0; i < HISTOGRAM_RING_SIZE; i++) {
+        auto& slot = histogramSlots[i];
+        releaseResource(slot.bindGroupMinMax, wgpuBindGroupRelease);
+        releaseResource(slot.bindGroupHistogramBins, wgpuBindGroupRelease);
+        slot.bindGroupMinMax = nullptr;
+        slot.bindGroupHistogramBins = nullptr;
+        slot.state = HistogramSlot_Free;
+    }
+
+    RELEASE_TEXTURE(velocity)
+    RELEASE_TEXTURE(pressure)
+    RELEASE_TEXTURE(density)
+    RELEASE_TEXTURE(solid)
+    RELEASE_TEXTURE(solidStaging)
+    RELEASE_TEXTURE(ink)
+    RELEASE_TEXTURE(divergence)
+    RELEASE_TEXTURE(curl)
+    RELEASE_TEXTURE(newVelocity)
+    RELEASE_TEXTURE(newDensity)
+    RELEASE_TEXTURE(newInk)
+    RELEASE_TEXTURE(newPressure)
+
+#undef RELEASE_COMPUTE_BIND_GROUP
+}
+
+bool GPUSimulator::rebuildGridResources() {
+    if (!device) {
+        return true;
+    }
+
+    releaseSimGridResources();
+    RETURN_FALSE_IF_FAIL(initSimTextures());
+    if (divergenceBindGroupLayout != nullptr) {
+        RETURN_FALSE_IF_FAIL(initBindGroups());
+    }
     return true;
 }
 
-bool GPUSimulator::initTextures() {
+void GPUSimulator::zeroScalarGpuTexture(WGPUTexture texture) {
+    if (!device || !texture || gridX <= 0 || gridY <= 0) {
+        return;
+    }
+
+    const size_t cellCount = static_cast<size_t>(gridX) * static_cast<size_t>(gridY);
+    std::vector<float> zeros(cellCount, 0.0f);
+
+    WGPUExtent3D size = {static_cast<uint32_t>(gridX), static_cast<uint32_t>(gridY), 1};
+    WGPUImageCopyTexture copy = {};
+    copy.mipLevel = 0;
+    copy.origin = {0, 0, 0};
+    copy.aspect = WGPUTextureAspect_All;
+    copy.texture = texture;
+
+    WGPUTextureDataLayout layout = {};
+    layout.offset = 0;
+    layout.bytesPerRow = gridX * sizeof(float);
+    layout.rowsPerImage = gridY;
+
+    wgpuQueueWriteTexture(queue, &copy, zeros.data(), zeros.size() * sizeof(float), &layout, &size);
+}
+
+void GPUSimulator::uploadScalarGpuFieldsFromCpu() {
+    if (!device || !velocityTexture) {
+        return;
+    }
+
+    const auto& velX = cpuSimulator.getVelocityX();
+    const auto& velY = cpuSimulator.getVelocityY();
+    const auto& solid = cpuSimulator.getSolid();
+    const auto& density = cpuSimulator.getDensity();
+
+    WGPUExtent3D size = {static_cast<uint32_t>(gridX), static_cast<uint32_t>(gridY), 1};
+
+    std::vector<float> velocityData(gridX * gridY * 2);
+    for (int j = 0; j < gridY; j++) {
+        for (int i = 0; i < gridX; i++) {
+            int idx = j * gridX + i;
+            velocityData[idx * 2] = velX[idx];
+            velocityData[idx * 2 + 1] = velY[idx];
+        }
+    }
+
+    WGPUImageCopyTexture copy = {};
+    copy.mipLevel = 0;
+    copy.origin = {0, 0, 0};
+    copy.aspect = WGPUTextureAspect_All;
+
+    WGPUTextureDataLayout layout = {};
+    layout.offset = 0;
+    layout.rowsPerImage = gridY;
+
+    layout.bytesPerRow = gridX * 8;
+    copy.texture = velocityTexture;
+    wgpuQueueWriteTexture(queue, &copy, velocityData.data(), velocityData.size() * sizeof(float), &layout, &size);
+    copy.texture = newVelocityTexture;
+    wgpuQueueWriteTexture(queue, &copy, velocityData.data(), velocityData.size() * sizeof(float), &layout, &size);
+
+    layout.bytesPerRow = gridX * 4;
+    copy.texture = densityTexture;
+    wgpuQueueWriteTexture(queue, &copy, density.data(), density.size() * sizeof(float), &layout, &size);
+    copy.texture = newDensityTexture;
+    wgpuQueueWriteTexture(queue, &copy, density.data(), density.size() * sizeof(float), &layout, &size);
+
+    copy.texture = solidStagingTexture;
+    wgpuQueueWriteTexture(queue, &copy, solid.data(), solid.size() * sizeof(float), &layout, &size);
+
+    WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(device, nullptr);
+    copyTextureDeviceToDevice(encoder, solidStagingTexture, solidTexture);
+    WGPUCommandBufferDescriptor cmdDesc = {};
+    WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, &cmdDesc);
+    wgpuQueueSubmit(queue, 1, &commands);
+    wgpuCommandBufferRelease(commands);
+    wgpuCommandEncoderRelease(encoder);
+
+    zeroScalarGpuTexture(pressureTexture);
+    zeroScalarGpuTexture(newPressureTexture);
+    zeroScalarGpuTexture(divergenceTexture);
+    zeroScalarGpuTexture(curlTexture);
+}
+
+bool GPUSimulator::initSimTextures() {
     // RG32Float to store channels (x,y) together
     CREATE_STORAGE_TEXTURE(velocity, RG32Float);
     CREATE_STORAGE_TEXTURE(newVelocity, RG32Float);
@@ -1070,7 +1120,10 @@ bool GPUSimulator::initTextures() {
     CREATE_STORAGE_TEXTURE(divergence, R32Float);
     CREATE_STORAGE_TEXTURE(curl, R32Float);
 
-    // initialize histogram ring buffer
+    return true;
+}
+
+bool GPUSimulator::initHistogramResources() {
     for (int i = 0; i < HISTOGRAM_RING_SIZE; i++) {
         auto& slot = histogramSlots[i];
 
@@ -1121,23 +1174,15 @@ bool GPUSimulator::initTextures() {
     return true;
 }
 
+bool GPUSimulator::initTextures() {
+    RETURN_FALSE_IF_FAIL(initSimTextures());
+    if (histogramSlots[0].minMaxBuffer == nullptr) {
+        RETURN_FALSE_IF_FAIL(initHistogramResources());
+    }
+    return true;
+}
+
 bool GPUSimulator::initPipelineLayouts() {
-    // integration [4]:
-    // uniform
-    // old velocity (read)
-    // new velocity (write)
-    // solid
-    WGPUBindGroupLayoutEntry integrationEntries[4] = {};
-    createUniformBufferPipelineLayoutEntry(integrationEntries);
-    integrationEntries[1] = createStorageTextureLayoutEntry(1, WGPUStorageTextureAccess_ReadOnly, WGPUTextureFormat_RG32Float);
-    integrationEntries[2] = createStorageTextureLayoutEntry(2, WGPUStorageTextureAccess_WriteOnly, WGPUTextureFormat_RG32Float);
-    integrationEntries[3] = createSampleTextureLayoutEntry(3, WGPUShaderStage_Compute);
-
-    integrateBindGroupLayout = createBindGroupLayout(4, integrationEntries);
-    RETURN_FALSE_IF_FAIL(integrateBindGroupLayout);
-    integratePipelineLayout = createPipelineLayout(&integrateBindGroupLayout);
-    RETURN_FALSE_IF_FAIL(integratePipelineLayout);
-
     // divergence [4]:
     // uniform
     // velocity (read)
@@ -1390,16 +1435,6 @@ bool GPUSimulator::initPipelineLayouts() {
 }
 
 bool GPUSimulator::initBindGroups() {
-    // integrate [4]
-    WGPUBindGroupEntry integrateEntries[4] = {};
-    integrateEntries[0] = createUniformBufferBindGroupEntry(0, uniformBuffer, sizeof(SimParams));
-    integrateEntries[1] = createTextureViewBindGroupEntry(1, velocityTextureView);
-    integrateEntries[2] = createTextureViewBindGroupEntry(2, newVelocityTextureView);
-    integrateEntries[3] = createTextureViewBindGroupEntry(3, solidTextureView);
-    
-    integrateBindGroup = createBindGroup(4, integrateEntries, integrateBindGroupLayout);
-    RETURN_FALSE_IF_FAIL(integrateBindGroup);
-
     // divergence [4]
     WGPUBindGroupEntry divergenceEntries[4] = {};
     divergenceEntries[0] = createUniformBufferBindGroupEntry(0, uniformBuffer, sizeof(SimParams));
@@ -1546,9 +1581,6 @@ bool GPUSimulator::initBindGroups() {
 
 bool GPUSimulator::initPipelines() {
     // create compute pipelines
-    integratePipeline = createComputePipeline("compute_integrate.wgsl", "integrate", integratePipelineLayout);
-    RETURN_FALSE_IF_FAIL(integratePipeline);
-
     divergencePipeline = createComputePipeline("compute_divergence.wgsl", "divergence", divergencePipelineLayout);
     RETURN_FALSE_IF_FAIL(divergencePipeline);
     jacobiPipeline = createComputePipeline("compute_jacobi.wgsl", "jacobiIteration", jacobiPipelineLayout);
@@ -1587,36 +1619,38 @@ bool GPUSimulator::initPipelines() {
     histogramBinsPipeline = createComputePipeline("compute_histogram_bins.wgsl", "computeHistogramBins", histogramBinsPipelineLayout);
     RETURN_FALSE_IF_FAIL(histogramBinsPipeline);
 
-    copyInitialDataToGPU(); // non-boilerplate, so separate function
     return true;
 }
 
 void GPUSimulator::updateSimParams(const Config& config) {
-    // Base class members (from ISimulator)
-    gravity = config.simulation.gravity;
+    const bool gridChanged = cpuSimulator.gridConfigChanged(config);
+    cpuSimulator.updateSimParams(config);
+    this->config = &g_config;
+
+    momentumTransferStrength = config.simulation.circle.momentumTransferStrength;
+    momentumTransferRadius = config.simulation.circle.momentumTransferRadius;
+
+    if (gridChanged) {
+        syncGridFromCpu();
+        if (device) {
+            rebuildGridResources();
+        }
+        return;
+    }
+
     windTunnelSide = config.simulation.windTunnel.side;
     windTunnelSpeed = config.simulation.windTunnel.velocity;
-    cpuSimulator.windTunnelSide = windTunnelSide;
-    cpuSimulator.windTunnelSpeed = windTunnelSpeed;
-    cpuSimulator.recomputeWindTunnelCells(config);
     windTunnelStartCell = cpuSimulator.windTunnelStartCell;
     windTunnelEndCell = cpuSimulator.windTunnelEndCell;
     pipeHeight = cpuSimulator.pipeHeight;
-    momentumTransferStrength = config.simulation.circle.momentumTransferStrength;
-    momentumTransferRadius = config.simulation.circle.momentumTransferRadius;
-    momentumTransferDeadZone = config.simulation.circle.momentumTransferDeadZone;
 
-    // Circle radius is specified in world units in config; convert to grid units used by shaders.
-    // Update both mouse and hand circle radii
-    mouseCircleRadius = static_cast<int>(config.simulation.circle.radius / cpuSimulator.cellSize);
-    baseCircleRadius = static_cast<int>(config.simulation.circle.radius / cpuSimulator.cellSize);
-    // Keep per-circle radii in sync immediately (otherwise user won't see changes until next detection event).
+    mouseCircleRadius = cpuSimulator.mouseCircleRadius;
+    baseCircleRadius = cpuSimulator.baseCircleRadius;
     for (int i = 0; i < HandTracking::MAX_CIRCLES; i++) {
         circles[i].scaledRadius = baseCircleRadius;
     }
 
-    // Update stored config pointer — updateUniformBufferSim() reads from this each frame
-    this->config = &config;
+    updateUniformBufferSim();
 }
 
 void GPUSimulator::reinitInk(const ImageData* imageData) {
@@ -1627,22 +1661,7 @@ void GPUSimulator::reinitInk(const ImageData* imageData) {
         // Initialize new ink data on CPU simulator (initializeFromImageData is now public)
         cpuSimulator.initializeFromImageData(g_config, imageData);
 
-        // Re-upload ink textures from cpuSimulator data
-        const auto& redInk = cpuSimulator.getRedInk();
-        const auto& greenInk = cpuSimulator.getGreenInk();
-        const auto& blueInk = cpuSimulator.getBlueInk();
-
-        // Combine ink data into RGBA32Float format
-        std::vector<float> inkData(gridX * gridY * 4);
-        for (int j = 0; j < gridY; j++) {
-            for (int i = 0; i < gridX; i++) {
-                int idx = j * gridX + i;
-                inkData[idx * 4] = redInk[idx];
-                inkData[idx * 4 + 1] = greenInk[idx];
-                inkData[idx * 4 + 2] = blueInk[idx];
-                inkData[idx * 4 + 3] = 1.0f; // alpha
-            }
-        }
+        const auto& inkData = cpuSimulator.getInk();
 
         // Re-upload to both ping-pong textures
         WGPUExtent3D size = {static_cast<uint32_t>(gridX), static_cast<uint32_t>(gridY), 1};
@@ -1663,8 +1682,13 @@ void GPUSimulator::reinitInk(const ImageData* imageData) {
         wgpuQueueWriteTexture(queue, &copy, inkData.data(), inkData.size() * sizeof(float), &layout, &size);
 
         inkInitialized = true;
+        cpuSimulator.inkInitialized = true;
     } else {
         inkInitialized = false;
+        cpuSimulator.inkInitialized = false;
+    }
+    if (uniformBuffer) {
+        updateUniformBufferSim();
     }
 }
 
@@ -1674,71 +1698,38 @@ void GPUSimulator::resetFluidState(bool clearInk) {
         circles[i].velY = 0.0f;
     }
 
-    // Reset CPU simulator state
     cpuSimulator.resetFluidState(clearInk);
+    inkInitialized = cpuSimulator.inkInitialized;
 
-    // Re-upload zeroed data to GPU textures
-    const auto& velX = cpuSimulator.getVelocityX();
-    const auto& velY = cpuSimulator.getVelocityY();
-    const auto& solid = cpuSimulator.getSolid();
-    const auto& density = cpuSimulator.getDensity();
-
-    WGPUExtent3D size = {static_cast<uint32_t>(gridX), static_cast<uint32_t>(gridY), 1};
-
-    // Combine velocity data
-    std::vector<float> velocityData(gridX * gridY * 2);
-    for (int j = 0; j < gridY; j++) {
-        for (int i = 0; i < gridX; i++) {
-            int idx = j * gridX + i;
-            velocityData[idx * 2] = velX[idx];
-            velocityData[idx * 2 + 1] = velY[idx];
-        }
+    if (!device || !velocityTexture) {
+        return;
     }
 
-    // Upload velocity, density, solid to GPU
-    WGPUImageCopyTexture copy = {};
-    copy.mipLevel = 0;
-    copy.origin = {0, 0, 0};
-    copy.aspect = WGPUTextureAspect_All;
+    uploadScalarGpuFieldsFromCpu();
 
-    WGPUTextureDataLayout layout = {};
-    layout.offset = 0;
-    layout.rowsPerImage = gridY;
-
-    // Velocity (RG32Float)
-    layout.bytesPerRow = gridX * 8;
-    copy.texture = velocityTexture;
-    wgpuQueueWriteTexture(queue, &copy, velocityData.data(), velocityData.size() * sizeof(float), &layout, &size);
-    copy.texture = newVelocityTexture;
-    wgpuQueueWriteTexture(queue, &copy, velocityData.data(), velocityData.size() * sizeof(float), &layout, &size);
-
-    // Density (R32Float)
-    layout.bytesPerRow = gridX * 4;
-    copy.texture = densityTexture;
-    wgpuQueueWriteTexture(queue, &copy, density.data(), density.size() * sizeof(float), &layout, &size);
-    copy.texture = newDensityTexture;
-    wgpuQueueWriteTexture(queue, &copy, density.data(), density.size() * sizeof(float), &layout, &size);
-
-    // Solid (R32Float) - needs staging texture
-    copy.texture = solidStagingTexture;
-    wgpuQueueWriteTexture(queue, &copy, solid.data(), solid.size() * sizeof(float), &layout, &size);
-
-    // Copy from staging to storage texture
-    WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(device, nullptr);
-    copyTextureDeviceToDevice(encoder, solidStagingTexture, solidTexture);
-    WGPUCommandBufferDescriptor cmdDesc = {};
-    WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, &cmdDesc);
-    wgpuQueueSubmit(queue, 1, &commands);
-    wgpuCommandBufferRelease(commands);
-    wgpuCommandEncoderRelease(encoder);
-
-    // Zero ink textures if ink was initialized and clearInk is true
-    if (clearInk && inkInitialized) {
+    if (clearInk) {
+        WGPUExtent3D size = {static_cast<uint32_t>(gridX), static_cast<uint32_t>(gridY), 1};
         std::vector<float> zeroInk(gridX * gridY * 4, 0.0f);
+
+        WGPUImageCopyTexture copy = {};
+        copy.mipLevel = 0;
+        copy.origin = {0, 0, 0};
+        copy.aspect = WGPUTextureAspect_All;
+
+        WGPUTextureDataLayout layout = {};
+        layout.offset = 0;
         layout.bytesPerRow = gridX * 16;
+        layout.rowsPerImage = gridY;
+
         copy.texture = inkTexture;
         wgpuQueueWriteTexture(queue, &copy, zeroInk.data(), zeroInk.size() * sizeof(float), &layout, &size);
         copy.texture = newInkTexture;
         wgpuQueueWriteTexture(queue, &copy, zeroInk.data(), zeroInk.size() * sizeof(float), &layout, &size);
+
+        inkInitialized = false;
+        cpuSimulator.inkInitialized = false;
+    }
+    if (uniformBuffer) {
+        updateUniformBufferSim();
     }
 }

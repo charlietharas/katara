@@ -1,8 +1,8 @@
 struct SimParams {
     gridX: i32,
     gridY: i32,
-    pad0: i32,
-    pad1: i32,
+    cellSize: f32,
+    halfCellSize: f32,
 };
 
 struct MinMaxUniform {
@@ -51,7 +51,7 @@ fn computePressureMinMax(@builtin(global_invocation_id) id : vec3<u32>) {
     atomicMax(&result.pressMax, pressBits);
 
     let velocity = textureLoad(velocityTexture, vec2<i32>(i32(i), i32(j)));
-    let velMagnitude = sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
+    let velMagnitude = length(velocity.xy);
     let velBits = floatToOrderedUint(velMagnitude);
     atomicMin(&result.velMin, velBits);
     atomicMax(&result.velMax, velBits);

@@ -1,8 +1,8 @@
 struct SimParams {
     gridX: i32,
     gridY: i32,
-    pad0: i32,
-    pad1: i32,
+    cellSize: f32,
+    halfCellSize: f32,
 };
 
 @group(0) @binding(0) var<uniform> params: SimParams;
@@ -20,8 +20,10 @@ fn applyProjection(@builtin(global_invocation_id) id: vec3<u32>) {
 
     var velocity = textureLoad(velocityTexture, vec2<i32>(i, j));
 
-    // x-velocity sits between cells (i-1, j) and (i, j)
-    if (i > 0 && i < params.gridX) {
+    // x-velocity sits between cells (i-1, j) and (i, j).
+    // Skip outer MAC faces (i=0 and i=gridX-1) so inlet faces pinned by boundary
+    // are not zeroed when the wall cell is solid — mirrors CPU Gauss-Seidel bounds.
+    if (i > 0 && i < params.gridX - 1) {
         let sx0 = textureLoad(solidTexture, vec2<i32>(i, j), 0).r;
         let sx1 = textureLoad(solidTexture, vec2<i32>(i-1, j), 0).r;
 
@@ -34,8 +36,8 @@ fn applyProjection(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
 
-    // y-velocity sits between cells (i, j-1) and (i, j)
-    if (j > 0 && j < params.gridY) {
+    // y-velocity sits between cells (i, j-1) and (i, j).
+    if (j > 0 && j < params.gridY - 1) {
         let sy0 = textureLoad(solidTexture, vec2<i32>(i, j), 0).r;
         let sy1 = textureLoad(solidTexture, vec2<i32>(i, j-1), 0).r;
 

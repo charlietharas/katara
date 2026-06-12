@@ -20,15 +20,15 @@ To build:
 
 Release:
 ```
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cd build
+cmake -B desktop/build -DCMAKE_BUILD_TYPE=Release
+cd desktop/build
 make
 ```
 
 Debug:
 ```
-cmake -B debug -DCMAKE_BUILD_TYPE=Debug
-cd debug
+cmake -B desktop/debug -DCMAKE_BUILD_TYPE=Debug
+cd desktop/debug
 make
 ```
 
@@ -61,8 +61,6 @@ Parameters will either change fluid behavior, simulation components (e.g. fluid 
 |                | defaultHeight             | Default window height in non-ink mode (px)                                                                              |
 | simulation     | resolution                | Number of grid cells along the smaller dimension of the window                                                          |
 |                | timestep                  | Timescale resolution (each simulation tick)                                                     |
-|                | gravity                   | Apply vertical acceleration to grid (*known bugs with* `edges!=15`)                                                       |
-|                | fluidDensity              | Affects fluid dynamics                                                  |
 || edges | Decimal 0-15 interpreted as bitstring (`left-top-bottom-right`) | |
 | sim.projection | overrelaxationCoefficient | Used to speed up CPU pressure solving; recommend leaving at 1.9. GPU simulator ignores this as it uses a different pressure solver                                                          |
 |                | iterations                | Number of pressure solver iterations to run. GPU solver requires drastically more iterations than CPU (I observed similar behavior at 1000/40) |
@@ -76,6 +74,7 @@ Parameters will either change fluid behavior, simulation components (e.g. fluid 
 | sim.circle     | radius                    | Radius of interactive circle obstacle in normalized world coords (0-1); 0 to disable                                                 |
 |                | momentumTransferStrength     | Strength with which circle imparts velocity on nearby fluid when moved (scaling factor)                                                 |
 |                | momentumTransferRadius    | Distance around the circle center around which velocity is imparted (with quadratic falloff); proportional to radius                              |
+|                | handSensitivity           | Hand input sensitivity (0–1). `0` = max stabilization; `1` = stabilization off (raw tracking). Default `0.3`. |
 | sim.circle.zScaling | zMin                    | Hand z-coordinate treated as closest (depth); used for radius scaling in hand-tracking mode                                                 |
 |                | zMax                    | Hand z-coordinate treated as farthest; used for radius scaling in hand-tracking mode                                                 |
 |                | scaleMin                | Radius scale factor when hand is closest (z=zMin); larger = bigger circle when near camera                                                 |
@@ -94,9 +93,9 @@ Main loop has two components, which are fully implemented on both the CPU and GP
 - CPU version in `render.cpp`
 - GPU version in `gpu_render.cpp`; shaders in `fragment.wgsl` and `vertex.wgsl`
 
-**Simulator** (abstract interface defined in `isimulator.h`)
-- CPU version in `sim.cpp`
-- GPU version in `gpu_sim.cpp`; each step of the main simulation loop has its own compute shader file `compute_<stage>.wgsl`.
+**Simulator** (shared types and abstract interface in `sim_shared.h`)
+- CPU version in `sim_cpu.cpp`
+- GPU version in `sim_gpu.cpp`; each step of the main simulation loop has its own compute shader file `compute_<stage>.wgsl`.
   - While I tried to avoid idiosyncracies, note that histogram computation takes place using buffered asynchronous callbacks for GPU mode, but is calculated synchronously in the renderer for CPU/HYBRID
 
 **Boilerplate**:

@@ -1,8 +1,8 @@
-#ifndef FLUID_SIMULATOR_H
-#define FLUID_SIMULATOR_H
+#ifndef SIM_CPU_H
+#define SIM_CPU_H
 
 #include <vector>
-#include "isimulator.h"
+#include "sim_shared.h"
 #include "config.h"
 #include "circle_state.h"
 
@@ -22,6 +22,10 @@ public:
     void updateSimParams(const Config& config) override;
     void reinitInk(const ImageData* imageData) override;
     void resetFluidState(bool clearInk = true) override;
+    void clearMousePullFootprint() override;
+
+    bool gridConfigChanged(const Config& config) const;
+    bool rebuildGridFromConfig(const Config& config);
 
     // fields
     const std::vector<float>& getVelocityX() const override { return x; }
@@ -29,20 +33,20 @@ public:
     const std::vector<float>& getPressure() const override { return p; }
     const std::vector<float>& getDensity() const override { return d; }
     const std::vector<float>& getSolid() const override { return s; }
-    const std::vector<float>& getRedInk() const override { return inkRed; }
-    const std::vector<float>& getGreenInk() const override { return inkGreen; }
-    const std::vector<float>& getBlueInk() const override { return inkBlue; }
+    const std::vector<float>& getInk() const override { return ink; }
 private:
     // config for reference in init
     const Config* config = nullptr;
 
     // grid params
     int resolution;
+    int edgesMask = 0;
     float halfCellSize = 0.0f;
+
+    void applyScalarParams(const Config& config);
 
     // sim params
     float timestep;
-    float density;
     float overrelaxationCoefficient;
     int projectionIters;
     bool doVorticity;
@@ -52,7 +56,6 @@ private:
     // momentum transfer parameters
     float momentumTransferStrength;
     float momentumTransferRadius;
-    float momentumTransferDeadZone;
 
     std::vector<float> x; // x vel field
     std::vector<float> y; // y vel field
@@ -62,23 +65,23 @@ private:
 
     // advection util arrays
     std::vector<float> newX, newY, newD;
-    std::vector<float> newInkRed, newInkGreen, newInkBlue;
+    std::vector<float> newInk;
 
-    // ink diffusion
-    std::vector<float> inkRed, inkGreen, inkBlue;
+    // ink: RGBA per cell, layout [r,g,b,a] * gridX * gridY
+    std::vector<float> ink;
 
     // circle movement
-    void updateCircle(int prevX, int prevY, int newX, int newY);
     void enforceBoundaryConditions();
     void circleMomentumTransfer();
     void updateCircleAreas(int prevX, int prevY, int newX, int newY, int prevRadius, int newRadius);
 
     int scaleRadiusByZ(float z);
     void clearCircleArea(int prevX, int prevY, int radius);
-    void updateSingleCircle(CircleState& circle);
 
     bool isPointNearSegment(int px, int py, int x1, int y1, float r1, int x2, int y2, float r2);
-    void updateLineSegmentSolidField(LineSegment& seg);
+    void applyInput();
+    void applyLineSegmentSolidFieldFullGrid();
+    void applyCircleSolids();
 
 public:
     // image initialization helpers (public so GPU simulator can access via member)
@@ -86,8 +89,6 @@ public:
 
 protected:
     // sim steps
-    void integrate();
-    void updateProjectionIterations();
     void project();
     void extrapolate();
     void advect();
@@ -96,10 +97,19 @@ protected:
     // grid utils
     float div(int i, int j);
     float curl(int i, int j);
-    float clamp(float n, float min, float max);
+    float clamp(float n, float min, float max) const;
     float neighborhoodX(int i, int j);
     float neighborhoodY(int i, int j);
     float sample(float i, float j, int type);
+
+    // ink helpers (RGBA layout, mirrors compute_advect_ink.wgsl)
+    int inkCellBase(int i, int j) const { return idx(i, j) * 4; }
+    static float hash2D(int x, int y);
+    bool isNearWindTunnelBoundary(int i, int j) const;
+    void getWindTunnelInk(int i, int j, const std::vector<float>& field,
+                          float& r, float& g, float& b, float& a) const;
+    void sampleInk(float x, float y, const std::vector<float>& field,
+                   float& r, float& g, float& b, float& a) const;
 
     // misc helpers
     int idx(int i, int j) const { return j * gridX + i; }

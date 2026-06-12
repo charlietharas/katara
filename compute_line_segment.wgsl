@@ -1,51 +1,72 @@
+fn packedI32Segment(arr: array<vec4<i32>, 12>, idx: i32) -> i32 {
+    let v = arr[u32(idx) / 4u];
+    switch idx % 4 {
+        case 0: { return v.x; }
+        case 1: { return v.y; }
+        case 2: { return v.z; }
+        default: { return v.w; }
+    }
+}
+
+fn packedF32Segment(arr: array<vec4<f32>, 12>, idx: i32) -> f32 {
+    let v = arr[u32(idx) / 4u];
+    switch idx % 4 {
+        case 0: { return v.x; }
+        case 1: { return v.y; }
+        case 2: { return v.z; }
+        default: { return v.w; }
+    }
+}
+
 struct SimParams {
     gridX: i32,
     gridY: i32,
     cellSize: f32,
     halfCellSize: f32,
     timestep: f32,
-    density: f32,
-    gravity: f32,
-    projectionIters: f32,
     windTunnelSide: i32,
     windTunnelStart: i32,
     windTunnelEnd: i32,
     windTunnelSpeed: f32,
+    edges: i32,
     momentumTransferStrength: f32,
     momentumTransferRadius: f32,
     momentumTransferDeadZone: f32,
     vorticity: f32,
     vorticityLen: f32,
-    circleX: array<i32, 42>,
-    circleY: array<i32, 42>,
-    prevCircleX: array<i32, 42>,
-    prevCircleY: array<i32, 42>,
-    circleZ: array<f32, 42>,
-    circleScaledRadius: array<i32, 42>,
-    circlePresent: array<i32, 42>,
-    circleWasPresent: array<i32, 42>,
-    circleVelX: array<f32, 42>,
-    circleVelY: array<f32, 42>,
+    _pad0: i32,
+    circleX: array<vec4<i32>, 11>,
+    circleY: array<vec4<i32>, 11>,
+    prevCircleX: array<vec4<i32>, 11>,
+    prevCircleY: array<vec4<i32>, 11>,
+    circleZ: array<vec4<f32>, 11>,
+    circleScaledRadius: array<vec4<i32>, 11>,
+    circlePresent: array<vec4<i32>, 11>,
+    circleWasPresent: array<vec4<i32>, 11>,
+    circleVelX: array<vec4<f32>, 11>,
+    circleVelY: array<vec4<f32>, 11>,
     numCircles: i32,
     baseCircleRadius: i32,
-    segmentStartX: array<i32, 46>,
-    segmentStartY: array<i32, 46>,
-    segmentEndX: array<i32, 46>,
-    segmentEndY: array<i32, 46>,
-    segmentPrevStartX: array<i32, 46>,
-    segmentPrevStartY: array<i32, 46>,
-    segmentPrevEndX: array<i32, 46>,
-    segmentPrevEndY: array<i32, 46>,
-    segmentStartRadius: array<f32, 46>,
-    segmentEndRadius: array<f32, 46>,
-    segmentPrevStartRadius: array<f32, 46>,
-    segmentPrevEndRadius: array<f32, 46>,
-    segmentPresent: array<i32, 46>,
-    segmentWasPresent: array<i32, 46>,
+    segmentStartX: array<vec4<i32>, 12>,
+    segmentStartY: array<vec4<i32>, 12>,
+    segmentEndX: array<vec4<i32>, 12>,
+    segmentEndY: array<vec4<i32>, 12>,
+    segmentPrevStartX: array<vec4<i32>, 12>,
+    segmentPrevStartY: array<vec4<i32>, 12>,
+    segmentPrevEndX: array<vec4<i32>, 12>,
+    segmentPrevEndY: array<vec4<i32>, 12>,
+    segmentStartRadius: array<vec4<f32>, 12>,
+    segmentEndRadius: array<vec4<f32>, 12>,
+    segmentPrevStartRadius: array<vec4<f32>, 12>,
+    segmentPrevEndRadius: array<vec4<f32>, 12>,
+    segmentPresent: array<vec4<i32>, 12>,
+    segmentWasPresent: array<vec4<i32>, 12>,
     numSegments: i32,
-    pad0: i32,
-    pad1: i32,
-    pad2: i32,
+    inputMode: i32,
+    numPresentSegments: i32,
+    momentumLowMotionScale: f32,
+    momentumLowMotionSoftCeilingMul: f32,
+    _padEnd: i32,
 };
 
 @group(0) @binding(0) var<uniform> params: SimParams;
@@ -107,22 +128,22 @@ fn updateLineSegments(@builtin(global_invocation_id) id: vec3<u32>) {
 
     // Process all segments
     for (var s = 0; s < params.numSegments; s = s + 1) {
-        if (params.segmentPresent[s] == 0) {
+        if (packedI32Segment(params.segmentPresent, s) == 0) {
             continue;
         }
 
-        let startX = f32(params.segmentStartX[s]);
-        let startY = f32(params.segmentStartY[s]);
-        let endX = f32(params.segmentEndX[s]);
-        let endY = f32(params.segmentEndY[s]);
-        let prevStartX = f32(params.segmentPrevStartX[s]);
-        let prevStartY = f32(params.segmentPrevStartY[s]);
-        let prevEndX = f32(params.segmentPrevEndX[s]);
-        let prevEndY = f32(params.segmentPrevEndY[s]);
-        let startRadius = params.segmentStartRadius[s];
-        let endRadius = params.segmentEndRadius[s];
-        let prevStartRadius = params.segmentPrevStartRadius[s];
-        let prevEndRadius = params.segmentPrevEndRadius[s];
+        let startX = f32(packedI32Segment(params.segmentStartX, s));
+        let startY = f32(packedI32Segment(params.segmentStartY, s));
+        let endX = f32(packedI32Segment(params.segmentEndX, s));
+        let endY = f32(packedI32Segment(params.segmentEndY, s));
+        let prevStartX = f32(packedI32Segment(params.segmentPrevStartX, s));
+        let prevStartY = f32(packedI32Segment(params.segmentPrevStartY, s));
+        let prevEndX = f32(packedI32Segment(params.segmentPrevEndX, s));
+        let prevEndY = f32(packedI32Segment(params.segmentPrevEndY, s));
+        let startRadius = packedF32Segment(params.segmentStartRadius, s);
+        let endRadius = packedF32Segment(params.segmentEndRadius, s);
+        let prevStartRadius = packedF32Segment(params.segmentPrevStartRadius, s);
+        let prevEndRadius = packedF32Segment(params.segmentPrevEndRadius, s);
 
         let px = f32(i) + 0.5;
         let py = f32(j) + 0.5;

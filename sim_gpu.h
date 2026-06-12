@@ -1,10 +1,11 @@
-#ifndef GPU_SIMULATOR_H
-#define GPU_SIMULATOR_H
+#ifndef SIM_GPU_H
+#define SIM_GPU_H
 
+#include <cstdint>
 #include <webgpu/webgpu.h>
 #include "boilerplate.h"
-#include "isimulator.h"
-#include "sim.h"
+#include "sim_shared.h"
+#include "sim_cpu.h"
 #include "config.h"
 #include "circle_state.h"
 
@@ -12,48 +13,77 @@ struct MinMaxUniform {
     float pressMin, pressMax, velMin, velMax;
 };
 
+struct alignas(16) I32Vec4 {
+    int x, y, z, w;
+};
+
+struct alignas(16) F32Vec4 {
+    float x, y, z, w;
+};
+
+inline int& simPackedI32(I32Vec4* arr, int index) {
+    return reinterpret_cast<int*>(arr)[index];
+}
+
+inline const int& simPackedI32(const I32Vec4* arr, int index) {
+    return reinterpret_cast<const int*>(arr)[index];
+}
+
+inline float& simPackedF32(F32Vec4* arr, int index) {
+    return reinterpret_cast<float*>(arr)[index];
+}
+
+inline const float& simPackedF32(const F32Vec4* arr, int index) {
+    return reinterpret_cast<const float*>(arr)[index];
+}
+
 // SIM PARAMS UNIFORM
 struct alignas(16) SimParams {
+    static constexpr int CIRCLE_VEC4_COUNT = (HandTracking::MAX_CIRCLES + 3) / 4;
+    static constexpr int SEGMENT_VEC4_COUNT = (HandTracking::MAX_SEGMENTS + 3) / 4;
+
     int gridX;
     int gridY;
     float cellSize;
     float halfCellSize;
     float timestep;
-    float density;
-    float gravity;
-    float projectionIters;
     int windTunnelSide;
     int windTunnelStart;
     int windTunnelEnd;
     float windTunnelSpeed;
+    int edges; // 4-bit mask: left(8), top(4), bottom(2), right(1)
     float momentumTransferStrength;
     float momentumTransferRadius;
     float momentumTransferDeadZone;
     float vorticity;
     float vorticityLen;
-    // track 21 landmarks per hand (mouse mode uses index 0 only)
-    int circleX[HandTracking::MAX_CIRCLES], circleY[HandTracking::MAX_CIRCLES];
-    int prevCircleX[HandTracking::MAX_CIRCLES], prevCircleY[HandTracking::MAX_CIRCLES];
-    float circleZ[HandTracking::MAX_CIRCLES]; // we use this to scale radii by distance to wrist
-    int circleScaledRadius[HandTracking::MAX_CIRCLES]; // pre-scaled
-    int circlePresent[HandTracking::MAX_CIRCLES];
-    int circleWasPresent[HandTracking::MAX_CIRCLES];
-    float circleVelX[HandTracking::MAX_CIRCLES], circleVelY[HandTracking::MAX_CIRCLES];
+    int _pad0;
+    // track 21 landmarks per hand
+    I32Vec4 circleX[CIRCLE_VEC4_COUNT], circleY[CIRCLE_VEC4_COUNT];
+    I32Vec4 prevCircleX[CIRCLE_VEC4_COUNT], prevCircleY[CIRCLE_VEC4_COUNT];
+    F32Vec4 circleZ[CIRCLE_VEC4_COUNT];
+    I32Vec4 circleScaledRadius[CIRCLE_VEC4_COUNT];
+    I32Vec4 circlePresent[CIRCLE_VEC4_COUNT];
+    I32Vec4 circleWasPresent[CIRCLE_VEC4_COUNT];
+    F32Vec4 circleVelX[CIRCLE_VEC4_COUNT], circleVelY[CIRCLE_VEC4_COUNT];
     int numCircles;
     int baseCircleRadius; // base radius from config
 
     // hand skeleton connections (23 per hand)
-    int segmentStartX[HandTracking::MAX_SEGMENTS], segmentStartY[HandTracking::MAX_SEGMENTS];
-    int segmentEndX[HandTracking::MAX_SEGMENTS], segmentEndY[HandTracking::MAX_SEGMENTS];
-    int segmentPrevStartX[HandTracking::MAX_SEGMENTS], segmentPrevStartY[HandTracking::MAX_SEGMENTS];
-    int segmentPrevEndX[HandTracking::MAX_SEGMENTS], segmentPrevEndY[HandTracking::MAX_SEGMENTS];
-    float segmentStartRadius[HandTracking::MAX_SEGMENTS], segmentEndRadius[HandTracking::MAX_SEGMENTS];
-    float segmentPrevStartRadius[HandTracking::MAX_SEGMENTS], segmentPrevEndRadius[HandTracking::MAX_SEGMENTS];
-    int segmentPresent[HandTracking::MAX_SEGMENTS];
-    int segmentWasPresent[HandTracking::MAX_SEGMENTS];
+    I32Vec4 segmentStartX[SEGMENT_VEC4_COUNT], segmentStartY[SEGMENT_VEC4_COUNT];
+    I32Vec4 segmentEndX[SEGMENT_VEC4_COUNT], segmentEndY[SEGMENT_VEC4_COUNT];
+    I32Vec4 segmentPrevStartX[SEGMENT_VEC4_COUNT], segmentPrevStartY[SEGMENT_VEC4_COUNT];
+    I32Vec4 segmentPrevEndX[SEGMENT_VEC4_COUNT], segmentPrevEndY[SEGMENT_VEC4_COUNT];
+    F32Vec4 segmentStartRadius[SEGMENT_VEC4_COUNT], segmentEndRadius[SEGMENT_VEC4_COUNT];
+    F32Vec4 segmentPrevStartRadius[SEGMENT_VEC4_COUNT], segmentPrevEndRadius[SEGMENT_VEC4_COUNT];
+    I32Vec4 segmentPresent[SEGMENT_VEC4_COUNT];
+    I32Vec4 segmentWasPresent[SEGMENT_VEC4_COUNT];
     int numSegments;
     int inputMode;
-    int pad1, pad2;
+    int numPresentSegments;
+    float momentumLowMotionScale;
+    float momentumLowMotionSoftCeilingMul;
+    int _padEnd;
 };
 static_assert(sizeof(SimParams) % 16 == 0, "SimParams invalid alignment");
 
@@ -93,15 +123,12 @@ public:
     void update() override;
 
     // fields
-    // TODO LATER add shitty slow cpu callback (test: would this work with CPU/GPU rendering/sim?)
     CPU_SIM_GETTER(getVelocityX)
     CPU_SIM_GETTER(getVelocityY)
     CPU_SIM_GETTER(getPressure)
     CPU_SIM_GETTER(getDensity)
     CPU_SIM_GETTER(getSolid)
-    CPU_SIM_GETTER(getRedInk)
-    CPU_SIM_GETTER(getGreenInk)
-    CPU_SIM_GETTER(getBlueInk)
+    CPU_SIM_GETTER(getInk)
 
     // modes
     bool isUsingGPU() const override { return true; }
@@ -134,13 +161,11 @@ private:
     // workgroup size (initialized to ceil(gridDim / 16))
     uint32_t workgroupX = 0, workgroupY = 0;
 
-    int numCircles = 0;
     float momentumTransferStrength;
     float momentumTransferRadius;
-    float momentumTransferDeadZone;
 
     // histogram state
-    mutable HistogramSlot histogramSlots[HISTOGRAM_RING_SIZE];
+    mutable HistogramSlot histogramSlots[HISTOGRAM_RING_SIZE] = {};
     mutable int histogramWriteIndex = 0;
     mutable int histogramReadIndex = 0;
 
@@ -164,7 +189,6 @@ private:
     DECLARE_TEXTURE_AND_VIEW(newPressure)
 
     // pipeline resources
-    DECLARE_PIPELINE_RESOURCES(integrate)
     DECLARE_PIPELINE_RESOURCES(divergence)
     DECLARE_PIPELINE_RESOURCES(jacobi)
     DECLARE_PIPELINE_RESOURCES(jacobiPingPong)
@@ -182,12 +206,10 @@ private:
     DECLARE_PIPELINE_RESOURCES(histogramBins)
 
     // updated with SimParams
-    void updateProjectionIterations();
     void updateUniformBufferSim();
 
     // compute dispatch
     void dispatchComputePass(WGPUCommandEncoder encoder, WGPUComputePipeline pipeline, WGPUBindGroup bindGroup);
-    void dispatchIntegrate(WGPUCommandEncoder encoder);
     void dispatchProjection(WGPUCommandEncoder encoder);
     void dispatchExtrapolate(WGPUCommandEncoder encoder);
     void dispatchAdvect(WGPUCommandEncoder encoder);
@@ -227,7 +249,14 @@ private:
 
     // gpu resource initialization boilerplate
     bool initSimData(const Config& cfg, const ImageData* imageData, float aspectRatio);
+    void syncGridFromCpu();
+    void releaseSimGridResources();
+    bool rebuildGridResources();
+    void zeroScalarGpuTexture(WGPUTexture texture);
+    void uploadScalarGpuFieldsFromCpu();
     bool initUniformBuffer();
+    bool initSimTextures();
+    bool initHistogramResources();
     bool initTextures();
     bool initPipelineLayouts();
     bool initBindGroups();
