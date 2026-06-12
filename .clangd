@@ -1,5 +1,5 @@
 CompileFlags:
-  CompilationDatabase: build/
+  CompilationDatabase: web/build/
 
 Index:
   Background: Build

@@ -117,7 +117,7 @@ static float orderedUintToFloat(uint32_t ordered) {
     return value;
 }
 
-// gpu_render and gpu_sim both inherit from this
+// render and sim_gpu both inherit from this
 // which provides lots of boilerplate helpers *that are reused between both classes*
 // if a helper is not reused between render/sim, it is implemented in the respective class
 class WGPUBoilerplate {
@@ -129,13 +129,8 @@ public:
     WGPUQueue queue = nullptr;
 
     // load code from shaders
-    WGPUShaderModule createShaderModule(const char* shaderFile) {
-        if (!device) {
-            return nullptr;
-        }
-
-        std::string shaderSource = ConfigLoader::readFile(shaderFile);
-        if (shaderSource.empty()) {
+    WGPUShaderModule createShaderModuleFromSource(const std::string& shaderSource) {
+        if (!device || shaderSource.empty()) {
             return nullptr;
         }
 
@@ -156,6 +151,19 @@ public:
 #endif
         WGPUShaderModule shaderModule = wgpuDeviceCreateShaderModule(device, &shaderDesc);
         return shaderModule;
+    }
+
+    WGPUShaderModule createShaderModule(const char* shaderFile) {
+        if (!device) {
+            return nullptr;
+        }
+
+        std::string shaderSource = ConfigLoader::readFile(shaderFile);
+        if (shaderSource.empty()) {
+            return nullptr;
+        }
+
+        return createShaderModuleFromSource(shaderSource);
     }
 
     // pipeline resource factories

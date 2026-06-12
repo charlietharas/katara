@@ -6,17 +6,21 @@
     <link rel="shortcut icon" type="image/x-icon" href="https://charliemax.dev/favicon.ico">
     <link rel="stylesheet" href="https://charliemax.dev/css/stylesheet.css">
     <link rel="stylesheet" href="styles.css">
+    <script type="module" src="palette.js"></script>
     <title>katara</title>
 </head>
 <nav></nav>
 <script src="https://charliemax.dev/js/lightmode.js"></script>
 <body>
     <div class="content page-title">
-        <h1>katara</h1>
+        <h1><span class="page-nav-current">katara</span> <a href="https://charliemax.dev/blog/katara" class="page-nav-link" target="_blank" rel="noopener noreferrer">// spec</a></h1>
     </div>
     <div class="sim-viewport">
         <div class="loading-overlay" id="loadingOverlay">
             <h2>Loading...</h2>
+        </div>
+        <div class="camera-permission-panel hidden" id="cameraPermissionPanel" role="status" aria-live="polite">
+            Katara is requesting camera permissions for optional interactivity features
         </div>
         <canvas id="canvas"></canvas>
         <div class="camera-panel"></div>
@@ -44,7 +48,7 @@
                 </svg>
                 [C]
             </button>
-            <button id="uploadInkBtn" class="control-btn" title="Upload PNG image for ink mode (U)">
+            <button id="uploadInkBtn" class="control-btn" title="Upload PNG for ink mode (U)">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                     <polyline points="17 8 12 3 7 8"></polyline>

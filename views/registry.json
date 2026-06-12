@@ -1,0 +1,50 @@
+{
+    "0": {
+        "name": "PRESSURE",
+        "file": "00_pressure.wgsl"
+    },
+    "1": {
+        "name": "DENSITY",
+        "file": "01_density.wgsl"
+    },
+    "2": {
+        "name": "FLUID",
+        "file": "02_fluid.wgsl"
+    },
+    "3": {
+        "name": "INK",
+        "file": "03_ink.wgsl"
+    },
+    "4": {
+        "name": "DIVERGENCE",
+        "file": "04_divergence.wgsl"
+    },
+    "5": {
+        "name": "NORMAL",
+        "file": "05_normal.wgsl"
+    },
+    "6": {
+        "name": "HEATMAP",
+        "file": "06_heatmap.wgsl"
+    },
+    "7": {
+        "name": "BLOOM",
+        "file": "07_bloom.wgsl"
+    },
+    "8": {
+        "name": "SHIMMER",
+        "file": "08_shimmer.wgsl"
+    },
+    "9": {
+        "name": "PLASMA",
+        "file": "09_plasma.wgsl"
+    },
+    "10": {
+        "name": "CHROME",
+        "file": "10_chrome.wgsl"
+    },
+    "11": {
+        "name": "VAPOR",
+        "file": "11_vapor.wgsl"
+    }
+}

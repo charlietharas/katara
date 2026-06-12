@@ -1,14 +1,29 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#include <string>
-#include <fstream>
-#include <sstream>
 #include <map>
+#include <string>
 #include "json.hpp"
-#include "circle_state.h"
 
 using json = nlohmann::json;
+
+enum class InputMode : int {
+    Hand = 0,
+    MousePull = 1,
+};
+
+
+struct HandsConfig {
+    std::string left = "full";
+    std::string right = "full";
+};
+
+
+enum class PipelineType {
+    GPU,    // "device"
+    HYBRID, // "hybrid"
+};
+
 
 struct WindowConfig {
     int baseSize;
@@ -16,59 +31,119 @@ struct WindowConfig {
     int defaultHeight;
 };
 
+
 struct ProjectionConfig {
     float overrelaxationCoefficient;
     int iterations;
-
-    // Auto-scaling parameters
-    bool autoScaleIterations;
-    int motionScaleIterations;
-    int motionCooldownFrames;
-    float motionThreshold;
 };
 
+
 struct VorticityConfig {
-    bool enabled;
     float strength;
     float lengthScale;
 };
 
+
 struct WindTunnelConfig {
-    int side; // -1=disabled, 0=left, 1=top, 2=bottom, 3=right
-    float startPosition;
+    int side;            // -1=disabled, 0=left, 1=top, 2=bottom, 3=right
+    float startPosition; // 0-1
     float endPosition;
     float velocity;
 };
+
 
 struct CircleConfig {
     float radius;
     float momentumTransferStrength;
     float momentumTransferRadius;
+    float handSensitivity; // 0-1 low-high
 
-    // z-coordinate scaling for depth-based radius
-    float zMin;      // closest hand
-    float zMax;       // farthest hand
-    float scaleMin;   // max scale when closest
-    float scaleMax;   // min scale when furthest
-
-    // velocity-adaptive smoothing for hand jitter reduction
-    float handSmoothingAlphaLow;
-    float handSmoothingAlphaHigh;
-    float handSpeedThreshold;
-    float momentumTransferDeadZone;
+    // depth scaling
+    float zMin;        // closest hand
+    float zMax;        // farthest hand
+    float zScaleMin;   // max scale when closest
+    float zScaleMax;   // min scale when furthest
 };
 
-enum class PipelineType {
-    CPU, // "host"
-    GPU, // "device"
-    HYBRID // "hybrid"
+
+struct SimulationConfig {
+    int resolution;
+    float timestep;
+    int edges; // 4-bit mask: left(8), top(4), bottom(2), right(1)
+    ProjectionConfig projection;
+    VorticityConfig vorticity;
+    WindTunnelConfig windTunnel;
+    CircleConfig circle;
 };
 
-enum class InputMode : int {
-    Hand = 0,
-    MousePull = 1,
+
+struct ComponentBBox {
+    float x;
+    float y;
+    float w;
+    float h;
+    int px;
+    int py;
+    int rotation = 0;
+    int viewportTarget;
+    bool viewportVelocityViewEnabled;
+    bool histogramEnabled;
 };
 
+
+struct LayoutConfig {
+    std::string preset;
+    bool labelsEnabled = true;
+    bool buttonsEnabled = true;
+    bool camerasEnabled = true;
+    bool disableHistograms = false;
+    float velocityScale = 0.01f;
+    std::map<std::string, ComponentBBox> components;
+};
+
+
+struct PixelRect {
+    int x, y, width, height;
+};
+
+inline PixelRect makeRect(int x, int y, int width, int height) {
+    return {x, y, width, height};
+}
+
+inline constexpr const char LAYOUT_PRESET_DEFAULT[] = "default";
+inline constexpr const char LAYOUT_PRESET_FOCUSED[] = "focused";
+inline constexpr const char LAYOUT_PRESET_VIEWPORT[] = "viewport";
+inline constexpr const char LAYOUT_PRESET_GALLERY_SINGLE[] = "gallery_single";
+inline constexpr const char LAYOUT_PRESET_GALLERY_DOUBLE[] = "gallery_double";
+inline constexpr const char LAYOUT_PRESET_GALLERY_QUAD[] = "gallery_quad";
+inline constexpr const char LAYOUT_PRESET_LEGACY[] = "legacy";
+
+inline constexpr const char* const LAYOUT_PRESETS[] = {
+    LAYOUT_PRESET_DEFAULT,
+    LAYOUT_PRESET_FOCUSED,
+    LAYOUT_PRESET_VIEWPORT,
+    LAYOUT_PRESET_GALLERY_SINGLE,
+    LAYOUT_PRESET_GALLERY_DOUBLE,
+    LAYOUT_PRESET_GALLERY_QUAD,
+};
+inline constexpr int NUM_LAYOUT_PRESETS = static_cast<int>(sizeof(LAYOUT_PRESETS) / sizeof(LAYOUT_PRESETS[0]));
+
+struct LayoutPixels {
+    std::map<std::string, PixelRect> components;
+};
+
+
+struct Config {
+    InputMode inputMode = InputMode::Hand;
+    HandsConfig hands;
+    PipelineType pipeline;
+    std::string imagePath;
+    WindowConfig window;
+    SimulationConfig simulation;
+    LayoutConfig layout;
+};
+
+// helpers
 inline bool isMouseInput(InputMode mode) {
     return mode == InputMode::MousePull;
 }
@@ -80,88 +155,37 @@ inline int inputModeToInt(InputMode mode) {
 InputMode parseInputMode(const std::string& mode);
 std::string inputModeToString(InputMode mode);
 
-struct SimulationConfig {
-    int resolution;
-    float timestep;
-    float gravity;
-    float fluidDensity;
-    int edges; // 4-bit mask: left(8), top(4), bottom(2), right(1)
-    ProjectionConfig projection;
-    VorticityConfig vorticity;
-    WindTunnelConfig windTunnel;
-    CircleConfig circle;
-};
 
-struct RenderingConfig {
-    // 0=pressure, 1=smoke, 2=both(pretty), 3=ink, 4=divergence, 5=heatmap, 6=normals, 7=threshold+bloom
-    int target;
-    bool showVelocityVectors;
-    bool disableHistograms;
-    float velocityScale;
-};
+inline bool layoutHasInkViewport(const LayoutConfig& layout) {
+    for (const auto& [name, bbox] : layout.components) {
+        if (name.rfind("viewport_", 0) == 0 && bbox.viewportTarget == 3) {
+            return true;
+        }
+    }
+    return false;
+}
 
-struct InkConfig {
-    std::string imagePath;
-};
+inline bool configUsesInkAspect(const Config& config) {
+    return !config.imagePath.empty();
+}
 
-struct ComponentBBox {
-    float x;     // normalized [0,1]
-    float y;
-    float w;
-    float h;
-    int px;          // horizontal padding (raw px)
-    int py;          // vertical padding (raw px)
-    // render target (viewports: 0=pressure,1=smoke,2=both,3=ink,4=divergence,5=heatmap,6=normals,7=threshold+bloom)
-    int target;
-    bool enabled; // enabled flag (histograms)
-    bool velocity; // show velocity vectors (viewports)
-};
-
-struct PixelRect {
-    int x, y, width, height;
-};
-
-struct LayoutConfig {
-    std::string preset;
-    bool camerasEnabled = true;
-    std::map<std::string, ComponentBBox> components;
-};
-
-struct LayoutPixels {
-    std::map<std::string, PixelRect> components;
-};
-
-extern LayoutPixels g_layoutPixels;
-
-struct Config {
-    InputMode inputMode = InputMode::Hand;
-    PipelineType pipeline;
-    WindowConfig window;
-    SimulationConfig simulation;
-    RenderingConfig rendering;
-    InkConfig ink;
-    LayoutConfig layout;  // layout configuration for flexible frontend
-};
 
 class ConfigLoader {
 public:
-    static Config loadConfig(const std::string& filename = "../config.json");
+    static Config loadConfig(const std::string& filename);
     static std::string readFile(const char* filename);
 
-    // compute pixel layout from normalized config + canvas dimensions
     static std::string computeLayout(const LayoutConfig& config,
                                      int canvasW,
                                      int canvasH,
-                                     bool isInkMode = false,
-                                     float inkAspectRatio = 1.0f,
-                                     float cameraAspectRatio = (4.0f / 3.0f));
+                                     bool isInkMode,
+                                     float inkAspectRatio,
+                                     float cameraAspectRatio);
 
 private:
     static PipelineType stringToPipelineType(const std::string& type);
     static WindowConfig loadWindowConfig(const json& j);
     static SimulationConfig loadSimulationConfig(const json& j);
-    static RenderingConfig loadRenderingConfig(const json& j);
-    static InkConfig loadInkConfig(const json& j);
     static LayoutConfig loadLayoutConfig(const json& j);
     static ProjectionConfig loadProjectionConfig(const json& j);
     static VorticityConfig loadVorticityConfig(const json& j);
@@ -169,7 +193,7 @@ private:
     static CircleConfig loadCircleConfig(const json& j);
 };
 
-// Global config — single source of truth, update in-place for runtime reload
+extern LayoutPixels g_layoutPixels;
 extern Config g_config;
 
 #endif

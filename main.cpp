@@ -8,32 +8,28 @@
 #include <SDL2/SDL_image.h>
 #include <string>
 #include <memory>
-#include "sim.h"
+#include "sim_cpu.h"
+#include "sim_gpu.h"
+#include "sim_shared.h"
 #include "render.h"
-#include "gpu_render.h"
-#include "gpu_sim.h"
-#include "irenderer.h"
-#include "isimulator.h"
 #include "config.h"
 #include "circle_state.h"
 
+// web version imports
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #include <cmath>
+#include <cstring>
+#include <cstdlib>
 #endif
 
-// Global config — single source of truth
+// this fella is rather important
 Config g_config;
 
-// cpu -> cpu renderer, otherwise hybrid/gpu both use gpu
-std::unique_ptr<IRenderer> createRenderer(SDL_Window* window, const Config& config) {
-    if (config.pipeline == PipelineType::CPU) {
-        return std::make_unique<Renderer>(window, config);
-    }
-    return std::make_unique<GPURenderer>(window, config);
+std::unique_ptr<Renderer> createRenderer(SDL_Window* window, const Config& config) {
+    return std::make_unique<Renderer>(window, config);
 }
 
-// gpu -> gpu simulator, otherwise hybrid/cpu both use cpu
 std::unique_ptr<ISimulator> createSimulator(const Config& config) {
     if (config.pipeline == PipelineType::GPU) {
         return std::make_unique<GPUSimulator>(config);
@@ -41,12 +37,59 @@ std::unique_ptr<ISimulator> createSimulator(const Config& config) {
     return std::make_unique<Simulator>(config);
 }
 
-// Image loading helper for runtime ink reload
+
+// viewport helpers
+constexpr int NUM_VIEWPORTS = 12;
+
+void setViewportTargetByIndex(int index, int target) {
+    const std::string name = "viewport_" + std::to_string(index + 1);
+    auto it = g_config.layout.components.find(name);
+    if (it != g_config.layout.components.end()) {
+        it->second.viewportTarget = target;
+    } else {
+        std::cerr << "ERR finding viewport " << name << " in config" << std::endl;
+    }
+}
+
+void cycleViewportTargetByNumber(int number, bool forward) {
+    const std::string name = "viewport_" + std::to_string(number);
+    auto it = g_config.layout.components.find(name);
+    if (it == g_config.layout.components.end()) {
+        return;
+    }
+    int& target = it->second.viewportTarget;
+    if (forward) {
+        target = (target + 1) % NUM_VIEWPORTS;
+    } else {
+        target = (target - 1 + NUM_VIEWPORTS) % NUM_VIEWPORTS;
+    }
+}
+
+
+// layout helpers
+void cycleLayoutPreset(bool forward) {
+    int index = 0;
+    for (int i = 0; i < NUM_LAYOUT_PRESETS; ++i) {
+        if (g_config.layout.preset == LAYOUT_PRESETS[i]) {
+            index = i;
+            break;
+        }
+    }
+    if (forward) {
+        index = (index + 1) % NUM_LAYOUT_PRESETS;
+    } else {
+        index = (index - 1 + NUM_LAYOUT_PRESETS) % NUM_LAYOUT_PRESETS;
+    }
+    g_config.layout.preset = LAYOUT_PRESETS[index];
+}
+
+
+// image loading helpers
 struct LoadedImage {
     SDL_Surface* surface = nullptr;
     SDL_Surface* converted = nullptr;
     ImageData* imageData = nullptr;
-    float aspectRatio = 1.5f;
+    float aspectRatio = DEFAULT_PLOT_ASPECT_RATIO;
 
     void cleanup() {
         delete imageData;
@@ -70,7 +113,7 @@ LoadedImage loadImage(const std::string& path) {
     result.surface = imageSurface;
     result.aspectRatio = static_cast<float>(imageSurface->w) / imageSurface->h;
 
-    // Convert to 32-bit RGB
+    // convert to 32-bit RGB
     SDL_Surface* convertedSurface = SDL_ConvertSurfaceFormat(imageSurface, SDL_PIXELFORMAT_RGB888, 0);
     if (!convertedSurface) {
         std::cerr << "ERR converting image surface: " << SDL_GetError() << std::endl;
@@ -80,7 +123,7 @@ LoadedImage loadImage(const std::string& path) {
 
     result.converted = convertedSurface;
 
-    // Copy data to struct
+    // copy data to struct
     ImageData* imageData = new ImageData();
     imageData->pixels = convertedSurface->pixels;
     imageData->width = convertedSurface->w;
@@ -96,14 +139,14 @@ LoadedImage loadImage(const std::string& path) {
     return result;
 }
 
+// web build
 #ifdef __EMSCRIPTEN__
-
 static bool g_simulationPaused = false;
-static IRenderer* g_renderer = nullptr;
+static Renderer* g_renderer = nullptr;
 
 struct MainLoopState {
     ISimulator* simulator;
-    IRenderer* renderer;
+    Renderer* renderer;
     SDL_Window* window;
     bool* running;
     int windowWidth;
@@ -131,6 +174,7 @@ void mainLoopCallback(void* arg) {
 extern "C" {
     static ISimulator* g_simulator = nullptr;
 
+    // wasm export helpers
     static void applyInputModeTransition(InputMode prevMode, InputMode newMode) {
         if (!g_simulator) return;
 
@@ -149,9 +193,51 @@ extern "C" {
         }
     }
 
+    static char* duplicateShaderString(const std::string& value) {
+        char* out = static_cast<char*>(std::malloc(value.size() + 1));
+        if (!out) {
+            return nullptr;
+        }
+        std::memcpy(out, value.c_str(), value.size() + 1);
+        return out;
+    }
+
+    // lifecycle
     EMSCRIPTEN_KEEPALIVE
     void setSimulatorPointer(void* ptr) {
         g_simulator = static_cast<ISimulator*>(ptr);
+    }
+
+    EMSCRIPTEN_KEEPALIVE
+    void setSimulationPaused(int paused) {
+        g_simulationPaused = (paused != 0);
+    }
+
+    // sim domain
+    EMSCRIPTEN_KEEPALIVE
+    float getSimDomainWidth() {
+        if (g_simulator) return g_simulator->domainWidth;
+        return 0.0f;
+    }
+
+    EMSCRIPTEN_KEEPALIVE
+    float getSimDomainHeight() {
+        if (g_simulator) return g_simulator->domainHeight;
+        return 0.0f;
+    }
+
+    EMSCRIPTEN_KEEPALIVE
+    float getSimCellSize() {
+        if (g_simulator) return g_simulator->cellSize;
+        return 0.0f;
+    }
+
+    // simulation
+    EMSCRIPTEN_KEEPALIVE
+    void update() {
+        if (g_simulator && !g_simulationPaused) {
+            g_simulator->update();
+        }
     }
 
     EMSCRIPTEN_KEEPALIVE
@@ -168,13 +254,7 @@ extern "C" {
         }
     }
 
-    EMSCRIPTEN_KEEPALIVE
-    void update() {
-        if (g_simulator && !g_simulationPaused) {
-            g_simulator->update();
-        }
-    }
-
+    // input mode
     EMSCRIPTEN_KEEPALIVE
     void setInputMode(int modeInt) {
         if (!g_simulator) return;
@@ -191,6 +271,7 @@ extern "C" {
         applyInputModeTransition(prevMode, newMode);
     }
 
+    // mouse input
     EMSCRIPTEN_KEEPALIVE
     void onMouseDown(int gridX, int gridY) {
         if (g_simulator && isMouseInput(g_config.inputMode)) {
@@ -201,12 +282,16 @@ extern "C" {
             g_simulator->mousePrevCircleY = gridY;
             g_simulator->mouseCircleVelX = 0.0f;
             g_simulator->mouseCircleVelY = 0.0f;
+            g_simulator->clearMousePullFootprint();
         }
     }
 
     EMSCRIPTEN_KEEPALIVE
     void onMouseUp() {
         if (g_simulator) {
+            if (isMouseInput(g_config.inputMode)) {
+                g_simulator->clearMousePullFootprint();
+            }
             g_simulator->isMouseDragging = false;
             g_simulator->mouseCircleVelX = 0.0f;
             g_simulator->mouseCircleVelY = 0.0f;
@@ -227,33 +312,10 @@ extern "C" {
         }
     }
 
-    // Helper functions for coordinate mapping
-    EMSCRIPTEN_KEEPALIVE
-    float getSimDomainWidth() {
-        if (g_simulator) return g_simulator->domainWidth;
-        return 0.0f;
-    }
-
-    EMSCRIPTEN_KEEPALIVE
-    float getSimDomainHeight() {
-        if (g_simulator) return g_simulator->domainHeight;
-        return 0.0f;
-    }
-
-    EMSCRIPTEN_KEEPALIVE
-    float getSimCellSize() {
-        if (g_simulator) return g_simulator->cellSize;
-        return 0.0f;
-    }
-
-    EMSCRIPTEN_KEEPALIVE
-    void setSimulationPaused(int paused) {
-        g_simulationPaused = (paused != 0);
-    }
-
+    // layout
     EMSCRIPTEN_KEEPALIVE
     void initLayout(int canvasW, int canvasH, float inkAspectRatio, float cameraAspectRatio) {
-        const bool isInkMode = (g_config.rendering.target == 3);
+        const bool isInkMode = configUsesInkAspect(g_config);
         std::string json = ConfigLoader::computeLayout(
             g_config.layout,
             canvasW,
@@ -270,111 +332,164 @@ extern "C" {
         }
     }
 
-    // Reload config at runtime without page refresh
-    // Flags: INK=1, SIM=2, RENDER=4, LAYOUT=8
-    EMSCRIPTEN_KEEPALIVE
-    void reloadConfig(int flags) {
-        const InputMode prevMode = g_config.inputMode;
-        Config newConfig = ConfigLoader::loadConfig("/config.json");
-
-        // Always update the global
-        g_config = newConfig;
-        applyInputModeTransition(prevMode, g_config.inputMode);
-
-        // SIM: push new sim params to simulator
-        if (flags & 2) {
-            if (g_simulator) {
-                g_simulator->updateSimParams(g_config);
-                std::cout << "Sim params updated" << std::endl;
-            }
-        }
-
-        // INK: reload ink image
-        if (flags & 1) {
-            if (g_simulator && !g_config.ink.imagePath.empty()) {
-                LoadedImage img = loadImage(g_config.ink.imagePath);
-                if (img.imageData) {
-                    g_simulator->reinitInk(img.imageData);
-                    std::cout << "Ink reinitialized from: " << g_config.ink.imagePath << std::endl;
-                }
-                // Cleanup surfaces (imageData still points to converted->pixels,
-                // simulator has copied the data by now)
-                img.cleanup();
-            }
-        }
-
-        // RENDER (4): no action needed, renderers read g_config each frame
-
-        // LAYOUT (8): handled by JS calling initLayout() separately after
-        std::cout << "Config reload complete (flags=" << flags << ")" << std::endl;
-    }
-
-    // Reset fluid field and restore ink from config image when available
+    // config and fluid
     EMSCRIPTEN_KEEPALIVE
     void resetFluidField() {
         if (!g_simulator) {
             return;
         }
+        g_simulator->updateSimParams(g_config);
 
         if (g_renderer) {
-            // entropy time series is drawn from renderer-side history
-            if (g_config.pipeline != PipelineType::CPU) {
-                static_cast<GPURenderer*>(g_renderer)->resetEntropyTimeSeries();
-            }
+            g_renderer->resetEntropyTimeSeries();
         }
 
-        if (!g_config.ink.imagePath.empty()) {
-            LoadedImage img = loadImage(g_config.ink.imagePath);
+        if (!g_config.imagePath.empty()) {
+            LoadedImage img = loadImage(g_config.imagePath);
             if (img.imageData) {
                 g_simulator->reinitInk(img.imageData);
                 img.cleanup();
-                std::cout << "Fluid field and ink reset from: " << g_config.ink.imagePath << std::endl;
                 return;
             }
             img.cleanup();
         }
 
         g_simulator->resetFluidState(true);
-        std::cout << "Fluid field reset" << std::endl;
+        std::cout << "Fluid field reset" << std::endl;    
     }
 
-    // Set viewport target by index (0=viewport_1, 1=viewport_2, ...)
-    // target: 0=pressure, 1=smoke, 2=both, 3=ink, 4=divergence, 5=heatmap, 6=normals, 7=threshold+bloom
     EMSCRIPTEN_KEEPALIVE
-    void setViewportTarget(int viewportIndex, int target) {
-        std::string vpName = "viewport_" + std::to_string(viewportIndex + 1);
-        auto it = g_config.layout.components.find(vpName);
-        if (it != g_config.layout.components.end()) {
-            it->second.target = target;
-            std::cout << "Viewport " << vpName << " target set to " << target << std::endl;
-        } else {
-            std::cerr << "Viewport " << vpName << " not found in config" << std::endl;
+    void reloadConfig(int flags) {
+        const InputMode prevMode = g_config.inputMode;
+        Config newConfig = ConfigLoader::loadConfig("/config.json");
+
+        g_config = newConfig;
+        applyInputModeTransition(prevMode, g_config.inputMode);
+
+        // sim params
+        if (flags & 2) {
+            resetFluidField();
+        }
+
+        // ink
+        if (flags & 1) {
+            if (g_simulator && !g_config.imagePath.empty()) {
+                LoadedImage img = loadImage(g_config.imagePath);
+                if (img.imageData) {
+                    g_simulator->reinitInk(img.imageData);
+                    std::cout << "Ink reinitialized from: " << g_config.imagePath << std::endl;
+                }
+                img.cleanup();
+            }
         }
     }
 
-    // Set viewport velocity enabled by index (0=viewport_1, 1=viewport_2, ...)
-    // enabled: 0=disabled, 1=enabled
+    // viewport
+    EMSCRIPTEN_KEEPALIVE
+    void setViewportTarget(int viewportIndex, int target) {
+        setViewportTargetByIndex(viewportIndex, target);
+    }
+
     EMSCRIPTEN_KEEPALIVE
     void setViewportVelocity(int viewportIndex, int enabled) {
         std::string vpName = "viewport_" + std::to_string(viewportIndex + 1);
         auto it = g_config.layout.components.find(vpName);
         if (it != g_config.layout.components.end()) {
-            it->second.velocity = (enabled != 0);
-            std::cout << "Viewport " << vpName << " velocity set to " << (enabled != 0 ? "enabled" : "disabled") << std::endl;
+            it->second.viewportVelocityViewEnabled = (enabled != 0);
         } else {
-            std::cerr << "Viewport " << vpName << " not found in config" << std::endl;
+            std::cerr << "ERR (velocity) finding viewport " << vpName << " in config" << std::endl;
+        }
+    }
+
+    EMSCRIPTEN_KEEPALIVE
+    void setViewportRotation(int viewportIndex, int rotation) {
+        std::string vpName = "viewport_" + std::to_string(viewportIndex + 1);
+        auto it = g_config.layout.components.find(vpName);
+        if (it != g_config.layout.components.end()) {
+            it->second.rotation = ((rotation % 4) + 4) % 4;
+        } else {
+            std::cerr << "ERR (rotate) finding viewport " << vpName << " in config" << std::endl;
+        }
+    }
+
+    // view shaders
+    EMSCRIPTEN_KEEPALIVE
+    char* getViewSource(int index) {
+        if (!g_renderer) {
+            return duplicateShaderString("");
+        }
+        return duplicateShaderString(g_renderer->getViewSource(index));
+    }
+
+    EMSCRIPTEN_KEEPALIVE
+    int setViewSource(int index, const char* wgsl) {
+        if (!g_renderer || !wgsl) {
+            return 0;
+        }
+        return g_renderer->setViewSource(index, wgsl) ? 1 : 0;
+    }
+
+    EMSCRIPTEN_KEEPALIVE
+    int resetViewSource(int index) {
+        if (!g_renderer) {
+            return 0;
+        }
+        return g_renderer->resetViewSource(index) ? 1 : 0;
+    }
+
+    EMSCRIPTEN_KEEPALIVE
+    int applyViewShaders() {
+        if (!g_renderer) {
+            return 1;
+        }
+        return g_renderer->applyViewShaders() ? 0 : 1;
+    }
+
+    EMSCRIPTEN_KEEPALIVE
+    char* getLastShaderError() {
+        if (!g_renderer) {
+            return duplicateShaderString("Renderer unavailable");
+        }
+        return duplicateShaderString(g_renderer->getLastShaderError());
+    }
+
+    EMSCRIPTEN_KEEPALIVE
+    void freeShaderString(char* value) {
+        std::free(value);
+    }
+
+    // lightmode helper
+    EMSCRIPTEN_KEEPALIVE
+    void setBackgroundColor(float r, float g, float b) {
+        if (g_renderer) {
+            g_renderer->setBackgroundColor(r, g, b);
         }
     }
 }
 #endif
 
+#ifndef __EMSCRIPTEN__
+static void initLayoutFromWindow(int w, int h, float inkAspect) {
+    ConfigLoader::computeLayout(
+        g_config.layout,
+        w,
+        h,
+        configUsesInkAspect(g_config),
+        inkAspect,
+        DEFAULT_CAMERA_ASPECT_RATIO
+    );
+}
+
+#endif
+
 int main(int argc, char** argv) {
     // load config from default path if none specified
 #ifdef __EMSCRIPTEN__
-    std::string configPath = "/config.json";  // emscripten virtual FS root
+    std::string configPath = "/config.json"; // emscripten virtual FS root
 #else
-    std::string configPath = "../config.json";  // desktop build
+    std::string configPath = "../config.json"; // desktop/config.json
 #endif
+
     if (argc > 1) {
         configPath = argv[1];
     }
@@ -395,7 +510,7 @@ int main(int argc, char** argv) {
     SDL_Surface* imageSurface = nullptr;
     SDL_Surface* convertedSurface = nullptr;
     ImageData* imageData = nullptr;
-    if (!config.ink.imagePath.empty() && config.rendering.target == 3) {
+    if (!config.imagePath.empty()) {
         const int imgInitFlags = IMG_INIT_PNG;
         if ((IMG_Init(imgInitFlags) & imgInitFlags) == 0) {
             std::cerr << "ERR initializing SDL_image PNG support: " << IMG_GetError() << std::endl;
@@ -404,7 +519,7 @@ int main(int argc, char** argv) {
         }
 
         // load an image and grab its dimensions for window sizing
-        imageSurface = IMG_Load(config.ink.imagePath.c_str());
+        imageSurface = IMG_Load(config.imagePath.c_str());
         if (imageSurface) {
             aspectRatio = static_cast<float>(imageSurface->w) / imageSurface->h;
 
@@ -439,12 +554,12 @@ int main(int argc, char** argv) {
             imageData->gShift = convertedSurface->format->Gshift;
             imageData->bShift = convertedSurface->format->Bshift;
         } else {
-            std::cerr << "ERR loading image (path: " << config.ink.imagePath << "): " << IMG_GetError() << std::endl;
+            std::cerr << "ERR loading image (path: " << config.imagePath << "): " << IMG_GetError() << std::endl;
             SDL_Quit();
             return 1;
         }
-    } else if (config.rendering.target == 3) {
-        std::cerr << "ERR rendering target=3 but no image path was provided" << std::endl;
+    } else if (layoutHasInkViewport(config.layout)) {
+        std::cerr << "ERR ink viewport configured but no imagePath was provided" << std::endl;
         SDL_Quit();
         return 1;
     }
@@ -464,18 +579,9 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Compute pixel layout from window dimensions (desktop path)
 #ifndef __EMSCRIPTEN__
-    const bool isInkMode = (g_config.rendering.target == 3);
-    const float inkAspectRatio = isInkMode ? aspectRatio : 1.0f;
-    ConfigLoader::computeLayout(
-        g_config.layout,
-        windowWidth,
-        windowHeight,
-        isInkMode,
-        inkAspectRatio,
-        4.0f / 3.0f
-    );
+    const float inkAspectRatio = !config.imagePath.empty() ? aspectRatio : 1.0f;
+    initLayoutFromWindow(windowWidth, windowHeight, inkAspectRatio);
 #endif
 
     auto renderer = createRenderer(window, config);
@@ -494,9 +600,8 @@ int main(int argc, char** argv) {
 
     if (config.pipeline == PipelineType::GPU) {
         auto gpuSimulator = static_cast<GPUSimulator*>(simulator.get());
-        auto gpuRenderer = static_cast<GPURenderer*>(renderer.get());
-        gpuSimulator->device = gpuRenderer->device;
-        gpuSimulator->queue = gpuRenderer->queue;
+        gpuSimulator->device = renderer->device;
+        gpuSimulator->queue = renderer->queue;
     }
 
     if (!simulator->init(config, imageData, aspectRatio)) {
@@ -511,7 +616,7 @@ int main(int argc, char** argv) {
     std::cout << "Simulator initialized" << std::endl;
 
 #ifdef __EMSCRIPTEN__
-    // Signal JS that C++ initialization is complete (window is ready, image loaded if applicable)
+    // C++ initialization complete
     emscripten_run_script("if (window.kataraOnReady) window.kataraOnReady();");
 #endif
 
@@ -530,6 +635,51 @@ int main(int argc, char** argv) {
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
                 running = false;
+            } else if (event.type == SDL_WINDOWEVENT &&
+                       event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
+                windowWidth = event.window.data1;
+                windowHeight = event.window.data2;
+                initLayoutFromWindow(windowWidth, windowHeight, inkAspectRatio);
+                renderer->onWindowResize(windowWidth, windowHeight);
+            } else if (event.type == SDL_KEYDOWN) {
+                const SDL_Keymod mod = static_cast<SDL_Keymod>(event.key.keysym.mod);
+                if (!(mod & (KMOD_CTRL | KMOD_ALT | KMOD_GUI))) {
+                    const bool forward = !(mod & KMOD_SHIFT);
+                    bool layoutChanged = false;
+
+                    switch (event.key.keysym.sym) {
+                        case SDLK_1:
+                        case SDLK_KP_1: // 1
+                            cycleViewportTargetByNumber(1, forward);
+                            layoutChanged = true;
+                            break;
+                        case SDLK_2:
+                        case SDLK_KP_2: // 2
+                            cycleViewportTargetByNumber(2, forward);
+                            layoutChanged = true;
+                            break;
+                        case SDLK_3:
+                        case SDLK_KP_3: // 3
+                            cycleViewportTargetByNumber(3, forward);
+                            layoutChanged = true;
+                            break;
+                        case SDLK_4:
+                        case SDLK_KP_4: // 4
+                            cycleViewportTargetByNumber(4, forward);
+                            layoutChanged = true;
+                            break;
+                        case SDLK_l: // L (lowercase)
+                            cycleLayoutPreset(forward);
+                            layoutChanged = true;
+                            break;
+                        default:
+                            break;
+                    }
+
+                    if (layoutChanged) {
+                        initLayoutFromWindow(windowWidth, windowHeight, inkAspectRatio);
+                    }
+                }
             } else if (isMouseInput(g_config.inputMode)) {
                 if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
                     auto coords = simulator->viewportAwareScreenToGrid(event.button.x, event.button.y, windowWidth, windowHeight);
@@ -553,12 +703,9 @@ int main(int argc, char** argv) {
         // force realtime
         SDL_Delay(delay);
     }
-#endif
 
-#ifndef __EMSCRIPTEN__
     // cleanup
     SDL_DestroyWindow(window);
-
     delete imageData;
     if (convertedSurface) {
         SDL_FreeSurface(convertedSurface);
@@ -566,7 +713,6 @@ int main(int argc, char** argv) {
     if (imageSurface) {
         SDL_FreeSurface(imageSurface);
     }
-
     SDL_Quit();
 #endif
 

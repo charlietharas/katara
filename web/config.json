@@ -1,6 +1,11 @@
 {
     "inputMode": "hand",
+    "hands": {
+        "left": "full",
+        "right": "full"
+    },
     "pipeline": "device",
+    "imagePath": "/img1.png",
     "window": {
         "baseSize": 900,
         "defaultWidth": 1200,
@@ -9,19 +14,12 @@
     "simulation": {
         "resolution": 400,
         "timestep": 0.02,
-        "gravity": 0,
-        "fluidDensity": 1000.0,
-        "edges": 15,
+        "edges": 14,
         "projection": {
-            "overrelaxationCoefficient": 1.0,
-            "iterations": 200,
-            "autoScaleIterations": true,
-            "motionScaleIterations": 2000,
-            "motionCooldownFrames": 10,
-            "motionThreshold": 10.0
+            "overrelaxationCoefficient": 1.95,
+            "iterations": 100
         },
         "vorticity": {
-            "enabled": true,
             "strength": 20.0,
             "lengthScale": 10.0
         },
@@ -41,30 +39,16 @@
                 "scaleMin": 2,
                 "scaleMax": 0.5
             },
-            "handSmoothingAlphaLow": 0.10,
-            "handSmoothingAlphaHigh": 0.95,
-            "handSpeedThreshold": 6.0,
-            "momentumTransferDeadZone": 22.0
+            "handSensitivity": 0.3
         }
-    },
-    "rendering": {
-        "target": 3,
-        "showVelocityVectors": false,
-        "velocityScale": 0.01,
-        "disableHistograms": false
-    },
-    "hands": {
-        "left": "full",
-        "right": "full"
-    },
-    "ink": {
-        "imagePath": "/img1.png"
     },
     "layout": {
         "preset": "default",
         "labelsEnabled": true,
         "buttonsEnabled": true,
         "camerasEnabled": true,
+        "disableHistograms": false,
+        "velocityScale": 0.01,
         "components": {
             "camera_frame": {
                 "x": 0, "y": 0.25, "w": 0.25, "h": 0.25,
