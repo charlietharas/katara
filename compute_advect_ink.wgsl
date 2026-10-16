@@ -1,16 +1,15 @@
 struct SimParams {
     gridX: i32,
     gridY: i32,
+    overrelaxationCoefficient: f32,
+    timestep: f32,
     cellSize: f32,
     halfCellSize: f32,
-    timestep: f32,
-    density: f32,
-    gravity: f32,
-    projectionIters: f32,
     windTunnelSide: i32,
     windTunnelStart: i32,
     windTunnelEnd: i32,
     windTunnelSpeed: f32,
+    edges: i32,
 }
 
 @group(0) @binding(0) var<uniform> params: SimParams;
@@ -19,7 +18,7 @@ struct SimParams {
 @group(0) @binding(3) var solidTexture: texture_2d<f32>;
 @group(0) @binding(4) var newInkTexture: texture_storage_2d<rgba32float, write>;
 
-// Hash-based random function
+// hash-based random function
 fn hash2D(p: vec2<i32>) -> f32 {
     let x = f32(p.x) * 0.1031;
     let y = f32(p.y) * 0.1030;
@@ -27,37 +26,30 @@ fn hash2D(p: vec2<i32>) -> f32 {
     return fract(h * 43758.5453);
 }
 
-// Check if a grid position is near a wind tunnel injection boundary
 fn isNearWindTunnelBoundary(i: i32, j: i32) -> bool {
     if (params.windTunnelSide == -1) { return false; }
 
-    if (params.windTunnelSide == 0) { // left
+    if (params.windTunnelSide == 0) {
         return i <= 2 && j >= params.windTunnelStart && j < params.windTunnelEnd;
-    } else if (params.windTunnelSide == 1) { // top
+    } else if (params.windTunnelSide == 1) {
         return j >= params.gridY - 3 && i >= params.windTunnelStart && i < params.windTunnelEnd;
-    } else if (params.windTunnelSide == 2) { // bottom
+    } else if (params.windTunnelSide == 2) {
         return j <= 2 && i >= params.windTunnelStart && i < params.windTunnelEnd;
-    } else if (params.windTunnelSide == 3) { // right
+    } else if (params.windTunnelSide == 3) {
         return i >= params.gridX - 3 && j >= params.windTunnelStart && j < params.windTunnelEnd;
     }
     return false;
 }
 
-// Get colored ink from random position across the image for wind tunnel injection
+// get colored ink from random position across the image for wind tunnel injection
 fn getWindTunnelInk(i: i32, j: i32) -> vec4<f32> {
-    // Use velocity at this cell as random seed (velocity changes every frame)
     let vel = textureLoad(velocityTexture, vec2<i32>(i, j));
-
-    // Convert velocity to integer coordinates for hashing
     let velSeedX = i32(vel.x * 1000.0);
     let velSeedY = i32(vel.y * 1000.0);
-
-    // Generate random coordinates across the entire image
     let randX = hash2D(vec2<i32>(i + velSeedX, j + velSeedY));
     let randY = hash2D(vec2<i32>(j + velSeedY, i + velSeedX));
     let sampleI = i32(randX * f32(params.gridX));
     let sampleJ = i32(randY * f32(params.gridY));
-
     return textureLoad(inkTexture, vec2<i32>(sampleI, sampleJ));
 }
 
@@ -76,7 +68,7 @@ fn sampleInk(x: f32, y: f32, texture: texture_storage_2d<rgba32float, read>) -> 
     let fx = gx - f32(i0);
     let fy = gy - f32(j0);
 
-    // Check if any of the 4 sample points are near wind tunnel boundary
+    // check if any of the 4 sample points are near wind tunnel boundary
     let nearTunnel = isNearWindTunnelBoundary(i0, j0) || isNearWindTunnelBoundary(i1, j0) ||
                       isNearWindTunnelBoundary(i0, j1) || isNearWindTunnelBoundary(i1, j1);
 
@@ -85,7 +77,7 @@ fn sampleInk(x: f32, y: f32, texture: texture_storage_2d<rgba32float, read>) -> 
     var v01 = textureLoad(texture, vec2<i32>(i0, j1));
     var v11 = textureLoad(texture, vec2<i32>(i1, j1));
 
-    // If near wind tunnel boundary, replace with colored samples
+    // if near wind tunnel boundary, replace with colored samples
     if (nearTunnel) {
         if (isNearWindTunnelBoundary(i0, j0)) { v00 = getWindTunnelInk(i0, j0); }
         if (isNearWindTunnelBoundary(i1, j0)) { v10 = getWindTunnelInk(i1, j0); }
@@ -104,8 +96,12 @@ fn advectInk(@builtin(global_invocation_id) id: vec3<u32>) {
     let i = i32(id.x);
     let j = i32(id.y);
 
-    if (i < 1 || i >= params.gridX || j < 1 || j >= params.gridY) {
-        textureStore(newInkTexture, vec2<i32>(i, j), vec4<f32>(0.0));
+    // match CPU interior loop; avoid OOB velRight/velTop at gridX-1/gridY-1
+    if (i < 1 || i >= params.gridX - 1 || j < 1 || j >= params.gridY - 1) {
+        if (i < params.gridX && j < params.gridY) {
+            textureStore(newInkTexture, vec2<i32>(i, j),
+                textureLoad(inkTexture, vec2<i32>(i, j)));
+        }
         return;
     }
 

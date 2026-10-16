@@ -1,8 +1,6 @@
 struct SimParams {
     gridX: i32,
     gridY: i32,
-    pad0: i32,
-    pad1: i32,
 };
 
 @group(0) @binding(0) var<uniform> params: SimParams;
@@ -33,7 +31,7 @@ fn jacobiIteration(@builtin(global_invocation_id) id: vec3<u32>) {
     let sy1 = textureLoad(solidTexture, vec2<i32>(i, j-1), 0).r;
     let b = sx0 + sx1 + sy0 + sy1;
 
-    // stability
+    // stability FLAG not in config
     let EPSILON = 0.001;
     if (b < EPSILON) {
         textureStore(newPressureTexture, vec2<i32>(i, j), vec4<f32>(0.0));

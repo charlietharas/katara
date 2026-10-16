@@ -1,17 +1,21 @@
 struct SimParams {
     gridX: i32,
     gridY: i32,
+    overrelaxationCoefficient: f32,
+    timestep: f32,
     cellSize: f32,
     halfCellSize: f32,
-    timestep: f32,
-    density: f32,
-    gravity: f32,
-    projectionIters: f32,
     windTunnelSide: i32,
     windTunnelStart: i32,
     windTunnelEnd: i32,
     windTunnelSpeed: f32,
+    edges: i32,
 };
+
+const EDGE_LEFT: i32 = 8;
+const EDGE_TOP: i32 = 4;
+const EDGE_BOTTOM: i32 = 2;
+const EDGE_RIGHT: i32 = 1;
 
 @group(0) @binding(0) var<uniform> params: SimParams;
 @group(0) @binding(1) var velocityTexture: texture_storage_2d<rg32float, read>;
@@ -32,50 +36,52 @@ fn enforceBoundaryConditions(@builtin(global_invocation_id) id: vec3<u32>) {
     var density = textureLoad(densityTexture, vec2<i32>(i, j)).r;
 
     // idk how to feel ab this
+    let leftWall = (params.edges & EDGE_LEFT) != 0;
+    let topWall = (params.edges & EDGE_TOP) != 0;
+    let bottomWall = (params.edges & EDGE_BOTTOM) != 0;
+    let rightWall = (params.edges & EDGE_RIGHT) != 0;
+
     if (i == 0) {
-        velocity.x = 0.0; // left
+        if (leftWall) {
+            velocity.x = 0.0;
+        } else if (params.gridX > 1) {
+            velocity.x = min(textureLoad(velocityTexture, vec2<i32>(i + 1, j)).x, 0.0);
+        }
     }
     if (i == params.gridX - 1) {
-        velocity.x = 0.0; // right
+        if (rightWall) {
+            velocity.x = 0.0;
+        } else if (params.gridX > 1) {
+            velocity.x = max(textureLoad(velocityTexture, vec2<i32>(i - 1, j)).x, 0.0);
+        }
     }
     if (j == 0) {
-        velocity.y = 0.0; // bottom
+        if (bottomWall) {
+            velocity.y = 0.0;
+        } else if (params.gridY > 1) {
+            velocity.y = min(textureLoad(velocityTexture, vec2<i32>(i, j + 1)).y, 0.0);
+        }
     }
     if (j == params.gridY - 1) {
-        velocity.y = 0.0; // top
+        if (topWall) {
+            velocity.y = 0.0;
+        } else if (params.gridY > 1) {
+            velocity.y = max(textureLoad(velocityTexture, vec2<i32>(i, j - 1)).y, 0.0);
+        }
     }
 
-    if (solid == 0.0f) {
-        // clear velocity in the solid cell
-        velocity = vec2<f32>(0.0, 0.0);
-    } else {
-        // this is weird and hacky on both the cpu and gpu versions
-        // here we clear velocity in all adjacent solid cells
-        if (i < params.gridX - 1) {
-            let rightSolid = textureLoad(solidTexture, vec2<i32>(i + 1, j), 0).r;
-            if (rightSolid == 0.0f) {
-                velocity.x = 0.0;
-            }
-        }
-
-        if (j < params.gridY - 1) {
-            let bottomSolid = textureLoad(solidTexture, vec2<i32>(i, j + 1), 0).r;
-            if (bottomSolid == 0.0f) {
-                velocity.y = 0.0;
-            }
-        }
-
+    if (solid != 0.0f) {
         if (i > 0) {
             let leftSolid = textureLoad(solidTexture, vec2<i32>(i - 1, j), 0).r;
             if (leftSolid == 0.0f) {
-                velocity.x = 0.0;
+                velocity.x = textureLoad(velocityTexture, vec2<i32>(i - 1, j)).x;
             }
         }
 
         if (j > 0) {
-            let topSolid = textureLoad(solidTexture, vec2<i32>(i, j - 1), 0).r;
-            if (topSolid == 0.0f) {
-                velocity.y = 0.0;
+            let belowSolid = textureLoad(solidTexture, vec2<i32>(i, j - 1), 0).r;
+            if (belowSolid == 0.0f) {
+                velocity.y = textureLoad(velocityTexture, vec2<i32>(i, j - 1)).y;
             }
         }
     }
@@ -88,15 +94,12 @@ fn enforceBoundaryConditions(@builtin(global_invocation_id) id: vec3<u32>) {
             }
             if (i == 0 && j >= params.windTunnelStart && j < params.windTunnelEnd) {
                 velocity.x = params.windTunnelSpeed;
-                density = 0.0f;
+                density = 0.0;
             }
         } else if (params.windTunnelSide == 1) { // top
-            if (j == params.gridY-2 && i >= params.windTunnelStart && i < params.windTunnelEnd) {
-                velocity.y = -params.windTunnelSpeed;
-            }
             if (j == params.gridY-1 && i >= params.windTunnelStart && i < params.windTunnelEnd) {
                 velocity.y = -params.windTunnelSpeed;
-                density = 0.0f;
+                density = 0.0;
             }
         } else if (params.windTunnelSide == 2) { // bottom
             if (j == 1 && i >= params.windTunnelStart && i < params.windTunnelEnd) {
@@ -104,15 +107,12 @@ fn enforceBoundaryConditions(@builtin(global_invocation_id) id: vec3<u32>) {
             }
             if (j == 0 && i >= params.windTunnelStart && i < params.windTunnelEnd) {
                 velocity.y = params.windTunnelSpeed;
-                density = 0.0f;
+                density = 0.0;
             }
         } else if (params.windTunnelSide == 3) { // right
-            if (i == params.gridX-2 && j >= params.windTunnelStart && j < params.windTunnelEnd) {
-                velocity.x = -params.windTunnelSpeed;
-            }
             if (i == params.gridX-1 && j >= params.windTunnelStart && j < params.windTunnelEnd) {
                 velocity.x = -params.windTunnelSpeed;
-                density = 0.0f;
+                density = 0.0;
             }
         }
     }

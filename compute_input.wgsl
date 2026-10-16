@@ -1,176 +1,270 @@
+// Merged hand/mouse input pass: skeleton segments + joint circles in one dispatch.
+// Circle and segment data live in storage buffers so the shader can index them
+// directly (uniform arrays of vec4 are value-copied into every helper call).
+
+// TODO DESLOP
+
 struct SimParams {
     gridX: i32,
     gridY: i32,
+    overrelaxationCoefficient: f32,
+    timestep: f32,
     cellSize: f32,
     halfCellSize: f32,
-    timestep: f32,
-    density: f32,
-    gravity: f32,
-    projectionIters: f32,
     windTunnelSide: i32,
     windTunnelStart: i32,
     windTunnelEnd: i32,
     windTunnelSpeed: f32,
+    edges: i32,
+    vorticity: f32,
+    vorticityLen: f32,
+    inputMode: i32,
+    numPresentSegments: i32,
+    numCircles: i32,
+    numSegments: i32,
     momentumTransferStrength: f32,
     momentumTransferRadius: f32,
     momentumTransferDeadZone: f32,
-    vorticity: f32,
-    vorticityLen: f32,
-    circleX: array<i32, 42>,
-    circleY: array<i32, 42>,
-    prevCircleX: array<i32, 42>,
-    prevCircleY: array<i32, 42>,
-    circleZ: array<f32, 42>,
-    circleScaledRadius: array<i32, 42>,
-    circlePresent: array<i32, 42>,
-    circleWasPresent: array<i32, 42>,
-    circleVelX: array<f32, 42>,
-    circleVelY: array<f32, 42>,
-    numCircles: i32,
-    baseCircleRadius: i32,
-    segmentStartX: array<i32, 46>,
-    segmentStartY: array<i32, 46>,
-    segmentEndX: array<i32, 46>,
-    segmentEndY: array<i32, 46>,
-    segmentPrevStartX: array<i32, 46>,
-    segmentPrevStartY: array<i32, 46>,
-    segmentPrevEndX: array<i32, 46>,
-    segmentPrevEndY: array<i32, 46>,
-    segmentStartRadius: array<f32, 46>,
-    segmentEndRadius: array<f32, 46>,
-    segmentPrevStartRadius: array<f32, 46>,
-    segmentPrevEndRadius: array<f32, 46>,
-    segmentPresent: array<i32, 46>,
-    segmentWasPresent: array<i32, 46>,
-    numSegments: i32,
-    inputMode: i32,
-    pad1: i32,
-    pad2: i32,
+    momentumLowMotionScale: f32,
+    momentumLowMotionSoftCeilingMul: f32,
+    clearDensityOnVacate: i32,
+    _pad2: i32,
+};
+
+// Only present-or-just-vacated circles and present segments are uploaded, so
+// both loops run over the compacted counts rather than MAX_CIRCLES/MAX_SEGMENTS.
+struct CircleGPU {
+    pos: vec2<f32>,
+    prevPos: vec2<f32>,
+    vel: vec2<f32>,
+    radius: f32,
+    flags: u32,
+};
+
+struct SegmentGPU {
+    start: vec2<f32>,
+    end: vec2<f32>,
+    startVel: vec2<f32>,
+    endVel: vec2<f32>,
+    startRadius: f32,
+    endRadius: f32,
+    cullRadiusSq: f32, // (halfLength + maxRadius)^2 around the midpoint
+    _pad: f32,
 };
 
 const INPUT_MODE_MOUSE_PULL: i32 = 1;
+const MOVING_WALL_MOMENTUM_SCALE: f32 = 0.25;
 
-// new momentum transfer handler for multiple circles
-// (in this case corresponding to hand keypoints)
-// hence the magic numbers ^
-// dynamically injected into web version when we compile with enable_mouse_input
+const CIRCLE_PRESENT: u32 = 1u;
+const CIRCLE_WAS_PRESENT: u32 = 2u;
 
 @group(0) @binding(0) var<uniform> params: SimParams;
-@group(0) @binding(1) var solidTexture: texture_storage_2d<r32float, read_write>;
+@group(0) @binding(1) var solidTexture: texture_2d<f32>;
 @group(0) @binding(2) var velocityTexture: texture_storage_2d<rg32float, read>;
 @group(0) @binding(3) var newVelocityTexture: texture_storage_2d<rg32float, write>;
-@group(0) @binding(4) var densityTexture: texture_storage_2d<r32float, read_write>;
+@group(0) @binding(4) var densityTexture: texture_2d<f32>;
+@group(0) @binding(5) var newSolidTexture: texture_storage_2d<r32float, write>;
+@group(0) @binding(6) var newDensityTexture: texture_storage_2d<r32float, write>;
+@group(0) @binding(7) var<storage, read> circles: array<CircleGPU>;
+@group(0) @binding(8) var<storage, read> segments: array<SegmentGPU>;
+
+// Returns (inside, tFrac) where tFrac is 0..1 along the segment for velocity lerp.
+fn segmentCoverage(p: vec2<f32>, s: SegmentGPU) -> vec2<f32> {
+    let toMid = p - (s.start + s.end) * 0.5;
+    if (dot(toMid, toMid) > s.cullRadiusSq) {
+        return vec2<f32>(0.0, 0.0);
+    }
+
+    let axis = s.end - s.start;
+    let lenSq = dot(axis, axis);
+    if (lenSq < 0.000001) {
+        let d = p - s.start;
+        if (dot(d, d) <= s.startRadius * s.startRadius) {
+            return vec2<f32>(1.0, 0.0);
+        }
+        return vec2<f32>(0.0, 0.0);
+    }
+
+    let t = clamp(dot(p - s.start, axis) / lenSq, 0.0, 1.0);
+    let radius = s.startRadius + (s.endRadius - s.startRadius) * t;
+    let d = p - (s.start + t * axis);
+    if (dot(d, d) <= radius * radius) {
+        return vec2<f32>(1.0, t);
+    }
+    return vec2<f32>(0.0, 0.0);
+}
+
+fn cellInAnySolid(p: vec2<f32>) -> bool {
+    for (var s = 0; s < params.numSegments; s = s + 1) {
+        if (segmentCoverage(p, segments[s]).x > 0.5) {
+            return true;
+        }
+    }
+    for (var c = 0; c < params.numCircles; c = c + 1) {
+        let circle = circles[c];
+        let d = p - circle.pos;
+        if (dot(d, d) <= circle.radius * circle.radius) {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn refillDensityFromNeighbors(i: i32, j: i32, fallback: f32) -> f32 {
+    var sum = 0.0;
+    var count = 0.0;
+    let offsets = array<vec2<i32>, 4>(
+        vec2<i32>(-1, 0),
+        vec2<i32>(1, 0),
+        vec2<i32>(0, -1),
+        vec2<i32>(0, 1)
+    );
+    for (var n = 0; n < 4; n = n + 1) {
+        let ni = i + offsets[n].x;
+        let nj = j + offsets[n].y;
+        if (ni <= 0 || nj <= 0 || ni >= params.gridX - 1 || nj >= params.gridY - 1) {
+            continue;
+        }
+        if (cellInAnySolid(vec2<f32>(f32(ni) + 0.5, f32(nj) + 0.5))) {
+            continue;
+        }
+        sum += textureLoad(densityTexture, vec2<i32>(ni, nj), 0).r;
+        count += 1.0;
+    }
+    if (count > 0.0) {
+        return sum / count;
+    }
+    return fallback;
+}
 
 @compute @workgroup_size(16, 16)
-fn updateCircle(@builtin(global_invocation_id) id: vec3<u32>) {
+fn updateInput(@builtin(global_invocation_id) id: vec3<u32>) {
     let i = i32(id.x);
     let j = i32(id.y);
 
-    // boundary
+    // Interior-only momentum; velocity was pre-copied so border texels stay valid.
     if (i == 0 || j == 0 || i >= params.gridX - 1 || j >= params.gridY - 1) {
         return;
     }
 
-    var vel = textureLoad(velocityTexture, vec2<i32>(i, j)).xy;
-    let currentSolid = textureLoad(solidTexture, vec2<i32>(i, j)).r;
-    var isInAnyCircle = false;
-    var wasInAnyPrevCircle = false;
-    var momentumWasApplied = false;
+    let coord = vec2<i32>(i, j);
+    let p = vec2<f32>(f32(i) + 0.5, f32(j) + 0.5);
+    let mousePull = params.inputMode == INPUT_MODE_MOUSE_PULL;
 
-    // process all circles
+    var vel = textureLoad(velocityTexture, coord).xy;
+    let currentSolid = textureLoad(solidTexture, coord, 0).r;
+    let densityFallback = textureLoad(densityTexture, coord, 0).r;
+
+    var isInAnySolid = false;
+    var solidVel = vec2<f32>(0.0, 0.0);
+
+    // hand segments
+    if (!mousePull) {
+        for (var s = 0; s < params.numSegments; s = s + 1) {
+            let seg = segments[s];
+            let hit = segmentCoverage(p, seg);
+            if (hit.x > 0.5) {
+                isInAnySolid = true;
+                solidVel = mix(seg.startVel, seg.endVel, hit.y);
+            }
+        }
+    }
+
+    // joints / fingertips / mouse cursor
     for (var c = 0; c < params.numCircles; c = c + 1) {
-        if (params.circlePresent[c] == 0) {
+        let circle = circles[c];
+        let isPresent = (circle.flags & CIRCLE_PRESENT) != 0u;
+        let radiusSq = circle.radius * circle.radius;
+
+        let d = p - circle.pos;
+        let distSq = dot(d, d);
+        let isInCircle = distSq <= radiusSq;
+
+        let dPrev = p - circle.prevPos;
+        let wasInPrevCircle = dot(dPrev, dPrev) <= radiusSq;
+
+        if (isInCircle) {
+            isInAnySolid = true;
+            if (isPresent) {
+                solidVel = circle.vel;
+            }
+        }
+
+        if (!isPresent) {
             continue;
         }
 
-        let circleX = params.circleX[c];
-        let circleY = params.circleY[c];
-        let prevCircleX = params.prevCircleX[c];
-        let prevCircleY = params.prevCircleY[c];
-        let radius = params.circleScaledRadius[c];
+        var momentum = vec2<f32>(0.0, 0.0);
+        var circleMoved = false;
 
-        // distance to current and previous circle positions
-        let dx = f32(i) + 0.5 - f32(circleX);
-        let dy = f32(j) + 0.5 - f32(circleY);
-        let distance = sqrt(dx * dx + dy * dy);
-        let isInCircle = distance <= f32(radius);
+        if (mousePull) {
+            // mouse
+            let delta = circle.pos - circle.prevPos;
+            circleMoved = dot(delta, delta) > 0.0;
+            if (circleMoved) {
+                momentum = delta * params.momentumTransferStrength;
+            }
+        } else {
+            // hand (smooth velocity, dead zone)
+            let velMagSq = dot(circle.vel, circle.vel);
+            let deadZone = params.momentumTransferDeadZone;
+            circleMoved = velMagSq > 0.0 && (deadZone <= 0.0 || velMagSq >= deadZone * deadZone);
+            if (circleMoved) {
+                momentum = circle.vel *
+                    (params.timestep * params.momentumTransferStrength * MOVING_WALL_MOMENTUM_SCALE);
 
-        let prevDx = f32(i) + 0.5 - f32(prevCircleX);
-        let prevDy = f32(j) + 0.5 - f32(prevCircleY);
-        let prevDist = sqrt(prevDx * prevDx + prevDy * prevDy);
-        let wasInPrevCircle = prevDist <= f32(radius);
-
-        // if a cell exited this circle, reset density to 1
-        if (wasInPrevCircle && !isInCircle) {
-            textureStore(densityTexture, vec2<i32>(i, j), vec4<f32>(1.0, 0.0, 0.0, 0.0));
+                var impulseScale = 1.0;
+                if (params.momentumLowMotionScale < 1.0 && deadZone > 0.0) {
+                    let deadSq = deadZone * deadZone;
+                    let softCeilingSq = deadSq * params.momentumLowMotionSoftCeilingMul;
+                    if (velMagSq < softCeilingSq) {
+                        let t = (velMagSq - deadSq) / (softCeilingSq - deadSq);
+                        impulseScale = params.momentumLowMotionScale +
+                            (1.0 - params.momentumLowMotionScale) * t;
+                    }
+                }
+                momentum = momentum * impulseScale;
+            }
         }
 
-        // track if cell was in any previous circle position (for zeroing at end)
-        if (wasInPrevCircle) {
-            wasInAnyPrevCircle = true;
+        if (!circleMoved || isInCircle || wasInPrevCircle) {
+            continue;
         }
 
-        if (isInCircle) {
-            isInAnyCircle = true;
+        let effectiveRadius = circle.radius + params.momentumTransferRadius;
+        if (distSq > effectiveRadius * effectiveRadius) {
+            continue;
         }
 
-        // apply momentum to fluid cells near each circle surface
-        let deltaX = f32(circleX - prevCircleX);
-        let deltaY = f32(circleY - prevCircleY);
-        let movementSq = deltaX * deltaX + deltaY * deltaY;
-        let deadZone = params.momentumTransferDeadZone;
-        let circleMoved = movementSq > 0.0 && (deadZone <= 0.0 || movementSq >= deadZone * deadZone);
-        let effectiveRadius = f32(radius) + params.momentumTransferRadius;
+        let normalizedDistance = (sqrt(distSq) - circle.radius) / params.momentumTransferRadius;
+        let falloff = max(0.0, 1.0 - normalizedDistance * normalizedDistance);
+        vel = vel + momentum * falloff * densityFallback;
+    }
 
-        if (circleMoved && !isInCircle && distance <= effectiveRadius) {
-            // falloff is 1/r^2
-            let normalizedDistance = (distance - f32(radius)) / params.momentumTransferRadius;
-            var falloff = 1.0 - normalizedDistance * normalizedDistance;
-            falloff = max(0.0, falloff);
+    if (!mousePull) {
+        // vacated (solid last, fluid now)
+        if (currentSolid <= 0.5 && !isInAnySolid) {
+            var density = 1.0;
+            if (params.clearDensityOnVacate == 0) {
+                density = refillDensityFromNeighbors(i, j, densityFallback);
+            }
+            textureStore(newDensityTexture, coord, vec4<f32>(density, 0.0, 0.0, 0.0));
+            vel = vec2<f32>(0.0, 0.0);
+        }
 
-            let densityFactor = textureLoad(densityTexture, vec2<i32>(i, j)).x;
-
-            let momentumX = deltaX * params.momentumTransferStrength * falloff * densityFactor;
-            let momentumY = deltaY * params.momentumTransferStrength * falloff * densityFactor;
-            let newVel = vec2<f32>(
-                vel.x + momentumX,
-                vel.y + momentumY
-            );
-
-            // disable velocity clamping
-            // let maxVel = 8.0;
-            // vel = vec2<f32>(
-            //     clamp(newVel.x, -maxVel, maxVel),
-            //     clamp(newVel.y, -maxVel, maxVel)
-            // );
-            vel = newVel;
-            momentumWasApplied = true;
+        if (isInAnySolid) {
+            vel = solidVel * params.cellSize;
         }
     }
 
-    // zero velocity for cells that were in previous circle positions,
-    // unless momentum was just applied by a moving circle
-    // also zero velocity for cells that are currently inside circles
-    // unless they just received momentum from a circle moving into them
-    if (params.inputMode != INPUT_MODE_MOUSE_PULL) {
-        if (wasInAnyPrevCircle && !momentumWasApplied) {
-            vel = vec2<f32>(0.0, 0.0);
-        }
-        if (isInAnyCircle && !momentumWasApplied) {
-            vel = vec2<f32>(0.0, 0.0);
-        }
-    }
-
-    // mouse pull: momentum only, never write solids
-    if (params.inputMode == INPUT_MODE_MOUSE_PULL) {
-        textureStore(solidTexture, vec2<i32>(i, j), vec4<f32>(currentSolid, 0.0, 0.0, 0.0));
-    } else if (isInAnyCircle) {
-        // preserve segment solids when circle runs after line segments
-        textureStore(solidTexture, vec2<i32>(i, j), vec4<f32>(0.0, 0.0, 0.0, 0.0));
+    if (mousePull) {
+        textureStore(newSolidTexture, coord, vec4<f32>(currentSolid, 0.0, 0.0, 0.0));
+    } else if (isInAnySolid) {
+        textureStore(newSolidTexture, coord, vec4<f32>(0.0, 0.0, 0.0, 0.0));
     } else {
-        textureStore(solidTexture, vec2<i32>(i, j), vec4<f32>(currentSolid, 0.0, 0.0, 0.0));
+        textureStore(newSolidTexture, coord, vec4<f32>(1.0, 0.0, 0.0, 0.0));
     }
 
-    // ping pong
-    textureStore(newVelocityTexture, vec2<i32>(i, j), vec4<f32>(vel, 0.0, 0.0));
+    textureStore(newVelocityTexture, coord, vec4<f32>(vel, 0.0, 0.0));
 }
+

@@ -1,8 +1,6 @@
 struct SimParams {
     gridX: i32,
     gridY: i32,
-    pad0: i32,
-    pad1: i32,
 };
 
 @group(0) @binding(0) var<uniform> params: SimParams;
@@ -20,8 +18,8 @@ fn applyProjection(@builtin(global_invocation_id) id: vec3<u32>) {
 
     var velocity = textureLoad(velocityTexture, vec2<i32>(i, j));
 
-    // x-velocity sits between cells (i-1, j) and (i, j)
-    if (i > 0 && i < params.gridX) {
+    // x-velocity sits between cells (i-1, j) and (i, j).
+    if (i > 0 && i < params.gridX - 1) {
         let sx0 = textureLoad(solidTexture, vec2<i32>(i, j), 0).r;
         let sx1 = textureLoad(solidTexture, vec2<i32>(i-1, j), 0).r;
 
@@ -29,13 +27,15 @@ fn applyProjection(@builtin(global_invocation_id) id: vec3<u32>) {
             let pCurrent = textureLoad(pressureTexture, vec2<i32>(i, j)).r;
             let pLeft = textureLoad(pressureTexture, vec2<i32>(i-1, j)).r;
             velocity.x -= (pCurrent - pLeft);
+        } else if (sx1 == 0.0) {
+            velocity.x = textureLoad(velocityTexture, vec2<i32>(i - 1, j)).x;
         } else {
-            velocity.x = 0.0;
+            velocity.x = textureLoad(velocityTexture, vec2<i32>(i, j)).x;
         }
     }
 
-    // y-velocity sits between cells (i, j-1) and (i, j)
-    if (j > 0 && j < params.gridY) {
+    // y-velocity sits between cells (i, j-1) and (i, j).
+    if (j > 0 && j < params.gridY - 1) {
         let sy0 = textureLoad(solidTexture, vec2<i32>(i, j), 0).r;
         let sy1 = textureLoad(solidTexture, vec2<i32>(i, j-1), 0).r;
 
@@ -43,8 +43,10 @@ fn applyProjection(@builtin(global_invocation_id) id: vec3<u32>) {
             let pCurrent = textureLoad(pressureTexture, vec2<i32>(i, j)).r;
             let pBottom = textureLoad(pressureTexture, vec2<i32>(i, j-1)).r;
             velocity.y -= (pCurrent - pBottom);
+        } else if (sy1 == 0.0) {
+            velocity.y = textureLoad(velocityTexture, vec2<i32>(i, j - 1)).y;
         } else {
-            velocity.y = 0.0;
+            velocity.y = textureLoad(velocityTexture, vec2<i32>(i, j)).y;
         }
     }
 

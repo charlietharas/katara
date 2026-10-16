@@ -1,8 +1,6 @@
 struct SimParams {
     gridX: i32,
     gridY: i32,
-    pad0: i32,
-    pad1: i32,
 };
 
 @group(0) @binding(0) var<uniform> params: SimParams;

@@ -1,8 +1,6 @@
 struct SimParams {
     gridX: i32,
     gridY: i32,
-    pad0: i32,
-    pad1: i32,
 }
 
 struct HistogramBins {
@@ -52,7 +50,7 @@ fn computeHistogramBins(@builtin(global_invocation_id) id : vec3<u32>) {
 
     // velocity histogram
     let velocity = textureLoad(velocityTexture, vec2<i32>(i32(i), i32(j)));
-    let velMagnitude = sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
+    let velMagnitude = length(velocity.xy);
     let velDelta = minMaxUniform.velMax - minMaxUniform.velMin;
     if (velDelta > 0.0001) {
         let normalized = (velMagnitude - minMaxUniform.velMin) / velDelta;
