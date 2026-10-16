@@ -1,22 +1,48 @@
+const DEFAULT_OPTIONS = {
+    maxNumHands: 2,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.3,
+    minTrackingConfidence: 0.3,
+};
+
+function clamp01(value, fallback) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(1, Math.max(0, n));
+}
+
+function resolveModelComplexity(value, fallback) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(1, Math.max(0, Math.round(n)));
+}
+
+/** Resolve MediaPipe Hands options from config `hands` section. */
+export function resolveHandTrackerOptions(handsConfig = null) {
+    const src = handsConfig && typeof handsConfig === 'object' ? handsConfig : {};
+    return {
+        maxNumHands: DEFAULT_OPTIONS.maxNumHands,
+        modelComplexity: resolveModelComplexity(src.modelComplexity, DEFAULT_OPTIONS.modelComplexity),
+        minDetectionConfidence: clamp01(src.minDetectionConfidence, DEFAULT_OPTIONS.minDetectionConfidence),
+        minTrackingConfidence: clamp01(src.minTrackingConfidence, DEFAULT_OPTIONS.minTrackingConfidence),
+    };
+}
+
 export class MediaPipeHandTracker {
-    async init(videoElement) {
+    async init(videoElement, handsConfig = null) {
         await this.loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js');
         await this.loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js');
         await this.loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js');
 
         this.lastResults = null;
         this.resultsReady = null;
+        this.options = resolveHandTrackerOptions(handsConfig);
 
         this.hands = new Hands({
             locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
         });
 
-        this.hands.setOptions({
-            maxNumHands: 2,
-            modelComplexity: 1,
-            minDetectionConfidence: 0.5,
-            minTrackingConfidence: 0.5
-        });
+        this.hands.setOptions(this.options);
 
         this.hands.onResults((results) => {
             this.lastResults = results;

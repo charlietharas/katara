@@ -13,7 +13,12 @@
 <script src="https://charliemax.dev/js/lightmode.js"></script>
 <body>
     <div class="content page-title">
-        <h1><span class="page-nav-current">katara</span> <a href="https://charliemax.dev/blog/katara" class="page-nav-link" target="_blank" rel="noopener noreferrer">// spec</a></h1>
+        <h1>
+            <span class="page-nav-current">katara</span>
+            <button id="specInfoBtn" class="page-nav-link spec-info-btn" type="button" title="Spec">
+                <span class="spec-info-icon" aria-hidden="true">i</span>
+            </button>
+        </h1>
     </div>
     <div class="sim-viewport">
         <div class="loading-overlay" id="loadingOverlay">
@@ -22,17 +27,31 @@
         <div class="camera-permission-panel hidden" id="cameraPermissionPanel" role="status" aria-live="polite">
             Katara is requesting camera permissions for optional interactivity features
         </div>
+        <div class="shader-error-panel hidden" id="shaderErrorPanel" role="alert" aria-live="assertive">
+            <div class="shader-error-panel-title">ERROR: SHADER</div>
+            <pre class="shader-error-panel-detail hidden" id="shaderErrorDetail"></pre>
+            <button type="button" class="input-mode-btn shader-error-edit-btn" id="shaderErrorEditBtn">Edit shaders</button>
+        </div>
+        <div class="shader-error-panel hidden" id="genericErrorPanel" role="alert" aria-live="assertive">
+            <div class="shader-error-panel-title">There was an error</div>
+            <pre class="shader-error-panel-detail hidden" id="genericErrorDetail"></pre>
+            <div class="shader-error-panel-actions">
+                <button type="button" class="input-mode-btn shader-error-edit-btn" id="genericErrorDismissBtn">Dismiss</button>
+                <button type="button" class="input-mode-btn shader-error-edit-btn" id="genericErrorIgnoreBtn">Ignore</button>
+                <button type="button" class="input-mode-btn shader-error-edit-btn" id="genericErrorReloadBtn">Reload</button>
+            </div>
+        </div>
         <canvas id="canvas"></canvas>
         <div class="camera-panel"></div>
         <div class="sim-controls">
-            <button id="pauseBtn" class="control-btn" title="Pause simulation (P)">
+            <button id="pauseBtn" class="control-btn" title="Pause simulation">
                 <svg id="pauseBtnIcon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
                     <rect x="6" y="4" width="4" height="16" rx="1"></rect>
                     <rect x="14" y="4" width="4" height="16" rx="1"></rect>
                 </svg>
                 <span id="pauseBtnLabel">[P]</span>
             </button>
-            <button id="resetBtn" class="control-btn" title="Reset fluid and ink (R)">
+            <button id="resetBtn" class="control-btn" title="Reset fluid and ink">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
                     <path d="M21 3v5h-5"></path>
@@ -41,14 +60,14 @@
                 </svg>
                 [R]
             </button>
-            <button id="cheeseBtn" class="control-btn" title="Take picture from webcam (C)">
+            <button id="cheeseBtn" class="control-btn" title="Take picture">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"></path>
                     <circle cx="12" cy="13" r="3"></circle>
                 </svg>
                 [C]
             </button>
-            <button id="uploadInkBtn" class="control-btn" title="Upload PNG for ink mode (U)">
+            <button id="uploadInkBtn" class="control-btn" title="Upload ink image">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                     <polyline points="17 8 12 3 7 8"></polyline>
@@ -57,7 +76,7 @@
                 [U]
             </button>
             <input type="file" id="inkImageInput" accept="image/png" hidden>
-            <button id="settingsBtn" class="control-btn" title="Settings (S)">
+            <button id="settingsBtn" class="control-btn" title="Settings">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="12" cy="12" r="3"></circle>
                     <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
@@ -67,7 +86,6 @@
         </div>
     </div>
     <script src="katara.js"></script>
-    <script type="module" src="settings.js"></script>
     <script type="module" src="app.js"></script>
 </body>
 </html>
