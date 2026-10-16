@@ -1,50 +1,83 @@
 {
+    "count": 20,
     "0": {
         "name": "PRESSURE",
-        "file": "00_pressure.wgsl"
+        "file": "pressure.wgsl"
     },
     "1": {
         "name": "DENSITY",
-        "file": "01_density.wgsl"
+        "file": "density.wgsl"
     },
     "2": {
-        "name": "FLUID",
-        "file": "02_fluid.wgsl"
+        "name": "USR_IMG",
+        "file": "ink.wgsl"
     },
     "3": {
-        "name": "INK",
-        "file": "03_ink.wgsl"
+        "name": "DIVERGENCE",
+        "file": "divergence.wgsl"
     },
     "4": {
-        "name": "DIVERGENCE",
-        "file": "04_divergence.wgsl"
+        "name": "VORTICITY",
+        "file": "vorticity.wgsl"
     },
     "5": {
         "name": "NORMAL",
-        "file": "05_normal.wgsl"
+        "file": "normal.wgsl"
     },
     "6": {
         "name": "HEATMAP",
-        "file": "06_heatmap.wgsl"
+        "file": "heatmap.wgsl"
     },
     "7": {
-        "name": "BLOOM",
-        "file": "07_bloom.wgsl"
+        "name": "ICHOR",
+        "file": "ichor.wgsl"
     },
     "8": {
         "name": "SHIMMER",
-        "file": "08_shimmer.wgsl"
+        "file": "shimmer.wgsl"
     },
     "9": {
         "name": "PLASMA",
-        "file": "09_plasma.wgsl"
+        "file": "plasma.wgsl"
     },
     "10": {
         "name": "CHROME",
-        "file": "10_chrome.wgsl"
+        "file": "chrome.wgsl"
     },
     "11": {
         "name": "VAPOR",
-        "file": "11_vapor.wgsl"
+        "file": "vapor.wgsl"
+    },
+    "12": {
+        "name": "MAINFRAME",
+        "file": "mainframe.wgsl"
+    },
+    "13": {
+        "name": "TOPO",
+        "file": "topo.wgsl"
+    },
+    "14": {
+        "name": "UKIYO",
+        "file": "ukiyo.wgsl"
+    },
+    "15": {
+        "name": "DOODLE",
+        "file": "doodle.wgsl"
+    },
+    "16": {
+        "name": "CUSTOM_0",
+        "file": "custom_0.wgsl"
+    },
+    "17": {
+        "name": "CUSTOM_1",
+        "file": "custom_1.wgsl"
+    },
+    "18": {
+        "name": "CUSTOM_2",
+        "file": "custom_2.wgsl"
+    },
+    "19": {
+        "name": "CUSTOM_3",
+        "file": "custom_3.wgsl"
     }
 }
