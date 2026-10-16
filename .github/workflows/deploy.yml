@@ -35,6 +35,13 @@ jobs:
           echo "CMake version:"
           cmake --version
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
       - name: Configure CMake
         working-directory: web
         run: |
@@ -45,16 +52,23 @@ jobs:
         run: |
           cmake --build build --config Release
 
+      - name: Build frontend bundle
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+          cp public/katara.js public/katara.wasm public/dist/
+
       - name: Verify build artifacts
         run: |
-          echo "Checking web/public directory:"
-          ls -lh web/public/
+          echo "Checking web/public/dist directory:"
+          ls -lh web/public/dist/
           echo ""
           echo "Checking for required files:"
-          test -f web/public/katara.js && echo "✓ katara.js found"
-          test -f web/public/katara.wasm && echo "✓ katara.wasm found"
-          test -f web/public/index.html && echo "✓ index.html found"
-          test -f web/public/app.js && echo "✓ app.js found"
+          test -f web/public/dist/katara.js && echo "✓ katara.js found"
+          test -f web/public/dist/katara.wasm && echo "✓ katara.wasm found"
+          test -f web/public/dist/index.html && echo "✓ index.html found"
+          test -f web/public/dist/assets/*.js && echo "✓ bundled app assets found"
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -62,7 +76,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: './web/public'
+          path: './web/public/dist'
 
   deploy:
     environment:
