@@ -574,14 +574,16 @@ void applyFocusedPreset(const LayoutConfig& config,
 
     if (config.camerasEnabled) {
         placeCameraFrame(config, layout.topLeft, cameraAspectRatio, AspectAnchor::Center);
+        hideComponentIfPresent(config, VIEWPORT_NAMES[2]);
+        hideComponentIfPresent(config, VIEWPORT_NAMES[3]);
     } else {
         hideComponentIfPresent(config, CAMERA_FRAME);
+        applyViewportRect(config, VIEWPORT_NAMES[2], layout.topLeft, viewportAspectRatio, canvasW);
+        hideComponentIfPresent(config, VIEWPORT_NAMES[3]);
     }
     placePlotGridBundle2x2(config, layout.bottomLeft);
     applyViewportRect(config, VIEWPORT_NAMES[0], layout.topRight, viewportAspectRatio, canvasW);
     applyViewportRect(config, VIEWPORT_NAMES[1], layout.bottomRight, viewportAspectRatio, canvasW);
-    hideComponentIfPresent(config, VIEWPORT_NAMES[2]);
-    hideComponentIfPresent(config, VIEWPORT_NAMES[3]);
 }
 
 void applyViewportPreset(const LayoutConfig& config,
@@ -719,6 +721,7 @@ std::string layoutPixelsToJson(const LayoutPixels& pixels, const LayoutConfig& c
             j[name]["rotation"] = bbox.rotation;
             j[name]["viewportTarget"] = bbox.viewportTarget;
             j[name]["viewportVelocityViewEnabled"] = bbox.viewportVelocityViewEnabled;
+            j[name]["viewportCameraBackground"] = cameraBackgroundModeName(bbox.viewportCameraBackground);
             j[name]["histogramEnabled"] = bbox.histogramEnabled;
         }
     }

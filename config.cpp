@@ -21,8 +21,11 @@ ComponentBBox loadComponentBBox(const json& val) {
     JSON_REQUIRED(bbox.px, val, "px");
     JSON_REQUIRED(bbox.py, val, "py");
     JSON_OPTIONAL(bbox.rotation, val, "rotation", 0);
-    bbox.viewportTarget = val.value("viewportTarget", val.value("target", 2));
+    bbox.viewportTarget = val.value("viewportTarget", val.value("target", 0));
     bbox.viewportVelocityViewEnabled = val.value("viewportVelocityViewEnabled", val.value("velocity", false));
+    bbox.viewportCameraBackground = parseCameraBackgroundMode(val.contains("viewportCameraBackground")
+        ? val["viewportCameraBackground"]
+        : json());
     bbox.histogramEnabled = val.value("histogramEnabled", val.value("enabled", true));
     return bbox;
 }
@@ -70,11 +73,11 @@ Config ConfigLoader::loadConfig(const std::string& filename) {
             JSON_OPTIONAL(config.hands.left, j["hands"], "left", "full");
             JSON_OPTIONAL(config.hands.right, j["hands"], "right", "full");
         }
-        config.pipeline = stringToPipelineType(j["pipeline"]);
+        config.pipeline = stringToPipelineType(j.value("pipeline", "device_jacobi"));
         JSON_OPTIONAL(config.imagePath, j, "imagePath", "");
         config.window = loadWindowConfig(j["window"]);
         config.simulation = loadSimulationConfig(j["simulation"]);
-        config.layout = loadLayoutConfig(j["layout"]);
+        config.layout = loadLayoutConfig(j["render"]);
 
         return config;
     } catch (const nlohmann::json::exception& e) {
@@ -119,15 +122,16 @@ std::string ConfigLoader::computeLayout(const LayoutConfig& config,
 
 PipelineType ConfigLoader::stringToPipelineType(const std::string& type) {
     static const std::pair<const char*, PipelineType> ENTRIES[] = {
-        {"device", PipelineType::GPU},
-        {"hybrid", PipelineType::HYBRID},
+        {"device_jacobi", PipelineType::GPU_JACOBI},
+        {"device_gs", PipelineType::GPU_GS},
+        {"host_gs", PipelineType::HOST_GS},
     };
     for (const auto& [name, value] : ENTRIES) {
         if (type == name) {
             return value;
         }
     }
-    CONFIG_DIE("invalid pipeline: " << type << " (valid: device, hybrid)");
+    CONFIG_DIE("invalid pipeline: " << type << " (valid: device_jacobi, device_gs, host_gs)");
 }
 
 WindowConfig ConfigLoader::loadWindowConfig(const json& j) {
@@ -158,8 +162,9 @@ LayoutConfig ConfigLoader::loadLayoutConfig(const json& j) {
     JSON_OPTIONAL(config.camerasEnabled, j, "camerasEnabled", true);
     JSON_OPTIONAL(config.labelsEnabled, j, "labelsEnabled", true);
     JSON_OPTIONAL(config.buttonsEnabled, j, "buttonsEnabled", true);
-    JSON_OPTIONAL(config.disableHistograms, j, "disableHistograms", false);
+    JSON_OPTIONAL(config.divergenceBinomialFiltering, j, "divergenceBinomialFiltering", true);
     JSON_OPTIONAL(config.velocityScale, j, "velocityScale", 0.01f);
+    JSON_OPTIONAL(config.cameraBackgroundDensityExponent, j, "cameraBackgroundDensityExponent", 2.0f);
 
     for (auto& [key, val] : j["components"].items()) {
         config.components[key] = loadComponentBBox(val);
@@ -200,6 +205,7 @@ CircleConfig ConfigLoader::loadCircleConfig(const json& j) {
     JSON_REQUIRED(config.momentumTransferStrength, j, "momentumTransferStrength");
     JSON_REQUIRED(config.momentumTransferRadius, j, "momentumTransferRadius");
     JSON_OPTIONAL(config.handSensitivity, j, "handSensitivity", 0.3f);
+    JSON_OPTIONAL(config.clearDensityOnVacate, j, "clearDensityOnVacate", true);
 
     const json& zScaling = j["zScaling"];
     JSON_REQUIRED(config.zMin, zScaling, "zMin");
