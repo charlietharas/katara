@@ -2,9 +2,13 @@
     "inputMode": "mouse_pull",
     "hands": {
         "left": "full",
-        "right": "full"
+        "right": "full",
+        "modelComplexity": 1,
+        "minDetectionConfidence": 0.3,
+        "minTrackingConfidence": 0.3,
+        "detectionHoldFrames": 3
     },
-    "pipeline": "device",
+    "pipeline": "device_jacobi",
     "imagePath": "img1.png",
     "window": {
         "baseSize": 900,
@@ -13,10 +17,10 @@
     },
     "simulation": {
         "resolution": 400,
-        "timestep": 0.02,
+        "timestep": 0.020,
         "edges": 14,
         "projection": {
-            "overrelaxationCoefficient": 1.95,
+            "overrelaxationCoefficient": 1.0,
             "iterations": 100
         },
         "vorticity": {
@@ -31,9 +35,10 @@
         },
         "circle": {
             "radius": 0.02,
-            "momentumTransferStrength": 10,
+            "momentumTransferStrength": 5,
             "momentumTransferRadius": 2.0,
             "handSensitivity": 0.3,
+            "clearDensityOnVacate": true,
             "zScaling": {
                 "zMin": -0.1,
                 "zMax": 0.1,
@@ -42,13 +47,14 @@
             }
         }
     },
-    "layout": {
-        "preset": "default",
+    "render": {
+        "preset": "gallery_quad",
         "labelsEnabled": true,
         "buttonsEnabled": true,
         "camerasEnabled": false,
-        "disableHistograms": false,
+        "divergenceBinomialFiltering": true,
         "velocityScale": 0.01,
+        "cameraBackgroundDensityExponent": 2,
         "components": {
             "camera_frame": {
                 "x": 0, "y": 0.25, "w": 0.25, "h": 0.25,
@@ -57,22 +63,26 @@
             "viewport_1": {
                 "x": 0.5, "y": 0.0, "w": 0.5, "h": 0.5,
                 "px": 5, "py": 5,
-                "viewportTarget": 2
+                "viewportTarget": 0,
+                "viewportCameraBackground": "current"
             },
             "viewport_2": {
                 "x": 0.5, "y": 0.5, "w": 0.5, "h": 0.5,
                 "px": 5, "py": 5,
-                "viewportTarget": 3
+                "viewportTarget": 2,
+                "viewportCameraBackground": "none"
             },
             "viewport_3": {
                 "x": 0.0, "y": 0.5, "w": 0.5, "h": 0.5,
                 "px": 5, "py": 5,
-                "viewportTarget": 0
+                "viewportTarget": 0,
+                "viewportCameraBackground": "none"
             },
             "viewport_4": {
                 "x": 0.0, "y": 0.0, "w": 0.5, "h": 0.5,
                 "px": 5, "py": 5,
-                "viewportTarget": 1
+                "viewportTarget": 1,
+                "viewportCameraBackground": "none"
             },
             "density_histogram": {
                 "x": 0.0, "y": 0.0, "w": 0.25, "h": 0.25,
