@@ -52,6 +52,20 @@ FetchContent_GetProperties(dawn)
 if (NOT dawn_POPULATED)
 	FetchContent_Populate(dawn)
 
+	if (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+		set(_dawn_metal_source "${dawn_SOURCE_DIR}/src/dawn/native/metal/PhysicalDeviceMTL.mm")
+		file(READ "${_dawn_metal_source}" _dawn_metal_contents)
+		set(_dawn_counter_vector "std::vector<MTLCommonCounter> counterNames")
+		set(_dawn_counter_vector_fixed "std::vector<NSString*> counterNames")
+		if (_dawn_metal_contents MATCHES "std::vector<MTLCommonCounter> counterNames")
+			string(REPLACE "${_dawn_counter_vector}" "${_dawn_counter_vector_fixed}"
+				_dawn_metal_contents "${_dawn_metal_contents}")
+			file(WRITE "${_dawn_metal_source}" "${_dawn_metal_contents}")
+		elseif (NOT _dawn_metal_contents MATCHES "std::vector<NSString\\*> counterNames")
+			message(FATAL_ERROR "Dawn Metal counter declaration changed; review the macOS compatibility patch")
+		endif()
+	endif()
+
 	# This option replaces depot_tools
 	set(DAWN_FETCH_DEPENDENCIES ON)
 

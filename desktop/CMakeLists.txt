@@ -6,7 +6,22 @@ project(katara)
 # https://eliemichel.github.io/LearnWebGPU/appendices/using-sdl.html
 find_package(SDL2 REQUIRED)
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(SDL2_IMAGE REQUIRED SDL2_image)
+pkg_check_modules(SDL2_IMAGE REQUIRED IMPORTED_TARGET SDL2_image)
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    find_program(HOMEBREW_EXECUTABLE brew)
+    if(HOMEBREW_EXECUTABLE)
+        execute_process(
+            COMMAND "${HOMEBREW_EXECUTABLE}" --prefix libomp
+            OUTPUT_VARIABLE HOMEBREW_LIBOMP_PREFIX
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+            RESULT_VARIABLE HOMEBREW_LIBOMP_RESULT
+        )
+        if(HOMEBREW_LIBOMP_RESULT EQUAL 0 AND IS_DIRECTORY "${HOMEBREW_LIBOMP_PREFIX}")
+            list(APPEND CMAKE_PREFIX_PATH "${HOMEBREW_LIBOMP_PREFIX}")
+        endif()
+    endif()
+endif()
 find_package(OpenMP REQUIRED)
 
 # use dawn as webgpu backend
@@ -32,9 +47,8 @@ set(SOURCES
 
 add_executable(katara ${SOURCES})
 
-target_link_libraries(katara PRIVATE SDL2::SDL2 ${SDL2_IMAGE_LIBRARIES} webgpu sdl2webgpu OpenMP::OpenMP_CXX)
-target_include_directories(katara PRIVATE ${SDL2_IMAGE_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_compile_options(katara PRIVATE ${SDL2_IMAGE_CFLAGS_OTHER})
+target_link_libraries(katara PRIVATE SDL2::SDL2 PkgConfig::SDL2_IMAGE webgpu sdl2webgpu OpenMP::OpenMP_CXX)
+target_include_directories(katara PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 target_copy_webgpu_binaries(katara)
 

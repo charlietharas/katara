@@ -61,14 +61,23 @@ WGPUSurface SDL_GetWGPUSurface(WGPUInstance instance, SDL_Window* window) {
         metal_layer = [CAMetalLayer layer];
         [ns_window.contentView setLayer : metal_layer];
 
+#if defined(WEBGPU_BACKEND_DAWN)
+        WGPUSurfaceDescriptorFromMetalLayer fromMetalLayer;
+        fromMetalLayer.chain.sType = WGPUSType_SurfaceDescriptorFromMetalLayer;
+#else
         WGPUSurfaceSourceMetalLayer fromMetalLayer;
         fromMetalLayer.chain.sType = WGPUSType_SurfaceSourceMetalLayer;
+#endif
         fromMetalLayer.chain.next = NULL;
         fromMetalLayer.layer = metal_layer;
 
         WGPUSurfaceDescriptor surfaceDescriptor;
         surfaceDescriptor.nextInChain = &fromMetalLayer.chain;
+#if defined(WEBGPU_BACKEND_DAWN)
+        surfaceDescriptor.label = NULL;
+#else
         surfaceDescriptor.label = (WGPUStringView){ NULL, WGPU_STRLEN };
+#endif
 
         return wgpuInstanceCreateSurface(instance, &surfaceDescriptor);
     }
