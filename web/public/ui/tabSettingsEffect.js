@@ -3,71 +3,137 @@ import {
     ControlPalette,
     HandPalette,
     layoutTint,
-} from './palette.js';
-
-function isPlainObject(v) {
-    return !!v && typeof v === 'object' && !Array.isArray(v);
-}
-
-function deepMerge(target, source) {
-    if (!isPlainObject(source)) return target;
-    Object.keys(source).forEach((key) => {
-        const srcVal = source[key];
-        const dstVal = target[key];
-        if (isPlainObject(srcVal) && isPlainObject(dstVal)) {
-            deepMerge(dstVal, srcVal);
-        } else if (isPlainObject(srcVal)) {
-            target[key] = deepMerge({}, srcVal);
-        } else {
-            target[key] = srcVal;
-        }
-    });
-    return target;
-}
-
-function getNestedValue(obj, path) {
-    let current = obj;
-    for (const key of path.split('.')) {
-        if (current && key in current) {
-            current = current[key];
-        } else {
-            return undefined;
-        }
-    }
-    return current;
-}
-
-function setNestedValue(obj, path, value) {
-    const keys = path.split('.');
-    let current = obj;
-    for (let i = 0; i < keys.length - 1; i++) {
-        if (!(keys[i] in current)) current[keys[i]] = {};
-        current = current[keys[i]];
-    }
-    current[keys[keys.length - 1]] = value;
-}
+} from '../palette.js';
+import {
+    getNestedValue,
+    setNestedValue,
+    measureElementWidth,
+    measureElementHeight,
+    getSimViewportSize,
+    HAND_CONNECTIONS,
+    HAND_LANDMARKS,
+    HAND_MODES,
+    HAND_MODE_LABELS,
+    HAND_COLORS,
+    ACTIVE_LANDMARKS_BY_MODE,
+    isMouseInputMode,
+    ENVIRONMENT_GLOW_BLUR,
+    CONTROL_ARROW_HOVER_EXPAND,
+    setupResizableCanvas,
+    getCanvasEventPos,
+    isNearPoint,
+    setupControlCanvasArrowInteraction,
+    setupControlCanvasGlowInteraction,
+    applyControlCanvasGlow,
+    assembleConfigFromSections,
+    collectSectionPatches,
+    requireConfigObject,
+    validateConfigPaths,
+    applyDefaultLayoutGates,
+} from './util.js';
+import {
+    getRuntimeApp,
+    getCommittedConfig,
+    readCommittedConfig,
+    getSettingsDraft,
+    getSettingsBaseline,
+    replaceSettingsDraft,
+    replaceCommittedConfig,
+    patchSettingsDraftPath,
+    resetSettingsDraft,
+    clearSettingsSession,
+    writeConfigToFs,
+    persistConfigToIdb,
+} from '../config.js';
+import {
+    html,
+    formatSliderValue,
+    SliderRow,
+    CheckboxRow,
+    HeaderCheckbox,
+    ModeButtonGroup,
+    ConfigSectionView,
+    ImperativeControlHost,
+} from './component.js';
+import { SETTINGS_TAB, mountSettingsLayout } from './tabSettingsComponent.js';
+import DEFAULT_CONFIG from '@katara-config';
 
 function isGpuSimulatorMode(config) {
-    return config?.pipeline === 'device';
+    return config?.pipeline === 'device_jacobi' || config?.pipeline === 'device_gs';
 }
+
+const JACOBI_PIPELINE = 'device_jacobi';
+
+const PIPELINE_SIM_DEFAULTS = {
+    device_jacobi: {
+        overrelaxation: 1.0,
+        iterations: 100,
+        resolution: 400,
+        timestep: 0.020,
+    },
+    device_gs: {
+        overrelaxation: 1.8,
+        iterations: 40,
+        resolution: 400,
+        timestep: 0.020,
+    },
+    host_gs: {
+        overrelaxation: 1.95,
+        iterations: 20,
+        resolution: 100,
+        timestep: 0.020,
+    },
+};
 
 const RESOLUTION_RANGES = {
     device: { min: 100, max: 800, step: 50 },
-    hybrid: { min: 100, max: 400, step: 20 },
+    host_gs: { min: 100, max: 400, step: 20 },
 };
 
 const ITERATION_RANGES = {
-    device: { min: 100, max: 1000, step: 50 },
-    hybrid: { min: 20, max: 200, step: 10 },
+    device_jacobi: { min: 100, max: 1000, step: 50 },
+    device_gs: { min: 20, max: 200, step: 10 },
+    host_gs: { min: 20, max: 200, step: 10 },
 };
 
-const PIPELINE_DEFAULTS = {
-    device: { resolution: 400, iterations: 100 },
-    hybrid: { resolution: 100, iterations: 20 },
+const UI_SLIDER_LIMITS = {
+    overrelaxation: { min: 1.0, max: 1.95, step: 0.05 },
+    timestep: { min: 0.001, max: 0.1, step: 0.001 },
+    vorticityCanvas: { maxStrength: 30, maxImpact: 20 },
 };
+
+const SETTINGS_CONFIG_PATHS = [
+    'pipeline',
+    'inputMode',
+    'hands.left',
+    'hands.right',
+    'simulation.resolution',
+    'simulation.timestep',
+    'simulation.edges',
+    'simulation.projection.overrelaxationCoefficient',
+    'simulation.projection.iterations',
+    'simulation.vorticity.strength',
+    'simulation.vorticity.lengthScale',
+    'simulation.windTunnel.side',
+    'simulation.windTunnel.startPosition',
+    'simulation.windTunnel.endPosition',
+    'simulation.windTunnel.velocity',
+    'simulation.circle.radius',
+    'simulation.circle.momentumTransferRadius',
+    'simulation.circle.momentumTransferStrength',
+    'simulation.circle.handSensitivity',
+    'render.preset',
+    'render.labelsEnabled',
+    'render.buttonsEnabled',
+    'render.camerasEnabled',
+    'render.components.density_histogram.histogramEnabled',
+    'render.components.velocity_histogram.histogramEnabled',
+    'render.components.entropy_time_series.histogramEnabled',
+    'render.components.volume_time_series.histogramEnabled',
+];
 
 function pipelineMode(pipeline) {
-    return pipeline === 'hybrid' ? 'hybrid' : 'device';
+    return pipeline === 'host_gs' ? 'host_gs' : 'device';
 }
 
 function resolutionRangeForPipeline(pipeline) {
@@ -75,15 +141,12 @@ function resolutionRangeForPipeline(pipeline) {
 }
 
 function iterationRangeForPipeline(pipeline) {
-    return ITERATION_RANGES[pipelineMode(pipeline)];
-}
-
-function defaultResolutionForPipeline(pipeline) {
-    return PIPELINE_DEFAULTS[pipelineMode(pipeline)].resolution;
-}
-
-function defaultIterationsForPipeline(pipeline) {
-    return PIPELINE_DEFAULTS[pipelineMode(pipeline)].iterations;
+    const range = ITERATION_RANGES[pipeline];
+    if (!range) {
+        console.error(`config.json: unsupported pipeline "${pipeline}" for iteration range`);
+        return null;
+    }
+    return range;
 }
 
 function clampResolutionForPipeline(value, pipeline) {
@@ -92,54 +155,43 @@ function clampResolutionForPipeline(value, pipeline) {
 }
 
 function clampIterationsForPipeline(value, pipeline) {
-    const { min, max } = iterationRangeForPipeline(pipeline);
+    const range = iterationRangeForPipeline(pipeline);
+    if (!range) return value;
+    const { min, max } = range;
     return Math.max(min, Math.min(max, value));
 }
 
-function applySliderRange(control, range, clampedValue) {
-    control.setRange(range.min, range.max, range.step);
-    control.currentValue = clampedValue;
-    const input = control.element?.querySelector('input[type="range"]');
-    const display = control.element?.querySelector('.value-display');
-    if (input) input.value = clampedValue;
-    if (display) display.textContent = formatSliderValue(clampedValue, range.step);
-}
-
-function measureHiddenElement(el, dimension) {
-    if (!el) return 0;
-    const prop = dimension === 'width' ? 'offsetWidth' : 'offsetHeight';
-    if (el[prop] > 0) return el[prop];
-    const prevDisplay = el.style.display;
-    const prevVisibility = el.style.visibility;
-    el.style.visibility = 'hidden';
-    el.style.display = '';
-    const size = el[prop];
-    el.style.display = prevDisplay;
-    el.style.visibility = prevVisibility;
-    return size;
-}
-
-function measureElementWidth(el) {
-    return measureHiddenElement(el, 'width');
-}
-
-function measureElementHeight(el) {
-    return measureHiddenElement(el, 'height');
-}
-
-function getSimViewportSize() {
-    const viewport = document.querySelector('.sim-viewport');
-    if (!viewport) {
-        throw new Error('Sim viewport not found');
+function pipelineSimDefaults(pipeline) {
+    const defaults = PIPELINE_SIM_DEFAULTS[pipeline];
+    if (!defaults) {
+        console.error(`config.json: unsupported pipeline "${pipeline}" for sim defaults`);
+        return null;
     }
     return {
-        width: viewport.clientWidth,
-        height: viewport.clientHeight,
+        resolution: clampResolutionForPipeline(defaults.resolution, pipeline),
+        iterations: clampIterationsForPipeline(defaults.iterations, pipeline),
+        overrelaxation: defaults.overrelaxation,
+        timestep: defaults.timestep,
     };
 }
 
+function pipelineSnapshotFromConfig(config, pipeline) {
+    if (!config?.simulation?.projection) return null;
+    const sim = config.simulation;
+    const proj = sim.projection;
+    return {
+        resolution: clampResolutionForPipeline(sim.resolution, pipeline),
+        iterations: clampIterationsForPipeline(proj.iterations, pipeline),
+        overrelaxation: proj.overrelaxationCoefficient,
+        timestep: sim.timestep,
+    };
+}
+
+function applySliderRange(control, range, clampedValue) {
+    control.setRange(range.min, range.max, range.step, clampedValue);
+}
 function getSimCanvasAspectRatio() {
-    const app = window.kataraApp;
+    const app = getRuntimeApp();
     let domainAspect = null;
     if (app?.module?._getSimDomainWidth && app?.module?._getSimDomainHeight) {
         const domainWidth = app.module._getSimDomainWidth();
@@ -149,7 +201,7 @@ function getSimCanvasAspectRatio() {
         }
     }
 
-    const config = window.kataraConfig ?? app?.readConfig?.();
+    const config = readCommittedConfig();
     const useInkAspect = !!config?.imagePath;
     const inkAspect = useInkAspect ? app?.inkAspectRatio : 0;
     // After image upload, inkAspectRatio updates immediately but sim domain may stay stale until reload.
@@ -174,248 +226,12 @@ function bindSliderRow(row, { onChange, format = String }) {
     return { input, display };
 }
 
-function formatSliderValue(value, step) {
-    const stepText = String(step);
-    const dot = stepText.indexOf('.');
-    const decimals = dot === -1 ? 0 : stepText.length - dot - 1;
-    if (decimals === 0) return String(Math.round(value));
-    return value.toFixed(decimals);
-}
-
-function preventCheckboxEnterDefault(checkbox) {
-    checkbox.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-        }
-    });
-}
-
-function setupResizableCanvas(canvas, onResize) {
-    const resize = () => {
-        const rect = canvas.parentElement.getBoundingClientRect();
-        canvas.width = rect.width;
-        canvas.height = rect.height;
-        onResize();
-    };
-    resize();
-    new ResizeObserver(resize).observe(canvas.parentElement);
-    return resize;
-}
-
-function getCanvasEventPos(canvas, e) {
-    const canvasRect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / canvasRect.width;
-    const scaleY = canvas.height / canvasRect.height;
-    return {
-        x: (e.clientX - canvasRect.left) * scaleX,
-        y: (e.clientY - canvasRect.top) * scaleY,
-    };
-}
-
-function isNearPoint(pos, tip, threshold = 15) {
-    const dx = pos.x - tip.x;
-    const dy = pos.y - tip.y;
-    return dx * dx + dy * dy < threshold * threshold;
-}
-
-const CONTROL_ARROW_HIT_THRESHOLD = 12;
-const CONTROL_ARROW_HOVER_THRESHOLD = 14;
-const CONTROL_ARROW_HOVER_EXPAND = 1.4;
-const CONTROL_ARROW_HOVER_LERP = 10;
-const CONTROL_ARROW_GLOW_SNAP = 0.02;
-
-function advanceControlCanvasGlow(values, targets, keys, dt) {
-    let animating = false;
-    for (const key of keys) {
-        const current = values[key] ?? 0;
-        const target = targets[key] ?? 0;
-        let next = current + (target - current) * Math.min(1, CONTROL_ARROW_HOVER_LERP * dt);
-        if (target === 0 && next < CONTROL_ARROW_GLOW_SNAP) {
-            next = 0;
-        } else if (Math.abs(next - target) > 0.008) {
-            animating = true;
-        } else {
-            next = target;
-        }
-        if (next === 0) {
-            delete values[key];
-        } else {
-            values[key] = next;
-        }
-        if (next !== target) animating = true;
-    }
-    return animating;
-}
-
-function setupControlCanvasArrowInteraction(canvas, { getTips, getArrowKeys, onRedraw }) {
-    const glow = {};
-    const targets = {};
-    let pinnedKey = null;
-    let rafId = null;
-    let lastTime = 0;
-
-    const getGlow = (key) => glow[key] ?? 0;
-    const getScale = (key) => 1 + getGlow(key) * (CONTROL_ARROW_HOVER_EXPAND - 1);
-
-    const distanceSq = (pos, tip) => {
-        const dx = pos.x - tip.x;
-        const dy = pos.y - tip.y;
-        return dx * dx + dy * dy;
-    };
-
-    const getActiveArrowKey = (pos, { forHit = false } = {}) => {
-        if (pinnedKey) return pinnedKey;
-        if (!pos) return null;
-
-        const tips = getTips();
-        let closestKey = null;
-        let closestDistSq = Infinity;
-        const threshold = forHit ? CONTROL_ARROW_HIT_THRESHOLD : CONTROL_ARROW_HOVER_THRESHOLD;
-        const maxDistSq = threshold * threshold;
-
-        for (const key of getArrowKeys()) {
-            const tip = tips[key];
-            if (!tip) continue;
-            const distSq = distanceSq(pos, tip);
-            if (distSq <= maxDistSq && distSq < closestDistSq) {
-                closestDistSq = distSq;
-                closestKey = key;
-            }
-        }
-
-        return closestKey;
-    };
-
-    const syncTargets = (pos) => {
-        const activeKey = getActiveArrowKey(pos);
-        for (const key of getArrowKeys()) {
-            targets[key] = key === activeKey ? 1 : 0;
-        }
-    };
-
-    const isNearArrow = (pos, key) => getActiveArrowKey(pos, { forHit: true }) === key;
-
-    const isInteractiveAt = (pos) => getActiveArrowKey(pos, { forHit: true }) !== null;
-
-    const tick = (now) => {
-        const dt = Math.min(0.05, (now - lastTime) / 1000);
-        lastTime = now;
-        const animating = advanceControlCanvasGlow(glow, targets, getArrowKeys(), dt);
-
-        onRedraw();
-        rafId = animating ? requestAnimationFrame(tick) : null;
-    };
-
-    const scheduleTick = () => {
-        if (rafId !== null) return;
-        lastTime = performance.now();
-        rafId = requestAnimationFrame(tick);
-    };
-
-    const updatePointer = (pos) => {
-        syncTargets(pos);
-        scheduleTick();
-    };
-
-    const updateCursor = (e) => {
-        if (!e) {
-            canvas.style.cursor = 'default';
-            if (!pinnedKey) {
-                updatePointer(null);
-            }
-            return;
-        }
-        const pos = getCanvasEventPos(canvas, e);
-        canvas.style.cursor = isInteractiveAt(pos) || pinnedKey ? 'crosshair' : 'default';
-        updatePointer(pos);
-    };
-
-    canvas.addEventListener('mousemove', updateCursor);
-    canvas.addEventListener('mouseleave', () => {
-        if (pinnedKey) {
-            canvas.style.cursor = 'crosshair';
-            updatePointer(null);
-            return;
-        }
-        canvas.style.cursor = 'default';
-        updatePointer(null);
-    });
-
-    return {
-        updateCursor,
-        getGlow,
-        getScale,
-        isNearArrow,
-        refreshGlow(pos = null) {
-            updatePointer(pos);
-        },
-        setPinned(key, active) {
-            pinnedKey = active ? key : null;
-            updatePointer(null);
-        },
-    };
-}
-
-function setupControlCanvasGlowInteraction(canvas, { getActiveKey, getKeys, onRedraw }) {
-    const glow = {};
-    const targets = {};
-    let rafId = null;
-    let lastTime = 0;
-
-    const getGlow = (key) => glow[key] ?? 0;
-
-    const syncTargets = (activeKey) => {
-        for (const key of getKeys()) {
-            targets[key] = key === activeKey ? 1 : 0;
-        }
-    };
-
-    const tick = (now) => {
-        const dt = Math.min(0.05, (now - lastTime) / 1000);
-        lastTime = now;
-        const animating = advanceControlCanvasGlow(glow, targets, getKeys(), dt);
-
-        onRedraw();
-        rafId = animating ? requestAnimationFrame(tick) : null;
-    };
-
-    const scheduleTick = () => {
-        if (rafId !== null) return;
-        lastTime = performance.now();
-        rafId = requestAnimationFrame(tick);
-    };
-
-    const updatePointer = (pos) => {
-        syncTargets(getActiveKey(pos));
-        scheduleTick();
-    };
-
-    canvas.addEventListener('mousemove', (e) => {
-        updatePointer(getCanvasEventPos(canvas, e));
-    });
-    canvas.addEventListener('mouseleave', () => updatePointer(null));
-
-    return {
-        getGlow,
-        refreshGlow(pos = null) {
-            updatePointer(pos);
-        },
-    };
-}
-
 function updateControlScaleIndicator(element, displayScale) {
     if (!element) return;
     element.classList.toggle(
         'control-display-clamped',
         !WorldScaleService.isPixelAccurateScale(displayScale)
     );
-}
-
-function applyControlCanvasGlow(ctx, glowT) {
-    const t = Math.max(0, Math.min(1, glowT));
-    if (t <= 0) return;
-    ctx.shadowColor = Palette.whiteBright;
-    ctx.shadowBlur = t * 20;
 }
 
 function buildEnvironmentArrowGeometry(from, tip, baseWidth, headWidth, headLength) {
@@ -553,62 +369,6 @@ function fitCenteredRect(w, h, aspect) {
         height: contentH,
     };
 }
-
-const HAND_MODES = ['full', 'joints', 'claw', 'pointer', 'pointer-tip', 'none'];
-
-const HAND_MODE_LABELS = {
-    full: 'Full',
-    joints: 'Joints',
-    pointer: 'Pointer',
-    'pointer-tip': 'Dot',
-    claw: 'Claw',
-    none: 'Off',
-};
-
-const HAND_COLORS = HandPalette;
-
-const ACTIVE_LANDMARKS_BY_MODE = {
-    full: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
-    joints: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
-    pointer: [5, 6, 7, 8],
-    'pointer-tip': [8],
-    claw: [0, 1, 2, 3, 4, 5, 6, 7, 8],
-    none: [],
-};
-
-const HAND_CONNECTIONS = [
-    [0, 1], [1, 2], [2, 3], [3, 4],
-    [0, 5], [5, 6], [6, 7], [7, 8],
-    [0, 9], [9, 10], [10, 11], [11, 12],
-    [0, 13], [13, 14], [14, 15], [15, 16],
-    [0, 17], [17, 18], [18, 19], [19, 20],
-    [5, 9], [9, 13], [13, 17],
-];
-
-const HAND_LANDMARKS = [
-    { x: 0.50, y: 0.90 },
-    { x: 0.28, y: 0.76 },
-    { x: 0.18, y: 0.60 },
-    { x: 0.13, y: 0.44 },
-    { x: 0.10, y: 0.28 },
-    { x: 0.35, y: 0.42 },
-    { x: 0.32, y: 0.26 },
-    { x: 0.30, y: 0.12 },
-    { x: 0.28, y: 0.00 },
-    { x: 0.48, y: 0.38 },
-    { x: 0.48, y: 0.21 },
-    { x: 0.48, y: 0.08 },
-    { x: 0.48, y: 0.00 },
-    { x: 0.60, y: 0.42 },
-    { x: 0.62, y: 0.27 },
-    { x: 0.63, y: 0.14 },
-    { x: 0.64, y: 0.03 },
-    { x: 0.70, y: 0.48 },
-    { x: 0.74, y: 0.36 },
-    { x: 0.77, y: 0.25 },
-    { x: 0.80, y: 0.15 },
-];
-
 class WorldScaleService {
     static getPixelsPerWorldUnit() {
         const viewport = document.querySelector('.sim-viewport');
@@ -623,7 +383,9 @@ class WorldScaleService {
 
     // TODO jank review this
     static getGridResolution() {
-        return window.kataraConfig?.simulation?.resolution || 400;
+        return getSettingsDraft()?.simulation?.resolution
+            ?? getCommittedConfig()?.simulation?.resolution
+            ?? 400;
     }
 
     static worldToPixels(worldUnits) {
@@ -654,111 +416,95 @@ const LAYOUT_PRESET_OPTIONS = [
     { value: 'gallery_quad', label: 'Gallery (quad)' },
 ];
 
-function getLayoutPresetSvgMarkup(preset) {
-    const stroke = Palette.whiteFaint;
-    const viewport = layoutTint(Palette.blue);
-    const plot = layoutTint(Palette.green);
-    const camera = layoutTint(Palette.orange);
-    const grid = Palette.gridLine;
+const LAYOUT_PREVIEW_SIZE = { width: 1000, height: 700 };
 
-    if (preset === 'default') {
-        return `
-            <svg viewBox="0 0 100 70" aria-hidden="true">
-                <rect x="2" y="2" width="96" height="66" rx="4" fill="none" stroke="${stroke}" stroke-width="2"/>
-                <line x1="50" y1="2" x2="50" y2="68" stroke="${grid}" stroke-width="1"/>
-                <line x1="2" y1="35" x2="98" y2="35" stroke="${grid}" stroke-width="1"/>
-                <rect x="52" y="4" width="44" height="29" rx="2" fill="${viewport}"/>
-                <rect x="52" y="37" width="44" height="29" rx="2" fill="${viewport}"/>
-                <rect x="4" y="37" width="44" height="29" rx="2" fill="${viewport}"/>
-                <rect x="4" y="4" width="22" height="10" rx="1.5" fill="${plot}"/>
-                <rect x="26" y="4" width="22" height="10" rx="1.5" fill="${plot}"/>
-                <rect x="4" y="14" width="22" height="10" rx="1.5" fill="${plot}"/>
-                <rect x="4" y="24" width="22" height="10" rx="1.5" fill="${plot}"/>
-                <rect x="26" y="14" width="22" height="20" rx="1.5" fill="${camera}"/>
-            </svg>
-        `;
-    }
+function layoutPreviewColor(name) {
+    if (name.startsWith('viewport_')) return layoutTint(Palette.blue);
+    if (name === 'camera_frame') return layoutTint(Palette.orange);
+    return layoutTint(Palette.green);
+}
 
-    if (preset === 'focused') {
-        return `
-            <svg viewBox="0 0 100 70" aria-hidden="true">
-                <rect x="2" y="2" width="96" height="66" rx="4" fill="none" stroke="${stroke}" stroke-width="2"/>
-                <line x1="50" y1="2" x2="50" y2="68" stroke="${grid}" stroke-width="1"/>
-                <line x1="2" y1="35" x2="98" y2="35" stroke="${grid}" stroke-width="1"/>
-                <rect x="4" y="4" width="44" height="29" rx="2" fill="${camera}"/>
-                <rect x="4" y="37" width="22" height="14" rx="1.5" fill="${plot}"/>
-                <rect x="26" y="37" width="22" height="14" rx="1.5" fill="${plot}"/>
-                <rect x="4" y="51" width="22" height="14" rx="1.5" fill="${plot}"/>
-                <rect x="26" y="51" width="22" height="14" rx="1.5" fill="${plot}"/>
-                <rect x="52" y="4" width="44" height="29" rx="2" fill="${viewport}"/>
-                <rect x="52" y="37" width="44" height="29" rx="2" fill="${viewport}"/>
-            </svg>
-        `;
+function collectLayoutPreviewOverrides(sections) {
+    const overrides = { components: {} };
+    for (const section of sections) {
+        for (const control of section.getAllControls()) {
+            const path = control.configPath;
+            if (path === 'render.camerasEnabled') {
+                overrides.camerasEnabled = control.getValue();
+            } else if (
+                path?.startsWith('render.components.')
+                && path.endsWith('.histogramEnabled')
+            ) {
+                const name = path.split('.')[2];
+                overrides.components[name] = { histogramEnabled: control.getValue() };
+            }
+        }
     }
+    return JSON.stringify(overrides);
+}
 
-    if (preset === 'viewport') {
-        return `
-            <svg viewBox="0 0 100 70" aria-hidden="true">
-                <rect x="2" y="2" width="96" height="66" rx="4" fill="none" stroke="${stroke}" stroke-width="2"/>
-                <line x1="50" y1="2" x2="50" y2="68" stroke="${grid}" stroke-width="1"/>
-                <line x1="2" y1="35" x2="98" y2="35" stroke="${grid}" stroke-width="1"/>
-                <rect x="4" y="4" width="44" height="29" rx="2" fill="${viewport}"/>
-                <rect x="52" y="4" width="44" height="29" rx="2" fill="${viewport}"/>
-                <rect x="4" y="37" width="44" height="29" rx="2" fill="${viewport}"/>
-                <rect x="52" y="37" width="44" height="29" rx="2" fill="${viewport}"/>
-            </svg>
-        `;
-    }
+function getLayoutPreviewFromCpp(module, preset, layoutOverridesJson = '') {
+    const app = getRuntimeApp();
+    const inkAspect = app?.inkAspectRatio ?? 1;
+    const cameraAspect = app?.cameraAspectRatio ?? (4 / 3);
+    const json = module.ccall(
+        'getLayoutPreviewJson',
+        'string',
+        ['string', 'number', 'number', 'number', 'number', 'string'],
+        [
+            preset,
+            LAYOUT_PREVIEW_SIZE.width,
+            LAYOUT_PREVIEW_SIZE.height,
+            inkAspect,
+            cameraAspect,
+            layoutOverridesJson || '',
+        ],
+    );
+    return JSON.parse(json);
+}
 
-    if (preset === 'gallery_single') {
-        return `
-            <svg viewBox="0 0 100 70" aria-hidden="true">
-                <rect x="2" y="2" width="96" height="66" rx="4" fill="none" stroke="${stroke}" stroke-width="2"/>
-                <line x1="2" y1="40" x2="98" y2="40" stroke="${grid}" stroke-width="1"/>
-                <rect x="4" y="4" width="92" height="34" rx="2" fill="${viewport}"/>
-                <rect x="4" y="43" width="18" height="23" rx="2" fill="${camera}"/>
-                <rect x="24" y="43" width="18" height="23" rx="1.5" fill="${plot}"/>
-                <rect x="42" y="43" width="18" height="23" rx="1.5" fill="${plot}"/>
-                <rect x="60" y="43" width="18" height="23" rx="1.5" fill="${plot}"/>
-                <rect x="78" y="43" width="18" height="23" rx="1.5" fill="${plot}"/>
-            </svg>
-        `;
-    }
+function layoutPreviewSvg(layout, canvasW, canvasH) {
+    const scale = Math.min(96 / canvasW, 66 / canvasH);
+    const frameW = canvasW * scale;
+    const frameH = canvasH * scale;
+    const offsetX = (100 - frameW) / 2;
+    const offsetY = (70 - frameH) / 2;
 
-    if (preset === 'gallery_double') {
-        return `
-            <svg viewBox="0 0 100 70" aria-hidden="true">
-                <rect x="2" y="2" width="96" height="66" rx="4" fill="none" stroke="${stroke}" stroke-width="2"/>
-                <line x1="2" y1="40" x2="98" y2="40" stroke="${grid}" stroke-width="1"/>
-                <line x1="50" y1="2" x2="50" y2="40" stroke="${grid}" stroke-width="1"/>
-                <rect x="4" y="4" width="44" height="34" rx="2" fill="${viewport}"/>
-                <rect x="52" y="4" width="44" height="34" rx="2" fill="${viewport}"/>
-                <rect x="4" y="43" width="18" height="23" rx="2" fill="${camera}"/>
-                <rect x="24" y="43" width="18" height="23" rx="1.5" fill="${plot}"/>
-                <rect x="42" y="43" width="18" height="23" rx="1.5" fill="${plot}"/>
-                <rect x="60" y="43" width="18" height="23" rx="1.5" fill="${plot}"/>
-                <rect x="78" y="43" width="18" height="23" rx="1.5" fill="${plot}"/>
-            </svg>
-        `;
-    }
+    const rects = Object.entries(layout)
+        .filter(([, rect]) => rect.width > 0 && rect.height > 0)
+        .map(([name, rect]) => `
+            <rect
+                x="${(offsetX + rect.x * scale).toFixed(3)}"
+                y="${(offsetY + rect.y * scale).toFixed(3)}"
+                width="${(rect.width * scale).toFixed(3)}"
+                height="${(rect.height * scale).toFixed(3)}"
+                fill="${layoutPreviewColor(name)}"
+            />
+        `)
+        .join('');
 
     return `
         <svg viewBox="0 0 100 70" aria-hidden="true">
-            <rect x="2" y="2" width="96" height="66" rx="4" fill="none" stroke="${stroke}" stroke-width="2"/>
-            <line x1="2" y1="40" x2="98" y2="40" stroke="${grid}" stroke-width="1"/>
-            <line x1="50" y1="2" x2="50" y2="40" stroke="${grid}" stroke-width="1"/>
-            <line x1="2" y1="21" x2="98" y2="21" stroke="${grid}" stroke-width="1"/>
-            <rect x="4" y="4" width="44" height="16" rx="2" fill="${viewport}"/>
-            <rect x="52" y="4" width="44" height="16" rx="2" fill="${viewport}"/>
-            <rect x="4" y="22" width="44" height="16" rx="2" fill="${viewport}"/>
-            <rect x="52" y="22" width="44" height="16" rx="2" fill="${viewport}"/>
-            <rect x="4" y="43" width="18" height="23" rx="2" fill="${camera}"/>
-            <rect x="24" y="43" width="18" height="23" rx="1.5" fill="${plot}"/>
-            <rect x="42" y="43" width="18" height="23" rx="1.5" fill="${plot}"/>
-            <rect x="60" y="43" width="18" height="23" rx="1.5" fill="${plot}"/>
-            <rect x="78" y="43" width="18" height="23" rx="1.5" fill="${plot}"/>
+            ${rects}
         </svg>
     `;
+}
+
+function getLayoutPresetSvgMarkup(
+    preset,
+    module = getRuntimeApp()?.module,
+    layoutOverridesJson = '',
+) {
+    if (!module?.ccall) {
+        return '<svg viewBox="0 0 100 70" aria-hidden="true"></svg>';
+    }
+    try {
+        const layout = getLayoutPreviewFromCpp(module, preset, layoutOverridesJson);
+        return layoutPreviewSvg(layout, LAYOUT_PREVIEW_SIZE.width, LAYOUT_PREVIEW_SIZE.height);
+    } catch (err) {
+        console.warn('Layout preview failed for', preset, err);
+        return '<svg viewBox="0 0 100 70" aria-hidden="true"></svg>';
+    }
 }
 
 class ConfigControl {
@@ -770,15 +516,112 @@ class ConfigControl {
         this.element = null;
         this.disabled = false;
         this.collectWhenDisabled = false;
+        this.rerender = null;
+        this.onLiveChange = null;
+        this.draftSync = null;
+    }
+
+    linkRerender(rerender) {
+        this.rerender = rerender;
+    }
+
+    linkDraftSync(draftSync) {
+        this.draftSync = draftSync;
+    }
+
+    notifyDraftSync() {
+        this.draftSync?.();
+    }
+
+    collect(values) {
+        if (this.disabled && !this.collectWhenDisabled) return;
+        setNestedValue(values, this.configPath, this.getValue());
+    }
+
+    load(config) {
+        const value = getNestedValue(config, this.configPath);
+        if (value === undefined) return;
+        this.currentValue = value;
+        this.rerender?.();
+    }
+
+    renderView() {
+        return html`<${ImperativeControlHost} renderControl=${() => this.render()} deps=${[]} />`;
     }
 
     setDisabled(disabled) {
         this.disabled = disabled;
-        if (!this.element) return;
+        if (!this.element) {
+            this.rerender?.();
+            return;
+        }
         this.element.classList.toggle('config-row-disabled', disabled);
         const input = this.element.querySelector('input');
         if (input) input.disabled = disabled;
     }
+}
+
+function SliderControlView({ control }) {
+    return html`<${SliderRow}
+        label=${control.label}
+        value=${control.currentValue}
+        min=${control.min}
+        max=${control.max}
+        step=${control.step}
+        disabled=${control.disabled}
+        onChange=${(next) => {
+            control.currentValue = next;
+            control.liveChange?.(next);
+            control.notifyDraftSync();
+            control.rerender?.();
+        }}
+    />`;
+}
+
+function CheckboxControlView({ control }) {
+    return html`<${CheckboxRow}
+        label=${control.label}
+        checked=${!!control.currentValue}
+        disabled=${control.disabled}
+        onChange=${(next) => {
+            control.currentValue = next;
+            control.onLiveChange?.();
+            control.notifyDraftSync();
+            control.rerender?.();
+        }}
+    />`;
+}
+
+function HeaderCheckboxControlView({ control }) {
+    return html`<${HeaderCheckbox}
+        label=${control.label}
+        checked=${!!control.currentValue}
+        disabled=${control.disabled}
+        onChange=${(next) => {
+            control.currentValue = next;
+            control.onLiveChange?.();
+            control.notifyDraftSync();
+            control.rerender?.();
+        }}
+    />`;
+}
+
+function SimModeControlView({ control }) {
+    return html`<${ModeButtonGroup}
+        modes=${SimModeControl.MODES}
+        value=${control.currentValue}
+        onChange=${(mode) => control.selectMode(mode)}
+    />`;
+}
+
+function InputModeControlView({ control }) {
+    const disabledModes = control.cameraDetected ? [] : ['hand'];
+    return html`<${ModeButtonGroup}
+        modes=${InputModeControl.MODES}
+        value=${control.currentValue}
+        disabledModes=${disabledModes}
+        onChange=${(mode) => control.selectMode(mode)}
+    />`;
 }
 
 class SliderControl extends ConfigControl {
@@ -788,6 +631,10 @@ class SliderControl extends ConfigControl {
         this.max = max;
         this.step = step;
         this.liveChange = null;
+    }
+
+    renderView() {
+        return html`<${SliderControlView} control=${this} />`;
     }
 
     render() {
@@ -813,12 +660,34 @@ class SliderControl extends ConfigControl {
 
     getValue() { return this.currentValue; }
 
-    setRange(min, max, step) {
+    load(config) {
+        const value = getNestedValue(config, this.configPath);
+        if (value === undefined) return;
+        this.currentValue = value;
+        if (!this.element) {
+            this.rerender?.();
+            return;
+        }
+        const input = this.element.querySelector('input[type="range"]');
+        const display = this.element.querySelector('.value-display');
+        if (input) input.value = value;
+        if (display) display.textContent = formatSliderValue(value, this.step);
+        this.rerender?.();
+    }
+
+    setRange(min, max, step, value = null) {
         this.min = min;
         this.max = max;
         this.step = step;
-        this.currentValue = Math.max(min, Math.min(max, this.currentValue));
-        if (!this.element) return;
+        if (value !== null) {
+            this.currentValue = Math.max(min, Math.min(max, value));
+        } else {
+            this.currentValue = Math.max(min, Math.min(max, this.currentValue));
+        }
+        if (!this.element) {
+            this.rerender?.();
+            return;
+        }
         const input = this.element.querySelector('input[type="range"]');
         const display = this.element.querySelector('.value-display');
         if (input) {
@@ -830,6 +699,7 @@ class SliderControl extends ConfigControl {
         if (display) {
             display.textContent = formatSliderValue(this.currentValue, step);
         }
+        this.rerender?.();
     }
 }
 
@@ -901,11 +771,22 @@ class ToggleSliderControl extends SliderControl {
         this.currentValue = value !== 0 ? value : this.storedValue;
         if (this.element) this.updateUserEnabledState();
     }
+
+    load(config) {
+        const value = getNestedValue(config, this.configPath);
+        if (value === undefined) return;
+        this.loadValue(value);
+    }
 }
 
 class CheckboxControl extends ConfigControl {
     constructor(configPath, label, initialValue) {
         super(configPath, label, initialValue);
+        this.currentValue = initialValue;
+    }
+
+    renderView() {
+        return html`<${CheckboxControlView} control=${this} />`;
     }
 
     render() {
@@ -917,18 +798,32 @@ class CheckboxControl extends ConfigControl {
                 ${this.label}
             </label>
         `;
-        const checkbox = container.querySelector('input[type="checkbox"]');
-        if (checkbox) preventCheckboxEnterDefault(checkbox);
         this.element = container;
         return container;
     }
 
-    getValue() { return this.element.querySelector('input').checked; }
+    getValue() { return this.currentValue; }
+
+    loadValue(value) {
+        this.currentValue = value;
+        this.rerender?.();
+    }
+
+    load(config) {
+        const value = getNestedValue(config, this.configPath);
+        if (value === undefined) return;
+        this.loadValue(value);
+    }
 }
 
 class HeaderCheckboxControl extends ConfigControl {
     constructor(configPath, label, initialValue) {
         super(configPath, label, initialValue);
+        this.currentValue = initialValue;
+    }
+
+    renderView() {
+        return html`<${HeaderCheckboxControlView} control=${this} />`;
     }
 
     render() {
@@ -945,7 +840,11 @@ class HeaderCheckboxControl extends ConfigControl {
 
     setDisabled(disabled) {
         this.disabled = disabled;
-        if (!this.element) return;
+        if (!this.element) {
+            if (disabled) this.currentValue = false;
+            this.rerender?.();
+            return;
+        }
         this.element.classList.toggle('config-header-toggle-disabled', disabled);
         const input = this.element.querySelector('input');
         if (input) {
@@ -955,15 +854,38 @@ class HeaderCheckboxControl extends ConfigControl {
                 this.currentValue = false;
             }
         }
+        this.rerender?.();
     }
 
-    getValue() { return this.element.querySelector('input').checked; }
+    getValue() { return this.currentValue; }
+
+    loadValue(value) {
+        this.currentValue = value;
+        this.rerender?.();
+    }
+
+    load(config) {
+        if (this.disabled) {
+            this.currentValue = false;
+            const checkbox = this.element?.querySelector('input[type="checkbox"]');
+            if (checkbox) checkbox.checked = false;
+            return;
+        }
+        const value = getNestedValue(config, this.configPath);
+        if (value === undefined) return;
+        this.loadValue(value);
+    }
 }
 
 class LayoutPresetControl extends ConfigControl {
     constructor(configPath, label, initialValue) {
-        super(configPath, label, initialValue || 'default');
-        this.currentValue = initialValue || 'default';
+        super(configPath, label, initialValue);
+        this.currentValue = initialValue;
+        this.getPreviewOverrides = null;
+    }
+
+    renderView() {
+        return html`<${ImperativeControlHost} renderControl=${() => this.render()} deps=${[]} />`;
     }
 
     render() {
@@ -972,13 +894,15 @@ class LayoutPresetControl extends ConfigControl {
         container.innerHTML = '<div class="layout-preset-grid"></div>';
         const grid = container.querySelector('.layout-preset-grid');
 
+        const layoutOverridesJson = this.getPreviewOverrides?.() ?? '';
         LAYOUT_PRESET_OPTIONS.forEach((option) => {
             const button = document.createElement('button');
             button.type = 'button';
             button.className = 'layout-preset-btn';
             button.dataset.preset = option.value;
+            const module = getRuntimeApp()?.module;
             button.innerHTML = `
-                <div class="layout-preset-svg-wrap">${getLayoutPresetSvgMarkup(option.value)}</div>
+                <div class="layout-preset-svg-wrap">${getLayoutPresetSvgMarkup(option.value, module, layoutOverridesJson)}</div>
                 <div class="layout-preset-meta">
                     <span class="layout-preset-title">${option.label}</span>
                 </div>
@@ -986,6 +910,7 @@ class LayoutPresetControl extends ConfigControl {
             button.addEventListener('click', () => {
                 this.currentValue = option.value;
                 this.updateSelectionState();
+                this.notifyDraftSync();
             });
             grid.appendChild(button);
         });
@@ -1008,8 +933,27 @@ class LayoutPresetControl extends ConfigControl {
     }
 
     loadValue(value) {
-        this.currentValue = value || 'default';
+        this.currentValue = value;
         this.updateSelectionState();
+    }
+
+    load(config) {
+        const value = getNestedValue(config, this.configPath);
+        if (value === undefined) return;
+        this.loadValue(value);
+    }
+
+    refreshPreviews() {
+        if (!this.element) return;
+        const module = getRuntimeApp()?.module;
+        const layoutOverridesJson = this.getPreviewOverrides?.() ?? '';
+        this.element.querySelectorAll('.layout-preset-btn').forEach((button) => {
+            const preset = button.dataset.preset;
+            const wrap = button.querySelector('.layout-preset-svg-wrap');
+            if (wrap && preset) {
+                wrap.innerHTML = getLayoutPresetSvgMarkup(preset, module, layoutOverridesJson);
+            }
+        });
     }
 
     getValue() {
@@ -1086,6 +1030,18 @@ class VorticityControl extends ConfigControl {
             this.updateInactiveState();
             this.draw();
         }
+    }
+
+    collect(values) {
+        if (this.disabled && !this.collectWhenDisabled) return;
+        setNestedValue(values, this.configPath, this.strengthValue);
+        setNestedValue(values, this.impactConfigPath, this.impactValue);
+    }
+
+    load(config) {
+        const strength = getNestedValue(config, this.configPath);
+        const impact = getNestedValue(config, this.impactConfigPath);
+        if (strength !== undefined && impact !== undefined) this.loadValue(strength, impact);
     }
 
     updateCanvasContainerAspect() {
@@ -1177,10 +1133,12 @@ class VorticityControl extends ConfigControl {
         });
 
         window.addEventListener('mouseup', (e) => {
+            const wasDragging = this.isDraggingUp || this.isDraggingRight;
             setPinned('up', false);
             setPinned('right', false);
             this.isDraggingUp = false;
             this.isDraggingRight = false;
+            if (wasDragging) this.notifyDraftSync();
             const rect = this.canvas.getBoundingClientRect();
             const overCanvas = e.clientX >= rect.left && e.clientX < rect.right
                 && e.clientY >= rect.top && e.clientY < rect.bottom;
@@ -1223,7 +1181,10 @@ class VorticityControl extends ConfigControl {
 
         if (spiralRadius > 0) {
             ctx.strokeStyle = ControlPalette.spiral;
-            ctx.lineWidth = 3;
+            const maxThickness = Math.max(3, Math.min(this.canvas.width, this.canvas.height) * 0.026);
+            const minThickness = 1.5;
+            const radiusT = Math.max(0, Math.min(1, this.strengthValue / this.maxStrength));
+            ctx.lineWidth = minThickness + (maxThickness - minThickness) * radiusT;
             ctx.beginPath();
             const turns = 2.5;
             const points = 60;
@@ -1326,8 +1287,18 @@ class CircleControl extends ConfigControl {
 
         this.setupCanvas();
         this.setupInteraction();
+        this.updateInactiveState();
 
         return container;
+    }
+
+    isInactive() {
+        return this.strengthValue <= 0;
+    }
+
+    updateInactiveState() {
+        if (!this.element) return;
+        this.element.classList.toggle('circle-control-inactive', this.isInactive());
     }
 
     static formatRadiusDisplay(domainRadius) {
@@ -1348,7 +1319,24 @@ class CircleControl extends ConfigControl {
         if (radiusChanged) this.notifyRadiusChange();
         if (this.element) {
             this.updateDisplay();
+            this.updateInactiveState();
             this.draw();
+        }
+    }
+
+    collect(values) {
+        if (this.disabled && !this.collectWhenDisabled) return;
+        setNestedValue(values, this.configPath, this.radiusValue);
+        setNestedValue(values, this.pushConfigPath, this.pushValue);
+        setNestedValue(values, this.strengthConfigPath, this.strengthValue);
+    }
+
+    load(config) {
+        const radius = getNestedValue(config, this.configPath);
+        const push = getNestedValue(config, this.pushConfigPath);
+        const strength = getNestedValue(config, this.strengthConfigPath);
+        if (radius !== undefined && push !== undefined && strength !== undefined) {
+            this.loadValue(radius, push, strength);
         }
     }
 
@@ -1379,7 +1367,11 @@ class CircleControl extends ConfigControl {
     setupInteraction() {
         this.arrowInteraction = setupControlCanvasArrowInteraction(this.canvas, {
             getTips: () => this.getTips(),
-            getArrowKeys: () => ['white', 'cyan', 'green'],
+            getArrowKeys: () => {
+                const keys = ['white', 'green'];
+                if (!this.isInactive()) keys.splice(1, 0, 'cyan');
+                return keys;
+            },
             onRedraw: () => this.draw(),
         });
         const { updateCursor, isNearArrow, setPinned, refreshGlow } = this.arrowInteraction;
@@ -1389,7 +1381,7 @@ class CircleControl extends ConfigControl {
             if (isNearArrow(pos, 'white')) {
                 this.isDraggingUp = true;
                 setPinned('white', true);
-            } else if (isNearArrow(pos, 'cyan')) {
+            } else if (!this.isInactive() && isNearArrow(pos, 'cyan')) {
                 this.isDraggingRight = true;
                 setPinned('cyan', true);
             } else if (isNearArrow(pos, 'green')) {
@@ -1429,16 +1421,19 @@ class CircleControl extends ConfigControl {
             }
 
             this.updateDisplay();
+            this.updateInactiveState();
             this.draw();
         });
 
         window.addEventListener('mouseup', (e) => {
+            const wasDragging = this.isDraggingUp || this.isDraggingRight || this.isDraggingDiagonal;
             setPinned('white', false);
             setPinned('cyan', false);
             setPinned('green', false);
             this.isDraggingUp = false;
             this.isDraggingRight = false;
             this.isDraggingDiagonal = false;
+            if (wasDragging) this.notifyDraftSync();
             const rect = this.canvas.getBoundingClientRect();
             const overCanvas = e.clientX >= rect.left && e.clientX < rect.right
                 && e.clientY >= rect.top && e.clientY < rect.bottom;
@@ -1484,11 +1479,12 @@ class CircleControl extends ConfigControl {
 
         updateControlScaleIndicator(this.element, this.getDisplayScale());
 
+        const inactive = this.isInactive();
         const tips = this.getTips();
         const pushRadius = this.radiusValue * this.pushValue;
 
         // Momentum ring only (annulus), never a filled disc over the interior
-        if (pushRadius > this.radiusValue) {
+        if (!inactive && pushRadius > this.radiusValue) {
             this.drawAnnulus(this.radiusValue, pushRadius, ControlPalette.effectRing);
         }
 
@@ -1504,14 +1500,16 @@ class CircleControl extends ConfigControl {
             'up',
             this.arrowInteraction?.getGlow('white') ?? 0
         );
-        drawControlArrow(
-            this.ctx,
-            { x: this.centerX + tips.radiusPx, y: this.centerY },
-            tips.cyan,
-            ControlPalette.effect,
-            'left',
-            this.arrowInteraction?.getGlow('cyan') ?? 0
-        );
+        if (!inactive) {
+            drawControlArrow(
+                this.ctx,
+                { x: this.centerX + tips.radiusPx, y: this.centerY },
+                tips.cyan,
+                ControlPalette.effect,
+                'left',
+                this.arrowInteraction?.getGlow('cyan') ?? 0
+            );
+        }
         drawControlArrow(
             this.ctx,
             { x: this.centerX, y: this.centerY },
@@ -1546,17 +1544,23 @@ class CircleControl extends ConfigControl {
 
 class SimModeControl extends ConfigControl {
     static MODES = [
-        { value: 'device', label: 'GPU' },
-        { value: 'hybrid', label: 'CPU' },
+        { value: JACOBI_PIPELINE, label: 'GPU [Jacobi]' },
+        { value: 'device_gs', label: 'GPU [Gauss-Seidel]' },
+        { value: 'host_gs', label: 'CPU [Gauss-Seidel]' },
     ];
 
     constructor(initialValue) {
-        super('pipeline', '', initialValue || 'device');
-        this.currentValue = initialValue || 'device';
+        if (!initialValue) {
+            console.error('config.json: missing required value "pipeline"');
+        }
+        super('pipeline', '', initialValue);
+        this.currentValue = initialValue;
         this.resolutionControl = null;
         this.iterationsControl = null;
         this.overrelaxationControl = null;
+        this.timestepControl = null;
         this.onResolutionPreview = null;
+        this.pipelineDrafts = {};
     }
 
     linkResolutionControl(control, onResolutionPreview) {
@@ -1570,6 +1574,40 @@ class SimModeControl extends ConfigControl {
 
     linkOverrelaxationControl(control) {
         this.overrelaxationControl = control;
+    }
+
+    linkTimestepControl(control) {
+        this.timestepControl = control;
+    }
+
+    captureCurrentPipelineSnapshot() {
+        return {
+            resolution: this.resolutionControl?.currentValue,
+            iterations: this.iterationsControl?.currentValue,
+            overrelaxation: this.overrelaxationControl?.currentValue,
+            timestep: this.timestepControl?.currentValue,
+        };
+    }
+
+    initializePipelineDrafts(config) {
+        this.pipelineDrafts = {};
+        for (const mode of SimModeControl.MODES) {
+            const defaults = pipelineSimDefaults(mode.value);
+            if (defaults) {
+                this.pipelineDrafts[mode.value] = defaults;
+            }
+        }
+        const pipeline = config?.pipeline;
+        if (pipeline) {
+            const snapshot = pipelineSnapshotFromConfig(config, pipeline);
+            if (snapshot) {
+                this.pipelineDrafts[pipeline] = snapshot;
+            }
+        }
+    }
+
+    renderView() {
+        return html`<${SimModeControlView} control=${this} />`;
     }
 
     render() {
@@ -1600,55 +1638,83 @@ class SimModeControl extends ConfigControl {
         });
     }
 
-    applyPipelineUi(mode, { useDefaults = false } = {}) {
-        if (this.resolutionControl) {
+    saveCurrentPipelineDraft() {
+        if (!this.currentValue) return;
+        this.pipelineDrafts[this.currentValue] = this.captureCurrentPipelineSnapshot();
+    }
+
+    restorePipelineDraft(mode) {
+        const draft = this.pipelineDrafts[mode] ?? pipelineSimDefaults(mode);
+        if (!draft) return;
+
+        if (this.resolutionControl && draft.resolution !== undefined) {
             const range = resolutionRangeForPipeline(mode);
-            const value = useDefaults
-                ? defaultResolutionForPipeline(mode)
-                : clampResolutionForPipeline(this.resolutionControl.currentValue, mode);
-            applySliderRange(this.resolutionControl, range, value);
-            this.onResolutionPreview?.(value);
+            applySliderRange(this.resolutionControl, range, draft.resolution);
+            this.onResolutionPreview?.(this.resolutionControl.currentValue);
         }
-        if (this.iterationsControl) {
+        if (this.iterationsControl && draft.iterations !== undefined) {
             const range = iterationRangeForPipeline(mode);
-            const value = useDefaults
-                ? defaultIterationsForPipeline(mode)
-                : clampIterationsForPipeline(this.iterationsControl.currentValue, mode);
-            applySliderRange(this.iterationsControl, range, value);
+            if (!range) return;
+            applySliderRange(this.iterationsControl, range, draft.iterations);
+        }
+        if (this.timestepControl && draft.timestep !== undefined) {
+            applySliderRange(
+                this.timestepControl,
+                {
+                    min: this.timestepControl.min,
+                    max: this.timestepControl.max,
+                    step: this.timestepControl.step,
+                },
+                draft.timestep
+            );
         }
         if (this.overrelaxationControl) {
-            this.overrelaxationControl.setDisabled(isGpuSimulatorMode({ pipeline: mode }));
+            this.overrelaxationControl.setDisabled(mode === JACOBI_PIPELINE);
+            if (draft.overrelaxation !== undefined) {
+                applySliderRange(
+                    this.overrelaxationControl,
+                    {
+                        min: this.overrelaxationControl.min,
+                        max: this.overrelaxationControl.max,
+                        step: this.overrelaxationControl.step,
+                    },
+                    draft.overrelaxation
+                );
+            }
         }
+    }
+
+    applyPipelineUi(mode) {
+        this.restorePipelineDraft(mode);
     }
 
     selectMode(mode) {
         if (mode === this.currentValue) return;
+        this.saveCurrentPipelineDraft();
         this.currentValue = mode;
         this.updateSelectionState();
-        this.applyPipelineUi(mode, { useDefaults: true });
+        this.restorePipelineDraft(mode);
+        this.rerender?.();
+        this.notifyDraftSync();
     }
 
     loadValue(value) {
-        this.currentValue = value || 'device';
+        if (!value) {
+            console.error('config.json: missing required value "pipeline"');
+        }
+        this.currentValue = value;
         this.updateSelectionState();
+        this.rerender?.();
+    }
+
+    load(config) {
+        this.loadValue(config.pipeline);
     }
 
     getValue() {
         return this.currentValue;
     }
 }
-
-const MOUSE_INPUT_MODES = new Set(['mouse_pull']);
-
-export const INPUT_MODE_INT = {
-    hand: 0,
-    mouse_pull: 1,
-};
-
-export function isMouseInputMode(mode) {
-    return MOUSE_INPUT_MODES.has(mode);
-}
-
 class InputModeControl extends ConfigControl {
     static MODES = [
         { value: 'hand', label: 'CAMERA' },
@@ -1660,7 +1726,7 @@ class InputModeControl extends ConfigControl {
         this.currentValue = initialValue || 'hand';
         this.handControl = null;
         this.cameraDetected = true;
-        this._savedHandModes = null;
+        this.inputDrafts = {};
     }
 
     linkHandControl(handControl, cameraDetected) {
@@ -1681,6 +1747,10 @@ class InputModeControl extends ConfigControl {
             return 'mouse_pull';
         }
         return mode;
+    }
+
+    renderView() {
+        return html`<${InputModeControlView} control=${this} />`;
     }
 
     render() {
@@ -1722,37 +1792,77 @@ class InputModeControl extends ConfigControl {
         }
     }
 
+    saveInputDraft(mode) {
+        const circle = this.circleControl ? {
+            radius: this.circleControl.radiusValue,
+            push: this.circleControl.pushValue,
+            strength: this.circleControl.strengthValue,
+        } : null;
+
+        if (mode === 'hand' && this.handControl) {
+            this.inputDrafts.hand = {
+                left: this.handControl.leftMode,
+                right: this.handControl.rightMode,
+                sensitivityDisplay: this.handControl.sensitivityDisplay,
+                circle,
+            };
+            return;
+        }
+
+        if (mode === 'mouse_pull') {
+            this.inputDrafts.mouse_pull = { circle };
+        }
+    }
+
+    restoreInputDraft(mode) {
+        const draft = this.inputDrafts[mode];
+        if (!draft) return;
+
+        if (draft.circle && this.circleControl) {
+            this.circleControl.loadValue(
+                draft.circle.radius,
+                draft.circle.push,
+                draft.circle.strength
+            );
+        }
+
+        if (mode === 'hand' && this.handControl && draft.left !== undefined) {
+            this.handControl.loadValue(
+                draft.left,
+                draft.right,
+                HandControl.displayToInternalSensitivity(draft.sensitivityDisplay)
+            );
+        }
+    }
+
     selectMode(mode) {
         if (mode === 'hand' && !this.cameraDetected) return;
         if (mode === this.currentValue) return;
+        this.saveInputDraft(this.currentValue);
         this.currentValue = mode;
         this.updateSelectionState();
+        this.restoreInputDraft(mode);
         this.applyHandControlState();
         this.applyCircleControlState();
+        this.rerender?.();
+        this.notifyDraftSync();
     }
 
     applyHandControlState() {
         if (!this.handControl) return;
         const mouseInput = isMouseInputMode(this.currentValue);
         if (mouseInput || !this.cameraDetected) {
-            if (mouseInput && !this.handControl.disabled) {
-                this._savedHandModes = {
-                    left: this.handControl.leftMode,
-                    right: this.handControl.rightMode,
-                };
-            }
             this.handControl.collectWhenDisabled = true;
             this.handControl.setDisabled(true);
-        } else {
-            this.handControl.collectWhenDisabled = false;
-            this.handControl.setDisabled(false);
-            const saved = this._savedHandModes;
-            if (saved) {
-                this.handControl.loadValue(saved.left, saved.right);
-                this._savedHandModes = null;
-            } else {
-                const hands = window.kataraConfig?.hands ?? {};
-                this.handControl.loadValue(hands.left ?? 'full', hands.right ?? 'full');
+            return;
+        }
+
+        this.handControl.collectWhenDisabled = false;
+        this.handControl.setDisabled(false);
+        if (!this.inputDrafts.hand) {
+            const hands = requireConfigObject(readCommittedConfig(), 'hands');
+            if (hands) {
+                this.handControl.loadValue(hands.left, hands.right);
             }
         }
     }
@@ -1771,12 +1881,19 @@ class InputModeControl extends ConfigControl {
 
     loadValue(value) {
         this.currentValue = this.normalizeValue(value);
+        this.inputDrafts = {};
+        this.saveInputDraft(this.currentValue);
         if (this.element) {
             this.updateCameraButtonState();
             this.updateSelectionState();
         }
         this.applyHandControlState();
         this.applyCircleControlState();
+        this.rerender?.();
+    }
+
+    load(config) {
+        this.loadValue(config.inputMode);
     }
 
     getValue() {
@@ -1785,7 +1902,7 @@ class InputModeControl extends ConfigControl {
 }
 
 class HandControl extends ConfigControl {
-    static CONTENT_ASPECT = 3 / 2;
+    static CONTENT_ASPECT = 8 / 5;
     static HIT_LINE_THRESHOLD = 8;
     static HIT_DOT_PADDING = 3;
     static DOT_RADIUS_ACTIVE_MIN = 3;
@@ -1824,9 +1941,9 @@ class HandControl extends ConfigControl {
         super(leftConfigPath, 'Hands', initialLeft);
         this.rightConfigPath = rightConfigPath;
         this.sensitivityConfigPath = sensitivityConfigPath;
-        this.leftMode = initialLeft || 'full';
-        this.rightMode = initialRight || 'full';
-        this.sensitivityDisplay = HandControl.internalToDisplaySensitivity(initialSensitivity ?? 0.3);
+        this.leftMode = initialLeft;
+        this.rightMode = initialRight;
+        this.sensitivityDisplay = HandControl.internalToDisplaySensitivity(initialSensitivity);
         this.circleControl = null;
         this.canvas = null;
         this.ctx = null;
@@ -1842,9 +1959,9 @@ class HandControl extends ConfigControl {
     }
 
     getDotRadius(active) {
-        const radius = this.circleControl?.radiusValue ?? 0.02;
-        const minR = this.circleControl?.greyAnchor ?? 0.005;
-        const maxR = this.circleControl?.blueAnchor ?? 0.025;
+        const radius = this.circleControl.radiusValue;
+        const minR = this.circleControl.greyAnchor;
+        const maxR = this.circleControl.blueAnchor;
         const t = Math.max(0, Math.min(1, (radius - minR) / (maxR - minR)));
         const activeR = HandControl.DOT_RADIUS_ACTIVE_MIN +
             t * (HandControl.DOT_RADIUS_ACTIVE_MAX - HandControl.DOT_RADIUS_ACTIVE_MIN);
@@ -1886,6 +2003,7 @@ class HandControl extends ConfigControl {
             onChange: (value) => {
                 this.sensitivityDisplay = value;
                 this.updateSensitivitySliderState();
+                this.notifyDraftSync();
             },
             format: (value) => formatSliderValue(value, HandControl.SENSITIVITY_DISPLAY_STEP),
         });
@@ -1907,12 +2025,6 @@ class HandControl extends ConfigControl {
             this.canvas.style.pointerEvents = disabled ? 'none' : '';
         }
         this.updateSensitivitySliderState();
-        if (disabled) {
-            this.leftMode = 'none';
-            this.rightMode = 'none';
-            this.updateDisplay();
-            this.draw();
-        }
     }
 
     updateSensitivitySliderState() {
@@ -1931,10 +2043,6 @@ class HandControl extends ConfigControl {
     }
 
     loadValue(left, right, sensitivity) {
-        if (this.disabled) {
-            left = 'none';
-            right = 'none';
-        }
         this.leftMode = left || 'full';
         this.rightMode = right || 'full';
         if (sensitivity !== undefined) {
@@ -1954,6 +2062,26 @@ class HandControl extends ConfigControl {
             this.updateDisplay();
             this.draw();
         }
+    }
+
+    collect(values) {
+        if (this.disabled && !this.collectWhenDisabled) return;
+        setNestedValue(values, this.configPath, this.leftMode);
+        setNestedValue(values, this.rightConfigPath, this.rightMode);
+        setNestedValue(
+            values,
+            this.sensitivityConfigPath,
+            HandControl.displayToInternalSensitivity(this.sensitivityDisplay)
+        );
+    }
+
+    load(config) {
+        const sensitivity = getNestedValue(config, this.sensitivityConfigPath);
+        this.loadValue(
+            getNestedValue(config, this.configPath),
+            getNestedValue(config, this.rightConfigPath),
+            sensitivity
+        );
     }
 
     setupCanvas() {
@@ -2049,6 +2177,7 @@ class HandControl extends ConfigControl {
 
             this.updateDisplay();
             this.draw();
+            this.notifyDraftSync();
         });
     }
 
@@ -2158,13 +2287,13 @@ class EnvironmentControl extends ConfigControl {
         return EnvironmentControl.verticalSideUiToSim(simSide);
     }
 
-    constructor(initialEdges, initialWindTunnel = {}) {
+    constructor(initialEdges, initialWindTunnel) {
         super('simulation.edges', 'Environment', initialEdges);
-        this.edgesMask = initialEdges ?? 14;
-        this.windSide = initialWindTunnel.side ?? -1;
-        this.velocityValue = initialWindTunnel.velocity ?? 1;
-        const start = initialWindTunnel.startPosition ?? 0.45;
-        const end = initialWindTunnel.endPosition ?? 0.55;
+        this.edgesMask = initialEdges;
+        this.windSide = EnvironmentControl.verticalSideSimToUi(initialWindTunnel.side);
+        this.velocityValue = initialWindTunnel.velocity;
+        const start = initialWindTunnel.startPosition;
+        const end = initialWindTunnel.endPosition;
         this.widthValue = Math.max(0.01, Math.min(0.2, end - start));
         this.canvas = null;
         this.ctx = null;
@@ -2172,6 +2301,7 @@ class EnvironmentControl extends ConfigControl {
         this.velocitySlider = null;
         this.widthSlider = null;
         this.glowInteraction = null;
+        this.wallGlowInteraction = null;
     }
 
     updateCanvasContainerAspect() {
@@ -2222,6 +2352,7 @@ class EnvironmentControl extends ConfigControl {
             onChange: (value) => {
                 this.velocityValue = value;
                 this.draw();
+                this.notifyDraftSync();
             },
             format: (value) => formatSliderValue(value, 0.01),
         });
@@ -2231,6 +2362,7 @@ class EnvironmentControl extends ConfigControl {
             onChange: (value) => {
                 this.widthValue = value;
                 this.draw();
+                this.notifyDraftSync();
             },
             format: (value) => formatSliderValue(value, 0.01),
         });
@@ -2270,6 +2402,31 @@ class EnvironmentControl extends ConfigControl {
         }
     }
 
+    collect(values) {
+        if (this.disabled && !this.collectWhenDisabled) return;
+        setNestedValue(values, this.configPath, this.edgesMask);
+        setNestedValue(
+            values,
+            'simulation.windTunnel.side',
+            EnvironmentControl.verticalSideUiToSim(this.windSide)
+        );
+        setNestedValue(values, 'simulation.windTunnel.velocity', this.velocityValue);
+        const halfWidth = this.widthValue / 2;
+        setNestedValue(values, 'simulation.windTunnel.startPosition', 0.5 - halfWidth);
+        setNestedValue(values, 'simulation.windTunnel.endPosition', 0.5 + halfWidth);
+    }
+
+    load(config) {
+        const windTunnel = config.simulation.windTunnel;
+        this.loadValue(
+            getNestedValue(config, this.configPath),
+            windTunnel.side,
+            windTunnel.velocity,
+            windTunnel.startPosition,
+            windTunnel.endPosition
+        );
+    }
+
     updateSliderState() {
         const disabled = this.windSide === -1;
         for (const row of [this.velocitySlider, this.widthSlider]) {
@@ -2292,6 +2449,11 @@ class EnvironmentControl extends ConfigControl {
         this.glowInteraction = setupControlCanvasGlowInteraction(this.canvas, {
             getKeys: () => [0, 1, 2, 3],
             getActiveKey: (pos) => this.getActiveArrowSide(pos),
+            onRedraw: () => this.draw(),
+        });
+        this.wallGlowInteraction = setupControlCanvasGlowInteraction(this.canvas, {
+            getKeys: () => EnvironmentControl.EDGES.map((edge) => edge.key),
+            getActiveKey: (pos) => this.hitTestEdge(pos)?.key ?? null,
             onRedraw: () => this.draw(),
         });
 
@@ -2324,6 +2486,7 @@ class EnvironmentControl extends ConfigControl {
                 this.updateSliderState();
             }
             this.draw();
+            this.notifyDraftSync();
             return;
         }
 
@@ -2338,6 +2501,7 @@ class EnvironmentControl extends ConfigControl {
             }
             this.updateSliderState();
             this.draw();
+            this.notifyDraftSync();
         }
     }
 
@@ -2464,6 +2628,7 @@ class EnvironmentControl extends ConfigControl {
     }
 
     hitTestEdge(pos) {
+        if (!pos || !this.layout) return null;
         const polygons = this.getEdgePolygons();
         for (const edge of EnvironmentControl.EDGES) {
             if (this.pointInPolygon(pos, polygons[edge.key])) {
@@ -2517,7 +2682,12 @@ class EnvironmentControl extends ConfigControl {
 
         for (const edge of EnvironmentControl.EDGES) {
             const active = (this.edgesMask & edge.bit) !== 0;
-            this.fillPolygon(polygons[edge.key], active ? ControlPalette.radius : ControlPalette.circle);
+            const glowT = this.wallGlowInteraction?.getGlow(edge.key) ?? 0;
+            this.fillPolygon(
+                polygons[edge.key],
+                active ? ControlPalette.radius : ControlPalette.circle,
+                glowT
+            );
         }
 
         const arrowColorOff = Palette.greyInactive;
@@ -2537,8 +2707,10 @@ class EnvironmentControl extends ConfigControl {
         }
     }
 
-    fillPolygon(points, color) {
+    fillPolygon(points, color, glowT = 0) {
         const ctx = this.ctx;
+        ctx.save();
+        applyControlCanvasGlow(ctx, glowT, ENVIRONMENT_GLOW_BLUR);
         ctx.fillStyle = color;
         ctx.strokeStyle = color;
         ctx.lineWidth = 1;
@@ -2551,6 +2723,7 @@ class EnvironmentControl extends ConfigControl {
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
+        ctx.restore();
     }
 
     drawArrow(from, tip, color, baseWidth = 8, headWidth = 14, headLength = 12, glowT = 0) {
@@ -2569,114 +2742,11 @@ class EnvironmentControl extends ConfigControl {
         };
 
         ctx.save();
+        applyControlCanvasGlow(ctx, glowT, ENVIRONMENT_GLOW_BLUR);
         ctx.fillStyle = color;
         fillPolygon(body);
-        ctx.restore();
-
-        ctx.save();
-        applyControlCanvasGlow(ctx, glowT);
-        ctx.fillStyle = color;
         fillPolygon(head);
         ctx.restore();
-    }
-}
-
-function collectControlValue(control, values) {
-    if (control.disabled && !control.collectWhenDisabled) return;
-    if (control instanceof VorticityControl) {
-        setNestedValue(values, control.configPath, control.strengthValue);
-        setNestedValue(values, control.impactConfigPath, control.impactValue);
-    } else if (control instanceof CircleControl) {
-        setNestedValue(values, control.configPath, control.radiusValue);
-        setNestedValue(values, control.pushConfigPath, control.pushValue);
-        setNestedValue(values, control.strengthConfigPath, control.strengthValue);
-    } else if (control instanceof HandControl) {
-        setNestedValue(values, control.configPath, control.leftMode);
-        setNestedValue(values, control.rightConfigPath, control.rightMode);
-        setNestedValue(
-            values,
-            control.sensitivityConfigPath,
-            HandControl.displayToInternalSensitivity(control.sensitivityDisplay)
-        );
-    } else if (control instanceof EnvironmentControl) {
-        setNestedValue(values, control.configPath, control.edgesMask);
-        setNestedValue(
-            values,
-            'simulation.windTunnel.side',
-            EnvironmentControl.verticalSideUiToSim(control.windSide)
-        );
-        setNestedValue(values, 'simulation.windTunnel.velocity', control.velocityValue);
-        const halfWidth = control.widthValue / 2;
-        setNestedValue(values, 'simulation.windTunnel.startPosition', 0.5 - halfWidth);
-        setNestedValue(values, 'simulation.windTunnel.endPosition', 0.5 + halfWidth);
-    } else {
-        setNestedValue(values, control.configPath, control.getValue());
-    }
-}
-
-function loadControlValue(control, config) {
-    if (control instanceof VorticityControl) {
-        const strength = getNestedValue(config, control.configPath);
-        const impact = getNestedValue(config, control.impactConfigPath);
-        if (strength !== undefined && impact !== undefined) control.loadValue(strength, impact);
-    } else if (control instanceof CircleControl) {
-        const radius = getNestedValue(config, control.configPath);
-        const push = getNestedValue(config, control.pushConfigPath);
-        const strength = getNestedValue(config, control.strengthConfigPath);
-        if (radius !== undefined || push !== undefined || strength !== undefined) {
-            control.loadValue(
-                radius ?? control.radiusValue,
-                push ?? control.pushValue,
-                strength ?? control.strengthValue
-            );
-        }
-    } else if (control instanceof SimModeControl) {
-        control.loadValue(config.pipeline ?? 'device');
-    } else if (control instanceof InputModeControl) {
-        control.loadValue(config.inputMode ?? 'hand');
-    } else if (control instanceof HandControl) {
-        const sensitivity = getNestedValue(config, control.sensitivityConfigPath);
-        if (control.disabled) {
-            control.loadValue('none', 'none', sensitivity);
-        } else {
-            control.loadValue(
-                getNestedValue(config, control.configPath),
-                getNestedValue(config, control.rightConfigPath),
-                sensitivity
-            );
-        }
-    } else if (control instanceof EnvironmentControl) {
-        const windTunnel = config.simulation?.windTunnel ?? {};
-        control.loadValue(
-            getNestedValue(config, control.configPath),
-            windTunnel.side,
-            windTunnel.velocity,
-            windTunnel.startPosition,
-            windTunnel.endPosition
-        );
-    } else if (control instanceof HeaderCheckboxControl && control.disabled) {
-        control.currentValue = false;
-        const checkbox = control.element?.querySelector('input[type="checkbox"]');
-        if (checkbox) checkbox.checked = false;
-    } else if (control instanceof LayoutPresetControl) {
-        const value = getNestedValue(config, control.configPath);
-        if (value !== undefined) control.loadValue(value);
-    } else {
-        const value = getNestedValue(config, control.configPath);
-        if (value === undefined) return;
-        control.currentValue = value;
-        if (!control.element) return;
-        if (control instanceof ToggleSliderControl) {
-            control.loadValue(value);
-        } else if (control instanceof SliderControl) {
-            const input = control.element.querySelector('input[type="range"]');
-            const display = control.element.querySelector('.value-display');
-            if (input) input.value = value;
-            if (display) display.textContent = formatSliderValue(value, control.step);
-        } else if (control instanceof CheckboxControl || control instanceof HeaderCheckboxControl) {
-            const checkbox = control.element.querySelector('input[type="checkbox"]');
-            if (checkbox) checkbox.checked = value;
-        }
     }
 }
 
@@ -2701,6 +2771,16 @@ class ConfigSection {
 
     getAllControls() {
         return [...this.headerControls, ...this.controls];
+    }
+
+    renderView() {
+        return html`<${ConfigSectionView}
+            title=${this.title}
+            layout=${this.layout}
+            disabled=${this.disabled}
+            headerControls=${this.headerControls.map((control) => control.renderView())}
+            controls=${this.controls.map((control) => control.renderView())}
+        />`;
     }
 
     render() {
@@ -2740,950 +2820,56 @@ class ConfigSection {
 
     collectValues() {
         const values = {};
-        this.getAllControls().forEach(control => collectControlValue(control, values));
+        this.getAllControls().forEach(control => control.collect(values));
         return values;
     }
 }
 
-function formatTargetIndex(index) {
-    return String(index).padStart(2, '0');
-}
-
-function isShaderEditingLocked(index) {
-    return index === 3;
-}
-
-function getBuiltinShaderDisplayName(index) {
-    if (index === 3) {
-        return 'IMG';
-    }
-    const names = {
-        0: 'PRESSURE', 1: 'DENSITY', 2: 'FLUID', 4: 'DIVERGENCE', 5: 'NORMAL',
-        6: 'HEATMAP', 7: 'BLOOM', 8: 'SHIMMER', 9: 'PLASMA', 10: 'CHROME', 11: 'VAPOR',
-    };
-    return names[index] || `TARGET_${index}`;
-}
-
-function getShaderTargetName(index, app) {
-    const customName = window.kataraConfig?.customViews?.[String(index)]?.displayName;
-    if (customName) {
-        return customName;
-    }
-    if (index === 3) {
-        return app?.getInkDisplayName?.() ?? 'INK';
-    }
-    const names = {
-        0: 'PRESSURE', 1: 'DENSITY', 2: 'FLUID', 4: 'DIVERGENCE', 5: 'NORMAL',
-        6: 'HEATMAP', 7: 'BLOOM', 8: 'SHIMMER', 9: 'PLASMA', 10: 'CHROME', 11: 'VAPOR',
-    };
-    return names[index] || `TARGET_${index}`;
-}
-
-class SettingsPanel {
-    static VIEW_TARGET_COUNT = 12;
-
-    constructor(parentApp) {
-        this.parentApp = parentApp;
-        this.panelElement = null;
-        this.sections = [];
-        this.isOpen = false;
-        this.wasPausedBeforeOpen = false;
-        this.originalConfig = null;
-        this.boundKeyHandler = null;
-        this.activeTab = 'settings';
-        this.shaderTargetIndex = 0;
-        this.shaderDrafts = {};
-        this.baselineShaderDrafts = {};
-        this.shaderDisplayNameDrafts = {};
-        this.baselineShaderDisplayNames = {};
-        this.shaderRenamingIndex = null;
-        this.shaderEditorEditing = false;
-        this.shaderEditorSessionDraft = '';
-        this.shaderError = null;
-        this.settingsTabPane = null;
-        this.shaderTabPane = null;
-        this.shaderExplorerElement = null;
-        this.shaderEditorToolbarElement = null;
-        this.shaderEditorEditButton = null;
-        this.shaderEditorSaveButton = null;
-        this.shaderEditorCancelButton = null;
-        this.shaderEditorShellElement = null;
-        this.shaderEditorElement = null;
-        this.shaderErrorElement = null;
-    }
-
-    readShaderSourceFromWasm(index) {
-        const mod = this.parentApp.module;
-        if (!mod?._getViewSource) {
-            return '';
-        }
-        const ptr = mod._getViewSource(index);
-        if (!ptr) {
-            return '';
-        }
-        const text = mod.UTF8ToString(ptr);
-        mod._freeShaderString(ptr);
-        return text;
-    }
-
-    initializeShaderDisplayNames() {
-        this.shaderDisplayNameDrafts = {};
-        this.baselineShaderDisplayNames = {};
-        for (let index = 0; index < SettingsPanel.VIEW_TARGET_COUNT; index++) {
-            const key = String(index);
-            const customName = isShaderEditingLocked(index)
-                ? undefined
-                : (this.originalConfig?.customViews?.[key]?.displayName
-                    ?? window.kataraConfig?.customViews?.[key]?.displayName);
-            const name = customName || getBuiltinShaderDisplayName(index);
-            this.shaderDisplayNameDrafts[index] = name;
-            this.baselineShaderDisplayNames[index] = name;
-        }
-    }
-
-    getShaderDisplayName(index) {
-        return this.shaderDisplayNameDrafts[index] ?? getBuiltinShaderDisplayName(index);
-    }
-
-    getShaderExplorerFilename(index) {
-        const slug = this.getShaderDisplayName(index).toLowerCase().replace(/[\s.-]+/g, '_').replace(/_+/g, '_');
-        return `${formatTargetIndex(index)}_${slug}.wgsl`;
-    }
-
-    renderShaderExplorer() {
-        if (!this.shaderExplorerElement) return;
-        this.shaderExplorerElement.innerHTML = '';
-        for (let index = 0; index < SettingsPanel.VIEW_TARGET_COUNT; index++) {
-            const item = document.createElement('div');
-            item.className = 'shader-explorer-item';
-            if (index === this.shaderTargetIndex) {
-                item.classList.add('selected');
-            }
-            if (isShaderEditingLocked(index)) {
-                item.classList.add('locked');
-            }
-            if (this.shaderRenamingIndex === index) {
-                item.classList.add('renaming');
-                const prefix = document.createElement('span');
-                prefix.className = 'shader-explorer-prefix';
-                prefix.textContent = `${formatTargetIndex(index)}_`;
-                const input = document.createElement('input');
-                input.type = 'text';
-                input.className = 'shader-explorer-rename-input';
-                input.dataset.index = String(index);
-                input.spellcheck = false;
-                input.value = this.getShaderDisplayName(index);
-                const suffix = document.createElement('span');
-                suffix.className = 'shader-explorer-suffix';
-                suffix.textContent = '.wgsl';
-                input.addEventListener('keydown', (event) => {
-                    event.stopPropagation();
-                    if (event.key === 'Enter') {
-                        event.preventDefault();
-                        this.commitRenameShader(index, input.value);
-                    } else if (event.key === 'Escape') {
-                        event.preventDefault();
-                        this.cancelRenameShader();
-                    }
-                });
-                input.addEventListener('keypress', (event) => event.stopPropagation());
-                input.addEventListener('input', (event) => event.stopPropagation());
-                input.addEventListener('mousedown', (event) => event.stopPropagation());
-                input.addEventListener('click', (event) => event.stopPropagation());
-                item.appendChild(prefix);
-                item.appendChild(input);
-                item.appendChild(suffix);
-                setTimeout(() => {
-                    input.focus();
-                    input.select();
-                }, 0);
-            } else {
-                const selectBtn = document.createElement('button');
-                selectBtn.type = 'button';
-                selectBtn.className = 'shader-explorer-select';
-                selectBtn.textContent = this.getShaderExplorerFilename(index);
-                selectBtn.addEventListener('click', () => {
-                    this.loadShaderEditorForTarget(index);
-                });
-
-                item.appendChild(selectBtn);
-
-                if (!isShaderEditingLocked(index)) {
-                    const renameBtn = document.createElement('button');
-                    renameBtn.type = 'button';
-                    renameBtn.className = 'shader-explorer-rename';
-                    renameBtn.title = 'Rename display label';
-                    renameBtn.innerHTML = `
-                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M12 20h9"></path>
-                            <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4Z"></path>
-                        </svg>
-                    `;
-                    renameBtn.addEventListener('click', (event) => {
-                        event.stopPropagation();
-                        this.startRenameShader(index);
-                    });
-                    item.appendChild(renameBtn);
-                }
-            }
-            this.shaderExplorerElement.appendChild(item);
-        }
-    }
-
-    startRenameShader(index) {
-        if (isShaderEditingLocked(index)) return;
-        this.shaderRenamingIndex = index;
-        this.renderShaderExplorer();
-    }
-
-    commitRenameShader(index, rawValue) {
-        const trimmed = rawValue.trim();
-        if (trimmed) {
-            this.shaderDisplayNameDrafts[index] = trimmed.toUpperCase().replace(/[\s.-]+/g, '_').replace(/_+/g, '_');
-        }
-        this.shaderRenamingIndex = null;
-        this.renderShaderExplorer();
-    }
-
-    cancelRenameShader() {
-        this.shaderRenamingIndex = null;
-        this.renderShaderExplorer();
-    }
-
-    initializeShaderDrafts() {
-        this.shaderDrafts = {};
-        this.baselineShaderDrafts = {};
-        for (let index = 0; index < SettingsPanel.VIEW_TARGET_COUNT; index++) {
-            const source = this.readShaderSourceFromWasm(index);
-            this.shaderDrafts[index] = source;
-            this.baselineShaderDrafts[index] = source;
-        }
-    }
-
-    flushShaderEditorDraft() {
-        if (!this.shaderEditorElement || this.shaderEditorElement.readOnly) return;
-        if (isShaderEditingLocked(this.shaderTargetIndex)) return;
-        this.shaderDrafts[this.shaderTargetIndex] = this.shaderEditorElement.value;
-    }
-
-    updateShaderEditorChrome() {
-        const editing = this.shaderEditorEditing;
-        if (this.shaderEditorEditButton) {
-            this.shaderEditorEditButton.classList.toggle('hidden', editing);
-            if (isShaderEditingLocked(this.shaderTargetIndex)) {
-                this.shaderEditorEditButton.disabled = true;
-                this.shaderEditorEditButton.classList.add('input-mode-btn-disabled');
-            }
-        }
-        if (this.shaderEditorSaveButton) {
-            this.shaderEditorSaveButton.classList.toggle('hidden', !editing);
-        }
-        if (this.shaderEditorCancelButton) {
-            this.shaderEditorCancelButton.classList.toggle('hidden', !editing);
-        }
-        if (this.shaderEditorShellElement) {
-            this.shaderEditorShellElement.classList.toggle('editing', editing);
-        }
-        if (this.shaderEditorElement) {
-            this.shaderEditorElement.readOnly = !editing;
-            if (editing) {
-                this.shaderEditorElement.removeAttribute('readonly');
-            } else {
-                this.shaderEditorElement.setAttribute('readonly', '');
-            }
-        }
-    }
-
-    bindShaderEditorInteractionEvents() {
-        if (!this.shaderEditorElement) return;
-
-        const stopWhenEditing = (event) => {
-            if (this.shaderEditorEditing) {
-                event.stopPropagation();
-            }
-        };
-
-        for (const eventName of ['keydown', 'keypress', 'keyup', 'input', 'beforeinput', 'mousedown', 'click', 'paste']) {
-            this.shaderEditorElement.addEventListener(eventName, stopWhenEditing);
-        }
-
-        this.shaderEditorElement.addEventListener('mousedown', () => {
-            if (this.shaderEditorEditing) {
-                this.shaderEditorElement.focus();
-            }
-        });
-    }
-
-    focusShaderEditor() {
-        if (!this.shaderEditorElement || !this.shaderEditorEditing) return;
-        this.shaderEditorElement.focus();
-        const length = this.shaderEditorElement.value.length;
-        this.shaderEditorElement.setSelectionRange(length, length);
-    }
-
-    startShaderEditorEdit() {
-        if (!this.shaderEditorElement || isShaderEditingLocked(this.shaderTargetIndex)) return;
-        this.shaderEditorSessionDraft = this.shaderEditorElement.value;
-        this.shaderEditorEditing = true;
-        this.updateShaderEditorChrome();
-        requestAnimationFrame(() => this.focusShaderEditor());
-    }
-
-    saveShaderEditorEdit() {
-        if (!this.shaderEditorEditing) return;
-        this.shaderDrafts[this.shaderTargetIndex] = this.shaderEditorElement.value;
-        this.shaderEditorEditing = false;
-        this.shaderEditorSessionDraft = '';
-        this.updateShaderEditorChrome();
-    }
-
-    cancelShaderEditorEdit() {
-        if (!this.shaderEditorEditing || !this.shaderEditorElement) return;
-        this.shaderEditorElement.value = this.shaderEditorSessionDraft;
-        this.shaderEditorEditing = false;
-        this.shaderEditorSessionDraft = '';
-        this.updateShaderEditorChrome();
-    }
-
-    loadShaderEditorForTarget(index) {
-        if (this.shaderEditorEditing) {
-            this.cancelShaderEditorEdit();
-        }
-        if (this.shaderRenamingIndex === index && isShaderEditingLocked(index)) {
-            this.shaderRenamingIndex = null;
-        }
-        this.shaderTargetIndex = index;
-        if (this.shaderEditorElement) {
-            this.shaderEditorElement.value = this.shaderDrafts[index] ?? this.readShaderSourceFromWasm(index);
-        }
-        this.shaderEditorEditing = false;
-        this.shaderEditorSessionDraft = '';
-        this.updateShaderEditorChrome();
-        this.renderShaderExplorer();
-        this.hideShaderError();
-    }
-
-    switchTab(tab) {
-        if (tab === this.activeTab) return;
-        if (this.activeTab === 'shader') {
-            if (this.shaderEditorEditing) {
-                this.cancelShaderEditorEdit();
-            } else {
-                this.flushShaderEditorDraft();
-            }
-        }
-        this.activeTab = tab;
-        this.panelElement?.querySelectorAll('.settings-tab').forEach((button) => {
-            button.classList.toggle('selected', button.dataset.tab === tab);
-        });
-        if (this.settingsTabPane) {
-            this.settingsTabPane.classList.toggle('hidden', tab !== 'settings');
-        }
-        if (this.shaderTabPane) {
-            this.shaderTabPane.classList.toggle('hidden', tab !== 'shader');
-        }
-        if (tab === 'shader') {
-            this.loadShaderEditorForTarget(this.shaderTargetIndex);
-        }
-    }
-
-    showShaderError(message) {
-        this.shaderError = message;
-        if (!this.shaderErrorElement) return;
-        this.shaderErrorElement.textContent = message;
-        this.shaderErrorElement.classList.remove('hidden');
-    }
-
-    hideShaderError() {
-        this.shaderError = null;
-        this.shaderErrorElement?.classList.add('hidden');
-    }
-
-    shaderDraftsChanged() {
-        for (let index = 0; index < SettingsPanel.VIEW_TARGET_COUNT; index++) {
-            if (isShaderEditingLocked(index)) continue;
-            if ((this.shaderDrafts[index] ?? '') !== (this.baselineShaderDrafts[index] ?? '')) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    displayNamesChanged() {
-        for (let index = 0; index < SettingsPanel.VIEW_TARGET_COUNT; index++) {
-            if (isShaderEditingLocked(index)) continue;
-            if ((this.shaderDisplayNameDrafts[index] ?? '') !== (this.baselineShaderDisplayNames[index] ?? '')) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    getShaderTargetLabel(index) {
-        return this.getShaderExplorerFilename(index);
-    }
-
-    ensurePersistViewsDir(FS) {
-        const dir = '/persist/views';
-        try {
-            FS.mkdir('/persist');
-        } catch (_) { /* exists */ }
-        try {
-            FS.mkdir(dir);
-        } catch (_) { /* exists */ }
-    }
-
-    getShaderErrorMessage(mod, fallback) {
-        const errorPtr = mod._getLastShaderError?.();
-        if (!errorPtr) {
-            return fallback;
-        }
-        const message = mod.UTF8ToString(errorPtr);
-        mod._freeShaderString(errorPtr);
-        return message || fallback;
-    }
-
-    async persistShaderDrafts() {
-        const mod = this.parentApp.module;
-        const FS = mod?.FS;
-        if (!FS || !mod._setViewSource) {
-            return true;
-        }
-
-        this.ensurePersistViewsDir(FS);
-
-        for (let index = 0; index < SettingsPanel.VIEW_TARGET_COUNT; index++) {
-            if (isShaderEditingLocked(index)) continue;
-            const draft = this.shaderDrafts[index] ?? '';
-            const baseline = this.baselineShaderDrafts[index] ?? '';
-            const persistPath = `/persist/views/${index}.wgsl`;
-
-            if (draft !== baseline) {
-                FS.writeFile(persistPath, draft);
-                if (!mod._setViewSource(index, draft)) {
-                    this.showShaderError(this.getShaderErrorMessage(mod, `Invalid shader for target ${index}`));
-                    return false;
-                }
-            } else {
-                try {
-                    if (FS.analyzePath(persistPath).exists) {
-                        FS.unlink(persistPath);
-                    }
-                } catch (_) { /* ignore */ }
-                if (mod._resetViewSource) {
-                    mod._resetViewSource(index);
-                }
-            }
-        }
-
-        if (!mod._applyViewShaders || mod._applyViewShaders() !== 0) {
-            this.showShaderError(this.getShaderErrorMessage(mod, 'Shader compilation failed'));
-            return false;
-        }
-
-        for (let index = 0; index < SettingsPanel.VIEW_TARGET_COUNT; index++) {
-            this.baselineShaderDrafts[index] = this.shaderDrafts[index] ?? '';
-        }
-        for (let index = 0; index < SettingsPanel.VIEW_TARGET_COUNT; index++) {
-            this.baselineShaderDisplayNames[index] = this.shaderDisplayNameDrafts[index] ?? getBuiltinShaderDisplayName(index);
-        }
-        return true;
-    }
-
-    mergeCustomViewsIntoConfig(config) {
-        if (!config.customViews) {
-            config.customViews = {};
-        }
-        for (let index = 0; index < SettingsPanel.VIEW_TARGET_COUNT; index++) {
-            if (isShaderEditingLocked(index)) {
-                delete config.customViews?.[String(index)];
-                continue;
-            }
-            const key = String(index);
-            const draft = this.shaderDrafts[index] ?? '';
-            const baseline = this.baselineShaderDrafts[index] ?? '';
-            const displayName = this.getShaderDisplayName(index);
-            const builtinName = getBuiltinShaderDisplayName(index);
-            const entry = { ...(config.customViews[key] ?? {}) };
-
-            if (draft !== baseline) {
-                entry.overridden = true;
-            } else {
-                delete entry.overridden;
-            }
-
-            if (displayName !== builtinName) {
-                entry.displayName = displayName;
-            } else {
-                delete entry.displayName;
-            }
-
-            if (Object.keys(entry).length === 0) {
-                delete config.customViews[key];
-            } else {
-                config.customViews[key] = entry;
-            }
-        }
-        if (Object.keys(config.customViews).length === 0) {
-            delete config.customViews;
-        }
-    }
-
-    addSection(section) {
-        this.sections.push(section);
-        let resolutionControl = null;
-        let simModeControl = null;
-        section.getAllControls().forEach((control) => {
-            if (control instanceof SliderControl && control.configPath === 'simulation.resolution') {
-                resolutionControl = control;
-                control.liveChange = (value) => this.onResolutionPreview(value);
-            }
-            if (control instanceof SimModeControl) {
-                simModeControl = control;
-            }
-        });
-        if (simModeControl && resolutionControl) {
-            simModeControl.linkResolutionControl(
-                resolutionControl,
-                (value) => this.onResolutionPreview(value)
-            );
-        }
-    }
-
-    onResolutionPreview(value) {
-        if (!window.kataraConfig) window.kataraConfig = {};
-        if (!window.kataraConfig.simulation) window.kataraConfig.simulation = {};
-        window.kataraConfig.simulation.resolution = value;
-        this.refreshScaleControls();
-    }
-
-    refreshScaleControls() {
-        this.sections.forEach((section) => {
-            section.getAllControls().forEach((control) => {
-                if (control instanceof VorticityControl || control instanceof CircleControl) {
-                    control.draw();
-                }
-            });
-        });
-    }
-
-    async open() {
-        if (this.isOpen) return;
-        this.wasPausedBeforeOpen = this.parentApp.simulationPaused;
-        if (!this.wasPausedBeforeOpen) {
-            this.parentApp.togglePause();
-        }
-        this.saveOriginalConfig();
-        this.initializeShaderDrafts();
-        this.initializeShaderDisplayNames();
-        this.createPanel();
-        this.loadCurrentValues();
-        const pipeline = this.originalConfig?.pipeline ?? 'device';
-        const resolution = this.originalConfig?.simulation?.resolution
-            ?? defaultResolutionForPipeline(pipeline);
-        this.onResolutionPreview(resolution);
-        await this.refreshEnvironmentControls();
-        this.boundKeyHandler = this.handleKeyDown.bind(this);
-        this.attachKeyHandler();
-        this.isOpen = true;
-    }
-
-    attachKeyHandler() {
-        if (!this.panelElement || !this.boundKeyHandler) return;
-        this.panelElement.addEventListener('keydown', this.boundKeyHandler);
-    }
-
-    detachKeyHandler() {
-        if (!this.panelElement || !this.boundKeyHandler) return;
-        this.panelElement.removeEventListener('keydown', this.boundKeyHandler);
-    }
-
-    async refreshEnvironmentControls() {
-        if (this.parentApp?.updateInkAspectRatioFromConfig) {
-            await this.parentApp.updateInkAspectRatioFromConfig();
-        }
-        const refresh = () => {
-            this.sections.forEach((section) => {
-                section.getAllControls().forEach((control) => {
-                    if (control instanceof EnvironmentControl || control instanceof VorticityControl) {
-                        control.refreshLayout();
-                    }
-                });
-            });
-            this.refreshScaleControls();
-        };
-        refresh();
-        requestAnimationFrame(refresh);
-    }
-
-    async close(saveChanges = false) {
-        if (!this.isOpen) return;
-
-        this.detachKeyHandler();
-
-        if (saveChanges) {
-            const result = await this.saveAndApply();
-            if (result === 'shader') {
-                this.switchTab('shader');
-                this.attachKeyHandler();
-                return;
-            }
-            if (result === 'error') {
-                this.attachKeyHandler();
-                return;
-            }
-        } else {
-            if (this.shaderEditorEditing) {
-                this.cancelShaderEditorEdit();
-            }
-            this.shaderDrafts = { ...this.baselineShaderDrafts };
-            this.shaderDisplayNameDrafts = { ...this.baselineShaderDisplayNames };
-            this.shaderRenamingIndex = null;
-        }
-
-        this.panelElement?.remove();
-        this.boundKeyHandler = null;
-
-        if (!this.wasPausedBeforeOpen && this.parentApp.simulationPaused) {
-            this.parentApp.togglePause();
-        }
-
-        this.isOpen = false;
-    }
-
-    createPanel() {
-        const panel = document.createElement('div');
-        panel.className = 'settings-panel';
-        panel.innerHTML = `
-            <div class="settings-panel-header">
-                <div class="settings-panel-tabs">
-                    <button type="button" class="input-mode-btn settings-tab selected" data-tab="settings">SETTINGS</button>
-                    <button type="button" class="input-mode-btn settings-tab settings-tab-shader" data-tab="shader">SHADERS</button>
-                </div>
-                <div class="settings-panel-buttons">
-                    <button class="input-mode-btn settings-btn-cancel" title="Discard (ESC)">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <line x1="18" y1="6" x2="6" y2="18"></line>
-                            <line x1="6" y1="6" x2="18" y2="18"></line>
-                        </svg>
-                        <span>[ESC]</span>
-                    </button>
-                    <button class="input-mode-btn settings-btn-save" title="Save (Enter)">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <polyline points="20,6 9,17 4,12"></polyline>
-                        </svg>
-                        <span>[ENTER]</span>
-                    </button>
-                </div>
-            </div>
-            <div class="settings-panel-body">
-                <div class="settings-panel-content settings-tab-pane" data-tab="settings"></div>
-                <div class="settings-panel-content settings-tab-pane hidden shader-editor-pane" data-tab="shader">
-                    <div class="shader-workspace">
-                        <div class="shader-explorer"></div>
-                        <div class="shader-editor-column">
-                            <div class="shader-editor-toolbar">
-                                <button type="button" class="input-mode-btn input-mode-btn-disabled shader-editor-edit" disabled>EDIT</button>
-                                <button type="button" class="input-mode-btn shader-editor-save hidden">SAVE</button>
-                                <button type="button" class="input-mode-btn shader-editor-cancel hidden">CANCEL</button>
-                            </div>
-                            <div class="shader-error-box hidden"></div>
-                            <div class="shader-editor-shell">
-                                <textarea class="shader-editor" spellcheck="false" readonly></textarea>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
-        panel.querySelector('.settings-btn-cancel').addEventListener('click', () => this.close(false));
-        panel.querySelector('.settings-btn-save').addEventListener('click', () => this.close(true));
-        panel.querySelectorAll('.settings-tab').forEach((button) => {
-            button.addEventListener('click', () => this.switchTab(button.dataset.tab));
-        });
-        panel.tabIndex = -1;
-        setTimeout(() => panel.focus(), 0);
-
-        this.settingsTabPane = panel.querySelector('.settings-tab-pane[data-tab="settings"]');
-        this.shaderTabPane = panel.querySelector('.settings-tab-pane[data-tab="shader"]');
-        this.shaderExplorerElement = panel.querySelector('.shader-explorer');
-        this.shaderEditorToolbarElement = panel.querySelector('.shader-editor-toolbar');
-        this.shaderEditorEditButton = panel.querySelector('.shader-editor-edit');
-        this.shaderEditorSaveButton = panel.querySelector('.shader-editor-save');
-        this.shaderEditorCancelButton = panel.querySelector('.shader-editor-cancel');
-        this.shaderEditorShellElement = panel.querySelector('.shader-editor-shell');
-        this.shaderErrorElement = panel.querySelector('.shader-error-box');
-        this.shaderEditorElement = panel.querySelector('.shader-editor');
-        this.shaderEditorEditButton.addEventListener('click', () => this.startShaderEditorEdit());
-        this.shaderEditorSaveButton.addEventListener('click', () => this.saveShaderEditorEdit());
-        this.shaderEditorCancelButton.addEventListener('click', () => this.cancelShaderEditorEdit());
-        this.bindShaderEditorInteractionEvents();
-        this.shaderErrorElement.addEventListener('click', () => this.hideShaderError());
-        this.updateShaderEditorChrome();
-        this.renderShaderExplorer();
-
-        const content = this.settingsTabPane;
-        const cols = document.createElement('div');
-        cols.className = 'settings-columns';
-        cols.innerHTML = `
-            <div class="settings-col settings-col-left"></div>
-            <div class="settings-col settings-col-right"></div>
-        `;
-        const leftCol = cols.querySelector('.settings-col-left');
-        const rightCol = cols.querySelector('.settings-col-right');
-        const rightTop = document.createElement('div');
-        rightTop.className = 'settings-col-right-top';
-        const rightBottom = document.createElement('div');
-        rightBottom.className = 'settings-col-right-bottom';
-        rightCol.appendChild(rightTop);
-        rightCol.appendChild(rightBottom);
-        this.sections.forEach(section => {
-            if (section.column === 'right') {
-                (section.placement === 'bottom' ? rightBottom : rightTop).appendChild(section.render());
-            } else {
-                leftCol.appendChild(section.render());
-            }
-        });
-        content.appendChild(cols);
-
-        this.loadShaderEditorForTarget(this.shaderTargetIndex);
-
-        this.panelElement = panel;
-        document.body.appendChild(panel);
-    }
-
-    handleKeyDown(e) {
-        if (!this.isOpen) return;
-
-        const inRenameInput = e.target instanceof HTMLInputElement &&
-            e.target.classList.contains('shader-explorer-rename-input');
-        const inShaderEditor = e.target instanceof HTMLTextAreaElement &&
-            e.target.classList.contains('shader-editor');
-
-        if (inRenameInput) {
-            return;
-        }
-
-        if (inShaderEditor && this.shaderEditorEditing) {
-            if (e.key === 'Escape') {
-                e.preventDefault();
-                e.stopPropagation();
-                this.cancelShaderEditorEdit();
-            }
-            return;
-        }
-
-        if (this.shaderRenamingIndex !== null && e.key === 'Escape') {
-            e.preventDefault();
-            e.stopPropagation();
-            this.cancelRenameShader();
-            return;
-        }
-
-        if (e.key === 'Escape') {
-            e.preventDefault();
-            e.stopPropagation();
-            void this.close(false);
-            return;
-        }
-
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            e.stopPropagation();
-            void this.close(true);
-        }
-    }
-
-    loadCurrentValues() {
-        if (!this.originalConfig) return;
-        const config = this.originalConfig;
-        const pipeline = config.pipeline ?? 'device';
-        let simModeControl = null;
-        this.sections.forEach(section => {
-            section.getAllControls().forEach(control => {
-                if (control instanceof SimModeControl) {
-                    simModeControl = control;
-                    return;
-                }
-                loadControlValue(control, config);
-            });
-        });
-        if (simModeControl) {
-            simModeControl.loadValue(pipeline);
-            simModeControl.applyPipelineUi(pipeline);
-        }
-    }
-
-    async refresh() {
-        if (!this.isOpen) return;
-        this.saveOriginalConfig();
-        this.loadCurrentValues();
-        await this.refreshEnvironmentControls();
-    }
-
-    saveOriginalConfig() {
-        if (!this.parentApp.module?.FS) return;
-        try {
-            const configText = this.parentApp.module.FS.readFile('/config.json', { encoding: 'utf8' });
-            this.originalConfig = JSON.parse(configText);
-        } catch (err) {
-            console.error('Failed to save original config:', err);
-            this.originalConfig = null;
-        }
-    }
-
-    collectAllValues() {
-        const config = {};
-        this.sections.forEach(section => deepMerge(config, section.collectValues()));
-        return config;
-    }
-
-    async saveAndApply() {
-        if (this.shaderEditorEditing) {
-            this.saveShaderEditorEdit();
-        }
-        this.flushShaderEditorDraft();
-
-        const mergedConfig = deepMerge(deepMerge({}, this.originalConfig || {}), this.collectAllValues());
-        const pipeline = mergedConfig.pipeline ?? 'device';
-        mergedConfig.simulation = mergedConfig.simulation ?? {};
-        mergedConfig.simulation.resolution = clampResolutionForPipeline(
-            mergedConfig.simulation.resolution ?? defaultResolutionForPipeline(pipeline),
-            pipeline
-        );
-        mergedConfig.simulation.projection = mergedConfig.simulation.projection ?? {};
-        mergedConfig.simulation.projection.iterations = clampIterationsForPipeline(
-            mergedConfig.simulation.projection.iterations ?? defaultIterationsForPipeline(pipeline),
-            pipeline
-        );
-        const sectionChanged = (key) =>
-            JSON.stringify(this.originalConfig?.[key] ?? {}) !== JSON.stringify(mergedConfig?.[key] ?? {});
-        const layoutChanged = sectionChanged('layout');
-        const simulationChanged = sectionChanged('simulation');
-        const pipelineChanged =
-            (this.originalConfig?.pipeline ?? 'device') !== (mergedConfig.pipeline ?? 'device');
-        try {
-            this.parentApp.mergeViewportTargetsIntoConfig(mergedConfig);
-            this.mergeCustomViewsIntoConfig(mergedConfig);
-            const configText = JSON.stringify(mergedConfig, null, 4);
-            this.parentApp.module.FS.writeFile('/config.json', configText);
-
-            if (this.parentApp.idbfsAvailable) {
-                this.parentApp.module.FS.writeFile('/persist/config.json', configText);
-            }
-
-            window.kataraConfig = mergedConfig;
-
-            if (pipelineChanged) {
-                if (this.parentApp.idbfsAvailable) {
-                    await new Promise((resolve) => {
-                        this.parentApp.module.FS.syncfs(false, (err) => {
-                            if (err) console.error('syncfs failed:', err);
-                            resolve();
-                        });
-                    });
-                }
-                localStorage.setItem('katara_needs_restore', 'true');
-                window.location.reload();
-                return 'reload';
-            }
-
-            if (this.parentApp.setInputMode) {
-                this.parentApp.setInputMode(mergedConfig.inputMode ?? 'hand', { persist: false });
-            }
-
-            if (this.parentApp.module?._reloadConfig) {
-                try {
-                    let flags = 0;
-                    if (simulationChanged) flags |= 2;
-                    if (layoutChanged) flags |= (4 | 8);
-                    if (flags !== 0) {
-                        this.parentApp.module._reloadConfig(flags);
-                    }
-                } catch (e) {
-                    console.error('reloadConfig error:', e);
-                }
-            }
-
-            if (this.shaderDraftsChanged()) {
-                const shadersOk = await this.persistShaderDrafts();
-                if (!shadersOk) {
-                    return 'shader';
-                }
-            }
-
-            if (this.parentApp.idbfsAvailable) {
-                await new Promise((resolve) => {
-                    this.parentApp.module.FS.syncfs(false, (err) => {
-                        if (err) console.error('syncfs failed:', err);
-                        resolve();
-                    });
-                });
-                localStorage.setItem('katara_needs_restore', 'true');
-            }
-
-            this.parentApp.syncLayoutStateFromConfig();
-            this.parentApp.updateCameraUi();
-            if (layoutChanged) {
-                this.parentApp.refreshSimLayout();
-            } else {
-                this.parentApp.updatePlotLabels();
-                this.parentApp.updateViewportButtons();
-            }
-            return 'ok';
-        } catch (err) {
-            console.error('Failed to save config:', err);
-            this.showShaderError(err?.message || 'Failed to save settings');
-            return 'error';
-        }
-    }
-}
-
 function createSkeletonSections(currentConfig, options = {}) {
+    if (!validateConfigPaths(currentConfig, SETTINGS_CONFIG_PATHS)) {
+        return [];
+    }
+
     const sections = [];
-    const sim = currentConfig.simulation ?? {};
-    const proj = sim.projection ?? {};
-    const vorticity = sim.vorticity ?? {};
-    const layout = currentConfig.layout ?? {};
+    const sim = currentConfig.simulation;
+    const proj = sim.projection;
+    const vorticity = sim.vorticity;
+    const layout = currentConfig.render;
     const cameraDetected = options.cameraDetected === true;
 
-    const pipeline = currentConfig.pipeline ?? 'device';
+    const pipeline = currentConfig.pipeline;
+    const pipelineDefaults = pipelineSimDefaults(pipeline);
+    if (!pipelineDefaults) {
+        return [];
+    }
     const resolutionRange = resolutionRangeForPipeline(pipeline);
     const initialResolution = clampResolutionForPipeline(
-        sim.resolution ?? defaultResolutionForPipeline(pipeline),
+        sim.resolution ?? pipelineDefaults.resolution,
         pipeline
     );
 
-    const simSection = new ConfigSection('Simulation', { layout: 'grid2' });
     const simModeControl = new SimModeControl(pipeline);
-    simSection.addHeaderControl(simModeControl);
-    const resolutionControl = new SliderControl(
-        'simulation.resolution',
-        'Resolution',
-        initialResolution,
-        resolutionRange.min,
-        resolutionRange.max,
-        resolutionRange.step
-    );
-    simSection.addControl(resolutionControl);
-    simSection.addControl(new SliderControl('simulation.timestep', 'Timestep', sim.timestep ?? 0.02, 0.001, 0.1, 0.001));
-    sections.push(simSection);
 
     const projSection = new ConfigSection('Pressure Solver', { layout: 'grid2' });
+    projSection.addHeaderControl(simModeControl);
+    const overrelaxationLimits = UI_SLIDER_LIMITS.overrelaxation;
     const overrelaxationControl = new SliderControl(
         'simulation.projection.overrelaxationCoefficient',
         'Overrelaxation',
-        proj.overrelaxationCoefficient ?? 1.95,
-        1.0,
-        1.95,
-        0.05
+        proj.overrelaxationCoefficient ?? pipelineDefaults.overrelaxation,
+        overrelaxationLimits.min,
+        overrelaxationLimits.max,
+        overrelaxationLimits.step
     );
-    if (isGpuSimulatorMode(currentConfig)) {
+    if (pipeline === JACOBI_PIPELINE) {
         overrelaxationControl.setDisabled(true);
     }
     const iterationRange = iterationRangeForPipeline(pipeline);
+    if (!iterationRange) {
+        return [];
+    }
     const initialIterations = clampIterationsForPipeline(
-        proj.iterations ?? defaultIterationsForPipeline(pipeline),
+        proj.iterations ?? pipelineDefaults.iterations,
         pipeline
     );
     const iterationsControl = new SliderControl(
@@ -3700,26 +2886,47 @@ function createSkeletonSections(currentConfig, options = {}) {
     projSection.addControl(iterationsControl);
     sections.push(projSection);
 
+    const simSection = new ConfigSection('Simulation', { layout: 'grid2' });
+    const resolutionControl = new SliderControl(
+        'simulation.resolution',
+        'Resolution',
+        initialResolution,
+        resolutionRange.min,
+        resolutionRange.max,
+        resolutionRange.step
+    );
+    simSection.addControl(resolutionControl);
+    const timestepLimits = UI_SLIDER_LIMITS.timestep;
+    simSection.addControl(new SliderControl(
+        'simulation.timestep',
+        'Timestep',
+        sim.timestep ?? pipelineDefaults.timestep,
+        timestepLimits.min,
+        timestepLimits.max,
+        timestepLimits.step
+    ));
+    sections.push(simSection);
+
     const layoutSection = new ConfigSection('Layout');
     layoutSection.addControl(new LayoutPresetControl(
-        'layout.preset',
+        'render.preset',
         'Layout Preset',
-        layout.preset ?? 'default'
+        layout.preset
     ));
     layoutSection.addHeaderControl(new HeaderCheckboxControl(
-        'layout.labelsEnabled',
+        'render.labelsEnabled',
         'Labels',
-        layout.labelsEnabled ?? true
+        layout.labelsEnabled
     ));
     layoutSection.addHeaderControl(new HeaderCheckboxControl(
-        'layout.buttonsEnabled',
+        'render.buttonsEnabled',
         'Buttons',
-        layout.buttonsEnabled ?? true
+        layout.buttonsEnabled
     ));
     const cameraCheckbox = new HeaderCheckboxControl(
-        'layout.camerasEnabled',
+        'render.camerasEnabled',
         'Camera',
-        cameraDetected ? (layout.camerasEnabled ?? true) : false
+        cameraDetected ? layout.camerasEnabled : false
     );
     if (!cameraDetected) {
         cameraCheckbox.collectWhenDisabled = true;
@@ -3729,10 +2936,10 @@ function createSkeletonSections(currentConfig, options = {}) {
     sections.push(layoutSection);
 
     const plotsSection = new ConfigSection('Plots', { layout: 'grid4' });
-    plotsSection.addControl(new CheckboxControl('layout.components.density_histogram.histogramEnabled', 'Density', currentConfig.layout?.components?.density_histogram?.histogramEnabled ?? true));
-    plotsSection.addControl(new CheckboxControl('layout.components.velocity_histogram.histogramEnabled', 'Velocity', currentConfig.layout?.components?.velocity_histogram?.histogramEnabled ?? true));
-    plotsSection.addControl(new CheckboxControl('layout.components.entropy_time_series.histogramEnabled', 'Entropy', currentConfig.layout?.components?.entropy_time_series?.histogramEnabled ?? true));
-    plotsSection.addControl(new CheckboxControl('layout.components.volume_time_series.histogramEnabled', 'Volume', currentConfig.layout?.components?.volume_time_series?.histogramEnabled ?? false));
+    plotsSection.addControl(new CheckboxControl('render.components.density_histogram.histogramEnabled', 'Density', layout.components.density_histogram.histogramEnabled));
+    plotsSection.addControl(new CheckboxControl('render.components.velocity_histogram.histogramEnabled', 'Velocity', layout.components.velocity_histogram.histogramEnabled));
+    plotsSection.addControl(new CheckboxControl('render.components.entropy_time_series.histogramEnabled', 'Entropy', layout.components.entropy_time_series.histogramEnabled));
+    plotsSection.addControl(new CheckboxControl('render.components.volume_time_series.histogramEnabled', 'Volume', layout.components.volume_time_series.histogramEnabled));
     sections.push(plotsSection);
 
     const interactionSection = new ConfigSection('Interaction', {
@@ -3742,26 +2949,26 @@ function createSkeletonSections(currentConfig, options = {}) {
     });
     const inputModeControl = new InputModeControl(
         'inputMode',
-        cameraDetected ? (currentConfig.inputMode ?? 'hand') : 'mouse_pull'
+        cameraDetected ? currentConfig.inputMode : 'mouse_pull'
     );
     interactionSection.addHeaderControl(inputModeControl);
-    const circle = currentConfig.simulation?.circle ?? {};
+    const circle = sim.circle;
     const circleControl = new CircleControl(
         'simulation.circle.radius',
         'simulation.circle.momentumTransferRadius',
         'simulation.circle.momentumTransferStrength',
-        circle.radius ?? 0.02,
-        Math.max(1.0, Math.min(2.0, circle.momentumTransferRadius ?? 2.0)),
-        circle.momentumTransferStrength ?? 5.0
+        circle.radius,
+        circle.momentumTransferRadius,
+        circle.momentumTransferStrength
     );
-    const hands = currentConfig.hands ?? {};
+    const hands = currentConfig.hands;
     const handControl = new HandControl(
         'hands.left',
         'hands.right',
         'simulation.circle.handSensitivity',
-        cameraDetected ? (hands.left ?? 'full') : 'none',
-        cameraDetected ? (hands.right ?? 'full') : 'none',
-        circle.handSensitivity ?? 0.3
+        hands.left,
+        hands.right,
+        circle.handSensitivity
     );
     handControl.linkCircleControl(circleControl);
     inputModeControl.linkHandControl(handControl, cameraDetected);
@@ -3774,20 +2981,20 @@ function createSkeletonSections(currentConfig, options = {}) {
     interactionSection.addControl(handControl);
     sections.push(interactionSection);
 
-    const windTunnel = sim.windTunnel ?? {};
     const envSection = new ConfigSection('Environment', { column: 'right', placement: 'bottom' });
-    const envControl = new EnvironmentControl(sim.edges ?? 14, windTunnel);
+    const envControl = new EnvironmentControl(sim.edges, sim.windTunnel);
     envSection.addControl(envControl);
     sections.push(envSection);
 
     const vortSection = new ConfigSection('Vorticity', { column: 'right', placement: 'bottom' });
+    const vortLimits = UI_SLIDER_LIMITS.vorticityCanvas;
     const vortControl = new VorticityControl(
         'simulation.vorticity.strength',
         'simulation.vorticity.lengthScale',
-        vorticity.strength ?? 20,
-        vorticity.lengthScale ?? 10,
-        30, // max strength
-        20  // max impact
+        vorticity.strength,
+        vorticity.lengthScale,
+        vortLimits.maxStrength,
+        vortLimits.maxImpact
     );
     vortSection.addControl(vortControl);
     sections.push(vortSection);
@@ -3795,17 +3002,349 @@ function createSkeletonSections(currentConfig, options = {}) {
     return sections;
 }
 
+export { SETTINGS_TAB, createSkeletonSections };
+
+export class ConfigPane {
+    constructor(panel) {
+        this.panel = panel;
+        this.sections = [];
+        this.root = null;
+    }
+
+    addSection(section) {
+        this.sections.push(section);
+        const rerender = () => this.renderLayout();
+        const draftSync = () => this.syncSettingsDraftFromControls();
+        section.getAllControls().forEach((control) => {
+            control.linkRerender(rerender);
+            control.linkDraftSync(draftSync);
+        });
+    }
+
+    syncSettingsDraftFromControls() {
+        if (this.panel?.shaderPane?.configDraftPending) {
+            return;
+        }
+        replaceSettingsDraft(this.buildMergedConfig());
+    }
+
+    finalizeSections() {
+        let simModeControl = null;
+        let resolutionControl = null;
+        let timestepControl = null;
+        let inputModeControl = null;
+        let layoutPresetControl = null;
+        const layoutPreviewControls = [];
+
+        this.sections.forEach((section) => {
+            section.getAllControls().forEach((control) => {
+                if (control instanceof SimModeControl) {
+                    simModeControl = control;
+                }
+                if (control instanceof InputModeControl) {
+                    inputModeControl = control;
+                }
+                if (control instanceof LayoutPresetControl) {
+                    layoutPresetControl = control;
+                }
+                if (control.configPath === 'render.camerasEnabled') {
+                    layoutPreviewControls.push(control);
+                }
+                if (
+                    control.configPath?.startsWith('render.components.')
+                    && control.configPath.endsWith('.histogramEnabled')
+                ) {
+                    layoutPreviewControls.push(control);
+                }
+                if (control instanceof SliderControl && control.configPath === 'simulation.resolution') {
+                    resolutionControl = control;
+                }
+                if (control instanceof SliderControl && control.configPath === 'simulation.timestep') {
+                    timestepControl = control;
+                }
+            });
+        });
+
+        if (layoutPresetControl) {
+            layoutPresetControl.getPreviewOverrides = () => (
+                collectLayoutPreviewOverrides(this.sections)
+            );
+            const refreshLayoutPreviews = () => layoutPresetControl.refreshPreviews();
+            layoutPreviewControls.forEach((control) => {
+                const prevLive = control.onLiveChange;
+                control.onLiveChange = () => {
+                    prevLive?.();
+                    refreshLayoutPreviews();
+                    this.syncSettingsDraftFromControls();
+                };
+            });
+        }
+
+        if (simModeControl && resolutionControl) {
+            simModeControl.linkResolutionControl(
+                resolutionControl,
+                (value) => this.onResolutionPreview(value)
+            );
+            resolutionControl.liveChange = (value) => this.onResolutionPreview(value);
+        }
+        if (simModeControl && timestepControl) {
+            simModeControl.linkTimestepControl(timestepControl);
+        }
+        if (inputModeControl) {
+            inputModeControl.saveInputDraft(inputModeControl.currentValue);
+        }
+    }
+
+    mount(parent) {
+        this.root = document.createElement('div');
+        this.root.className = 'settings-panel-content settings-tab-pane';
+        this.root.dataset.tab = SETTINGS_TAB;
+        parent.appendChild(this.root);
+        this.renderLayout();
+        return this.root;
+    }
+
+    renderLayout() {
+        mountSettingsLayout(this.root, this.sections);
+    }
+
+    setVisible(visible) {
+        this.root?.classList.toggle('hidden', !visible);
+    }
+
+    onResolutionPreview(value) {
+        patchSettingsDraftPath('simulation.resolution', value);
+        this.syncSettingsDraftFromControls();
+        this.refreshScaleControls();
+    }
+
+    refreshScaleControls() {
+        this.sections.forEach((section) => {
+            section.getAllControls().forEach((control) => {
+                if (control instanceof VorticityControl || control instanceof CircleControl) {
+                    control.draw();
+                } else if (control instanceof LayoutPresetControl) {
+                    control.refreshPreviews();
+                }
+            });
+        });
+    }
+
+    async refreshEnvironmentControls() {
+        if (this.panel.parentApp?.updateInkAspectRatioFromConfig) {
+            await this.panel.parentApp.updateInkAspectRatioFromConfig();
+        }
+        const refresh = () => {
+            this.sections.forEach((section) => {
+                section.getAllControls().forEach((control) => {
+                    if (control instanceof EnvironmentControl || control instanceof VorticityControl) {
+                        control.refreshLayout();
+                    }
+                });
+            });
+            this.refreshScaleControls();
+        };
+        refresh();
+        requestAnimationFrame(refresh);
+    }
+
+    loadValuesFromConfig(config, { syncDraft = true } = {}) {
+        if (!config) return;
+        let simModeControl = null;
+        this.sections.forEach((section) => {
+            section.getAllControls().forEach((control) => {
+                if (control instanceof SimModeControl) {
+                    simModeControl = control;
+                    return;
+                }
+                control.load(config);
+            });
+        });
+        if (simModeControl) {
+            const pipeline = config.pipeline;
+            simModeControl.loadValue(pipeline);
+            simModeControl.initializePipelineDrafts(config);
+            simModeControl.applyPipelineUi(pipeline);
+        }
+        this.renderLayout();
+        if (syncDraft) {
+            this.syncSettingsDraftFromControls();
+        }
+    }
+
+    loadCurrentValues() {
+        this.loadValuesFromConfig(getSettingsBaseline());
+    }
+
+    async resetToDefaults() {
+        if (!validateConfigPaths(DEFAULT_CONFIG, SETTINGS_CONFIG_PATHS)) {
+            console.error('Default config is missing required settings fields');
+            return;
+        }
+        const defaults = applyDefaultLayoutGates(structuredClone(DEFAULT_CONFIG), {
+            cameraDetected: this.panel?.parentApp?.cameraDetected === true,
+        });
+        resetSettingsDraft(defaults);
+        this.loadValuesFromConfig(defaults);
+        const resolution = defaults?.simulation?.resolution;
+        if (resolution !== undefined) {
+            this.onResolutionPreview(resolution);
+        }
+        await this.refreshEnvironmentControls();
+    }
+
+    collectAllValues() {
+        return assembleConfigFromSections({}, collectSectionPatches(this.sections));
+    }
+
+    buildMergedConfig() {
+        const sectionPatches = collectSectionPatches(this.sections);
+        const mergedConfig = assembleConfigFromSections(getSettingsBaseline() || {}, sectionPatches);
+        const pipeline = mergedConfig.pipeline;
+        if (!mergedConfig.simulation) mergedConfig.simulation = {};
+        if (!mergedConfig.simulation.projection) mergedConfig.simulation.projection = {};
+
+        let simModeControl = null;
+        this.sections.forEach((section) => {
+            section.getAllControls().forEach((control) => {
+                if (control instanceof SimModeControl) {
+                    simModeControl = control;
+                }
+            });
+        });
+
+        if (simModeControl) {
+            simModeControl.saveCurrentPipelineDraft();
+            const snapshot = simModeControl.captureCurrentPipelineSnapshot();
+            if (snapshot.resolution !== undefined) {
+                mergedConfig.simulation.resolution = snapshot.resolution;
+            }
+            if (snapshot.timestep !== undefined) {
+                mergedConfig.simulation.timestep = snapshot.timestep;
+            }
+            if (snapshot.iterations !== undefined) {
+                mergedConfig.simulation.projection.iterations = snapshot.iterations;
+            }
+            if (snapshot.overrelaxation !== undefined) {
+                mergedConfig.simulation.projection.overrelaxationCoefficient = snapshot.overrelaxation;
+            }
+        }
+
+        const defaults = pipelineSimDefaults(pipeline);
+        if (defaults) {
+            if (mergedConfig.simulation.resolution === undefined) {
+                mergedConfig.simulation.resolution = defaults.resolution;
+            }
+            if (mergedConfig.simulation.timestep === undefined) {
+                mergedConfig.simulation.timestep = defaults.timestep;
+            }
+            if (mergedConfig.simulation.projection.iterations === undefined) {
+                mergedConfig.simulation.projection.iterations = defaults.iterations;
+            }
+            if (mergedConfig.simulation.projection.overrelaxationCoefficient === undefined) {
+                mergedConfig.simulation.projection.overrelaxationCoefficient = defaults.overrelaxation;
+            }
+        }
+
+        mergedConfig.simulation.resolution = clampResolutionForPipeline(
+            mergedConfig.simulation.resolution,
+            pipeline
+        );
+        mergedConfig.simulation.projection.iterations = clampIterationsForPipeline(
+            mergedConfig.simulation.projection.iterations,
+            pipeline
+        );
+        return mergedConfig;
+    }
+
+    async saveAndApply() {
+        const { panel } = this;
+        if (panel.shaderPane.editorEditing) {
+            if (!panel.shaderPane.saveEditorEdit()) {
+                return 'error';
+            }
+        }
+        panel.shaderPane.flushEditorDraft();
+
+        const useConfigDraft = !!panel.shaderPane.configDraftPending;
+        const mergedConfig = useConfigDraft
+            ? structuredClone(getSettingsDraft() ?? {})
+            : this.buildMergedConfig();
+
+        if (!validateConfigPaths(mergedConfig, SETTINGS_CONFIG_PATHS)) {
+            panel.shaderPane.setCompileError('Config is missing required fields', { kind: 'config' });
+            return 'error';
+        }
+
+        const compareBase = useConfigDraft
+            ? (getCommittedConfig() || getSettingsBaseline() || {})
+            : (getSettingsBaseline() || {});
+        const sectionChanged = (key) =>
+            JSON.stringify(compareBase[key]) !== JSON.stringify(mergedConfig[key]);
+        const layoutChanged = sectionChanged('render');
+        const simulationChanged = sectionChanged('simulation');
+        const pipelineChanged = compareBase.pipeline !== mergedConfig.pipeline;
+        try {
+            panel.parentApp.mergeViewportTargetsIntoConfig(mergedConfig);
+            panel.shaderPane.mergeCustomViewsIntoConfig(mergedConfig);
+            replaceSettingsDraft(mergedConfig);
+            writeConfigToFs(mergedConfig, { persist: true });
+            replaceCommittedConfig(mergedConfig);
+
+            if (pipelineChanged) {
+                clearSettingsSession();
+                await persistConfigToIdb();
+                window.location.reload();
+                return 'reload';
+            }
+
+            if (panel.parentApp.setInputMode) {
+                panel.parentApp.setInputMode(mergedConfig.inputMode, { persist: false });
+            }
+
+            panel.parentApp.applyRuntimeConfig({
+                simulation: simulationChanged,
+                rendering: layoutChanged,
+                layout: layoutChanged,
+            });
+
+            if (panel.shaderPane.draftsChanged()) {
+                const shadersOk = await panel.shaderPane.persistDrafts();
+                if (!shadersOk) {
+                    return 'shader';
+                }
+            } else {
+                panel.shaderPane.markApplied();
+            }
+
+            await persistConfigToIdb();
+            panel.parentApp.applyConfigUiRefresh({ layoutChanged });
+            return 'ok';
+        } catch (err) {
+            console.error('Failed to save config:', err);
+            panel.shaderPane.setCompileError(err?.message || 'Failed to save settings', { kind: 'config' });
+            return 'error';
+        }
+    }
+}
+
 export {
-    SettingsPanel,
-    createSkeletonSections,
-    formatTargetIndex,
-    getShaderTargetName,
-    measureElementWidth,
-    measureElementHeight,
-    getSimViewportSize,
-    HAND_CONNECTIONS,
-    ACTIVE_LANDMARKS_BY_MODE,
-    HAND_COLORS,
-    Palette,
-    ControlPalette,
+    PIPELINE_SIM_DEFAULTS,
+    pipelineSimDefaults,
+    pipelineSnapshotFromConfig,
+    resolutionRangeForPipeline,
+    iterationRangeForPipeline,
+    clampResolutionForPipeline,
+    clampIterationsForPipeline,
+    ConfigSection,
+    SliderControl,
+    CheckboxControl,
+    HeaderCheckboxControl,
+    LayoutPresetControl,
+    SimModeControl,
+    InputModeControl,
+    HandControl,
+    VorticityControl,
+    CircleControl,
+    EnvironmentControl,
 };

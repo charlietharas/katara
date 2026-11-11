@@ -1,9 +1,10 @@
 struct SimParams {
     gridX: i32,
     gridY: i32,
+    overrelaxationCoefficient: f32,
+    timestep: f32,
     cellSize: f32,
     halfCellSize: f32,
-    timestep: f32,
     windTunnelSide: i32,
     windTunnelStart: i32,
     windTunnelEnd: i32,
@@ -34,6 +35,7 @@ fn enforceBoundaryConditions(@builtin(global_invocation_id) id: vec3<u32>) {
     var velocity = textureLoad(velocityTexture, vec2<i32>(i, j)).xy;
     var density = textureLoad(densityTexture, vec2<i32>(i, j)).r;
 
+    // idk how to feel ab this
     let leftWall = (params.edges & EDGE_LEFT) != 0;
     let topWall = (params.edges & EDGE_TOP) != 0;
     let bottomWall = (params.edges & EDGE_BOTTOM) != 0;
@@ -43,50 +45,43 @@ fn enforceBoundaryConditions(@builtin(global_invocation_id) id: vec3<u32>) {
         if (leftWall) {
             velocity.x = 0.0;
         } else if (params.gridX > 1) {
-            velocity.x = textureLoad(velocityTexture, vec2<i32>(i + 1, j)).x;
+            velocity.x = min(textureLoad(velocityTexture, vec2<i32>(i + 1, j)).x, 0.0);
         }
     }
     if (i == params.gridX - 1) {
         if (rightWall) {
             velocity.x = 0.0;
         } else if (params.gridX > 1) {
-            velocity.x = textureLoad(velocityTexture, vec2<i32>(i - 1, j)).x;
+            velocity.x = max(textureLoad(velocityTexture, vec2<i32>(i - 1, j)).x, 0.0);
         }
     }
     if (j == 0) {
         if (bottomWall) {
             velocity.y = 0.0;
         } else if (params.gridY > 1) {
-            velocity.y = textureLoad(velocityTexture, vec2<i32>(i, j + 1)).y;
+            velocity.y = min(textureLoad(velocityTexture, vec2<i32>(i, j + 1)).y, 0.0);
         }
     }
     if (j == params.gridY - 1) {
         if (topWall) {
             velocity.y = 0.0;
         } else if (params.gridY > 1) {
-            velocity.y = textureLoad(velocityTexture, vec2<i32>(i, j - 1)).y;
+            velocity.y = max(textureLoad(velocityTexture, vec2<i32>(i, j - 1)).y, 0.0);
         }
     }
 
-    if (solid == 0.0f) {
-        velocity = vec2<f32>(0.0, 0.0);
-    } else {
-        // Zero the velocity samples that lie on a face shared with a solid cell.
-        // On this MAC grid velocity.x is the cell's LEFT face and velocity.y its
-        // BOTTOM face, so only the LEFT neighbor (i-1) gates velocity.x and the
-        // BOTTOM neighbor (j-1) gates velocity.y. The right/top faces belong to
-        // cells i+1 / j+1 and are cleared by those invocations.
+    if (solid != 0.0f) {
         if (i > 0) {
             let leftSolid = textureLoad(solidTexture, vec2<i32>(i - 1, j), 0).r;
             if (leftSolid == 0.0f) {
-                velocity.x = 0.0;
+                velocity.x = textureLoad(velocityTexture, vec2<i32>(i - 1, j)).x;
             }
         }
 
         if (j > 0) {
             let belowSolid = textureLoad(solidTexture, vec2<i32>(i, j - 1), 0).r;
             if (belowSolid == 0.0f) {
-                velocity.y = 0.0;
+                velocity.y = textureLoad(velocityTexture, vec2<i32>(i, j - 1)).y;
             }
         }
     }

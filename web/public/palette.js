@@ -1,9 +1,3 @@
-/**
- * Katara UI palette — single source of truth for web UI colors.
- * installKataraPalette() injects CSS custom properties used by styles.css.
- * fragment.wgsl void background uses Palette.black (--offblack on charliemax.dev) — keep in sync manually.
- */
-
 export const Palette = {
     black: '#050505',
     surface: '#0a0a0a',
@@ -124,6 +118,11 @@ export function installKataraPalette(root = document.documentElement) {
         warnBg: colorWithAlpha(Palette.warn, 0.1),
         warnBgHover: colorWithAlpha(Palette.warn, 0.14),
         warnInset: colorWithAlpha(Palette.warn, 0.2),
+        orangeBorder: colorWithAlpha(Palette.orange, 0.85),
+        orangeBorderStrong: colorWithAlpha(Palette.orange, 0.95),
+        orangeBg: colorWithAlpha(Palette.orange, 0.1),
+        orangeBgHover: colorWithAlpha(Palette.orange, 0.14),
+        orangeInset: colorWithAlpha(Palette.orange, 0.2),
         layoutStroke: Palette.whiteFaint,
         layoutViewport: layoutTint(Palette.blue),
         layoutPlot: layoutTint(Palette.green),

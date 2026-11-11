@@ -7,6 +7,7 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <cstdint>
@@ -25,7 +26,7 @@ void Renderer::updateUniformBufferRender(const ISimulator& simulator) {
     uniformData.simWidth = uniformData.gridX * uniformData.cellSize;
     uniformData.simHeight = uniformData.gridY * uniformData.cellSize;
 
-    // pressure range
+    // pressure range (density min/max kept on CPU only; shaders read pressureMin/pressureMax)
     if (usingGPUTextures) {
         if (densityHistogramMin >= densityHistogramMax) {
             // initialize with reasonable values to prevent glitch from snowballing
@@ -44,8 +45,6 @@ void Renderer::updateUniformBufferRender(const ISimulator& simulator) {
         uniformData.pressureMax = 1.0f;
     }
 
-    uniformData.densityHistogramMin = densityHistogramMin;
-    uniformData.densityHistogramMax = densityHistogramMax;
     uniformData.velocityHistogramMin = velocityHistogramMin;
     uniformData.velocityHistogramMax = velocityHistogramMax;
     uniformData.densityHistogramMaxCount = densityHistogramMaxCount;
@@ -73,14 +72,18 @@ void Renderer::updateUniformBufferRender(const ISimulator& simulator) {
             uniformData.viewportHeight[i] = it->second.height;
             auto cfgIt = g_config.layout.components.find(vpName);
             uniformData.viewportRenderTarget[i] = (cfgIt != g_config.layout.components.end())
-                ? cfgIt->second.viewportTarget : 2;
+                ? cfgIt->second.viewportTarget : 0;
             uniformData.viewportRenderVelocity[i] = (cfgIt != g_config.layout.components.end())
                 ? (cfgIt->second.viewportVelocityViewEnabled ? 1 : 0) : 0;
             uniformData.viewportRotation[i] = (cfgIt != g_config.layout.components.end())
                 ? cfgIt->second.rotation : 0;
+            uniformData.viewportCameraAlpha[i] = (cfgIt != g_config.layout.components.end())
+                ? cfgIt->second.viewportCameraBackground : 0;
             uniformData.viewportCount++;
         }
     }
+
+    uniformData.cameraBackgroundDensityExponent = g_config.layout.cameraBackgroundDensityExponent;
 
     // Update histogram configuration from g_layoutPixels
     auto dhIt = g_layoutPixels.components.find("density_histogram");
@@ -127,16 +130,6 @@ void Renderer::updateUniformBufferRender(const ISimulator& simulator) {
         uniformData.entropyTimeSeriesHeight = 0;
     }
 
-    uniformData.entropyHistoryCount = entropyHistoryCount;
-    uniformData.entropyHistoryWriteIndex = entropyHistoryWriteIndex;
-    uniformData.entropyPad0 = 0;
-    for (int i = 0; i < 16; i++) {
-        uniformData.entropyHistory[i].x = entropyHistory[i * 4 + 0];
-        uniformData.entropyHistory[i].y = entropyHistory[i * 4 + 1];
-        uniformData.entropyHistory[i].z = entropyHistory[i * 4 + 2];
-        uniformData.entropyHistory[i].w = entropyHistory[i * 4 + 3];
-    }
-
     auto vtsIt = g_layoutPixels.components.find("volume_time_series");
     auto vtsCfgIt = g_config.layout.components.find("volume_time_series");
     if (vtsIt != g_layoutPixels.components.end() && vtsCfgIt != g_config.layout.components.end()) {
@@ -153,11 +146,19 @@ void Renderer::updateUniformBufferRender(const ISimulator& simulator) {
         uniformData.volumeTimeSeriesHeight = 0;
     }
 
+    uniformData.entropyHistoryCount = entropyHistoryCount;
+    uniformData.entropyHistoryWriteIndex = entropyHistoryWriteIndex;
     uniformData.volumeHistoryMax = volumeHistoryMax;
     uniformData.volumeHistoryCount = volumeHistoryCount;
     uniformData.volumeHistoryWriteIndex = volumeHistoryWriteIndex;
-    uniformData.volumePad0 = 0;
+    uniformData.pad1 = 0;
+    uniformData.pad2 = 0;
     for (int i = 0; i < 16; i++) {
+        uniformData.entropyHistory[i].x = entropyHistory[i * 4 + 0];
+        uniformData.entropyHistory[i].y = entropyHistory[i * 4 + 1];
+        uniformData.entropyHistory[i].z = entropyHistory[i * 4 + 2];
+        uniformData.entropyHistory[i].w = entropyHistory[i * 4 + 3];
+
         uniformData.volumeDomainHistory[i].x = volumeDomainHistory[i * 4 + 0];
         uniformData.volumeDomainHistory[i].y = volumeDomainHistory[i * 4 + 1];
         uniformData.volumeDomainHistory[i].z = volumeDomainHistory[i * 4 + 2];
@@ -229,7 +230,12 @@ WGPUSurfaceConfiguration Renderer::createSurfaceConfiguration() {
     config.width = windowWidth;
     config.height = windowHeight;
     config.presentMode = WGPUPresentMode_Fifo;
+#ifdef __EMSCRIPTEN__
+    // Premultiplied alpha so transparent viewports composite over DOM camera backdrops.
+    config.alphaMode = WGPUCompositeAlphaMode_Premultiplied;
+#else
     config.alphaMode = WGPUCompositeAlphaMode_Opaque;
+#endif
     return config;
 }
 
@@ -422,13 +428,8 @@ Renderer::Renderer(SDL_Window* window, const Config& config)
     SDL_GetWindowSize(window, &windowWidth, &windowHeight);
 
     uniformData = {};
-    uniformData.velScale = g_config.layout.velocityScale;
-    uniformData.windowWidth = static_cast<float>(windowWidth);
-    uniformData.windowHeight = static_cast<float>(windowHeight);
-    uniformData.disableHistograms = g_config.layout.disableHistograms ? 1 : 0;
     uniformData.entropyHistoryCount = 0;
     uniformData.entropyHistoryWriteIndex = 0;
-    uniformData.entropyPad0 = 0;
 }
 
 Renderer::~Renderer() {
@@ -492,8 +493,20 @@ void Renderer::render(const ISimulator& simulator) {
     if (!initialized) return;
     usingGPUTextures = simulator.isUsingGPU();
 
-    // compute histograms every n frames
-    if (!g_config.layout.disableHistograms && frameCount++ % HISTOGRAM_FRAME_INTERVAL == 0) {
+    const auto componentEnabled = [](const char* name) {
+        auto it = g_config.layout.components.find(name);
+        return it != g_config.layout.components.end() && it->second.histogramEnabled;
+    };
+
+    const bool plotDataEnabled =
+        componentEnabled("density_histogram") ||
+        componentEnabled("velocity_histogram") ||
+        componentEnabled("entropy_time_series") ||
+        componentEnabled("entropy_histogram") ||
+        componentEnabled("volume_time_series");
+
+    // compute plot data every n frames while at least one plot is visible
+    if (plotDataEnabled && frameCount++ % HISTOGRAM_FRAME_INTERVAL == 0) {
         computeHistograms(simulator);
     }
 
@@ -512,7 +525,11 @@ void Renderer::render(const ISimulator& simulator) {
         nextTexture,
         WGPULoadOp_Clear,
         WGPUStoreOp_Store,
+#ifdef __EMSCRIPTEN__
+        {0.0f, 0.0f, 0.0f, 0.0f}
+#else
         {5.0f / 255.0f, 5.0f / 255.0f, 5.0f / 255.0f, 1.0f}
+#endif
     );
     auto renderPassDesc = createRenderPassDescriptor(&colorAttachment);
 
@@ -921,9 +938,13 @@ bool Renderer::initDevice() {
 #ifdef WEBGPU_BACKEND_EMDAWNWEBGPU
     // error callback is part of device descriptor in emdawnwebgpu
     deviceDesc.uncapturedErrorCallbackInfo.callback = [](WGPUDevice const* dev, WGPUErrorType type, WGPUStringView message, void* userdata1, void* userdata2) {
-        (void)dev; (void)userdata1; (void)userdata2;
-        std::cerr << "WebGPU ERR: " << type << " - " << (message.data ? std::string(message.data, message.length) : "[NO MESSAGE]") << std::endl;
+        (void)dev; (void)userdata2;
+        Renderer* renderer = static_cast<Renderer*>(userdata1);
+        const std::string raw = message.data ? std::string(message.data, message.length) : "[NO MESSAGE]";
+        const std::string annotated = renderer ? renderer->annotateWebGpuError(raw) : raw;
+        std::cerr << "WebGPU ERR: " << type << " - " << annotated << std::endl;
     };
+    deviceDesc.uncapturedErrorCallbackInfo.userdata1 = this;
 
     auto onDeviceRequestEnded = [](WGPURequestDeviceStatus status, WGPUDevice device, WGPUStringView message, void* userdata1, void* userdata2) {
         (void)userdata2;
@@ -975,8 +996,11 @@ bool Renderer::initDevice() {
     // error callback required (in emdawnwebgpu, this is set via device descriptor)
     wgpuDeviceSetUncapturedErrorCallback(device,
         [](WGPUErrorType type, const char* message, void* userdata) {
-            std::cerr << "WebGPU ERR: " << type << " - " << (message ? message : "[NO MESSAGE]") << std::endl;
-        }, nullptr);
+            Renderer* renderer = static_cast<Renderer*>(userdata);
+            const std::string raw = message ? message : "[NO MESSAGE]";
+            const std::string annotated = renderer ? renderer->annotateWebGpuError(raw) : raw;
+            std::cerr << "WebGPU ERR: " << type << " - " << annotated << std::endl;
+        }, this);
 #endif
 
     return true;
@@ -989,6 +1013,7 @@ bool Renderer::initRenderPipeline() {
         return false;
     }
 
+    viewOverrides.assign(builtinViews.size(), std::nullopt);
     loadPersistedViewOverrides();
 
     if (!rebuildFragmentPipelineFromActiveViews()) {
@@ -1001,22 +1026,83 @@ bool Renderer::initRenderPipeline() {
 
 std::vector<ViewRegistryEntry> Renderer::buildActiveViewRegistry() const {
     std::vector<ViewRegistryEntry> active = builtinViews;
-    for (int index = 0; index < kViewTargetCount; ++index) {
+    for (int index = 0; index < getViewTargetCount(); ++index) {
         if (viewOverrides[index].has_value()) {
             active[index].source = *viewOverrides[index];
+            active[index].errHelperLines = 0;
+            active[index].errOpenLines = 0;
         }
     }
     return active;
 }
 
+std::string Renderer::annotateWebGpuError(const std::string& message) const {
+    if (!WGPUBoilerplate::annotateFragmentBundleErrors() || bundleRegionCount <= 0) {
+        return message;
+    }
+
+    for (size_t i = 0; i + 2 < message.size(); ++i) {
+        if (message[i] != ':') {
+            continue;
+        }
+        if (!std::isdigit(static_cast<unsigned char>(message[i + 1]))) {
+            continue;
+        }
+
+        size_t j = i + 1;
+        int line = 0;
+        while (j < message.size() && std::isdigit(static_cast<unsigned char>(message[j]))) {
+            line = line * 10 + (message[j] - '0');
+            ++j;
+        }
+        if (j >= message.size() || message[j] != ':') {
+            continue;
+        }
+        const size_t colStart = j + 1;
+        if (colStart >= message.size() || !std::isdigit(static_cast<unsigned char>(message[colStart]))) {
+            continue;
+        }
+
+        int startLine = 1;
+        const BundleLineRegion* region = nullptr;
+        int localLine = line;
+        for (int r = 0; r < bundleRegionCount; ++r) {
+            if (line < bundleRegions[r].endLine) {
+                region = &bundleRegions[r];
+                localLine = line - startLine + 1;
+                break;
+            }
+            startLine = bundleRegions[r].endLine;
+        }
+        if (!region) {
+            return message;
+        }
+
+        const int fileLine = region->toFileLine(localLine);
+        return message.substr(0, i)
+            + region->name + ':' + std::to_string(fileLine)
+            + " [compiled: " + std::to_string(line) + "]:"
+            + message.substr(colStart);
+    }
+
+    return message;
+}
+
 bool Renderer::rebuildFragmentPipelineFromActiveViews() {
     const std::vector<ViewRegistryEntry> activeViews = buildActiveViewRegistry();
-    const ShaderBundleResult bundled = bundleFragmentShader(activeViews);
+    const ShaderBundleResult bundled =
+        bundleFragmentShader(activeViews, g_config.layout.divergenceBinomialFiltering);
     if (!bundled.ok()) {
         lastShaderError = bundled.error;
         return false;
     }
 
+    bundleRegionCount = bundled.regionCount;
+    for (int i = 0; i < bundled.regionCount; ++i) {
+        bundleRegions[i] = bundled.regions[i];
+    }
+
+    WGPUBoilerplate::annotateFragmentBundleErrors() = true;
     auto result = createRenderPipelineWithFragmentSource(
         "vertex.wgsl",
         bundled.wgsl,
@@ -1026,6 +1112,7 @@ bool Renderer::rebuildFragmentPipelineFromActiveViews() {
         WGPUShaderStage_Fragment,
         sizeof(UniformData)
     );
+    WGPUBoilerplate::annotateFragmentBundleErrors() = false;
 
     if (!result.pipeline) {
         if (lastShaderError.empty()) {
@@ -1061,7 +1148,7 @@ bool Renderer::rebuildFragmentPipelineFromActiveViews() {
 }
 
 bool Renderer::setViewSource(int index, const std::string& wgsl) {
-    if (index < 0 || index >= kViewTargetCount) {
+    if (index < 0 || index >= getViewTargetCount()) {
         lastShaderError = "View target index out of range";
         return false;
     }
@@ -1078,7 +1165,7 @@ bool Renderer::setViewSource(int index, const std::string& wgsl) {
 }
 
 bool Renderer::resetViewSource(int index) {
-    if (index < 0 || index >= kViewTargetCount) {
+    if (index < 0 || index >= getViewTargetCount()) {
         lastShaderError = "View target index out of range";
         return false;
     }
@@ -1093,7 +1180,7 @@ bool Renderer::applyViewShaders() {
 }
 
 std::string Renderer::getViewSource(int index) const {
-    if (index < 0 || index >= kViewTargetCount) {
+    if (index < 0 || index >= getViewTargetCount()) {
         return {};
     }
     if (viewOverrides[index].has_value()) {
@@ -1103,6 +1190,20 @@ std::string Renderer::getViewSource(int index) const {
         return builtinViews[index].source;
     }
     return {};
+}
+
+std::string Renderer::getViewName(int index) const {
+    if (index < 0 || index >= getViewTargetCount()) {
+        return {};
+    }
+    if (index >= 0 && index < static_cast<int>(builtinViews.size())) {
+        return builtinViews[index].name;
+    }
+    return {};
+}
+
+int Renderer::getViewTargetCount() const {
+    return static_cast<int>(builtinViews.size());
 }
 
 std::string Renderer::getLastShaderError() const {
@@ -1120,15 +1221,13 @@ void Renderer::onWindowResize(int width, int height) {
 
     windowWidth = width;
     windowHeight = height;
-    uniformData.windowWidth = static_cast<float>(windowWidth);
-    uniformData.windowHeight = static_cast<float>(windowHeight);
 
     auto surfaceConfig = createSurfaceConfiguration();
     wgpuSurfaceConfigure(surface, &surfaceConfig);
 }
 
 void Renderer::loadPersistedViewOverrides() {
-    for (int index = 0; index < kViewTargetCount; ++index) {
+    for (int index = 0; index < getViewTargetCount(); ++index) {
         const std::string path = "persist/views/" + std::to_string(index) + ".wgsl";
         const std::string source = ConfigLoader::readFile(path.c_str());
         if (source.empty()) {

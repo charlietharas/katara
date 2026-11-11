@@ -154,6 +154,66 @@ inline void applyCircleVelocitySmoothing(
     velY = alpha * instantVelY + (1.0f - alpha) * velY;
 }
 
+inline int scaleRadiusByZ(float z, int baseRadius, const CircleConfig& cfg) {
+    if (z != z) z = 0.0f; // nan check
+    float zRange = cfg.zMax - cfg.zMin;
+    float t = (zRange > 0.0001f) ? (z - cfg.zMin) / zRange : 0.5f;
+    t = (t < 0.0f) ? 0.0f : (t > 1.0f ? 1.0f : t);
+    float scale = cfg.zScaleMin + t * (cfg.zScaleMax - cfg.zScaleMin);
+    return static_cast<int>(baseRadius * scale);
+}
+
+inline void updateCircleFromFingertip(
+    CircleState& circle,
+    const FingertipData& tip,
+    int gridX, int gridY, int baseCircleRadius,
+    const CircleConfig& cfg,
+    float timestep)
+{
+    circle.prevX = circle.x;
+    circle.prevY = circle.y;
+
+    if (tip.present <= 0.5f) {
+        circle.present = false;
+        circle.x = 0;
+        circle.y = 0;
+        circle.smoothedX = 0.0f;
+        circle.smoothedY = 0.0f;
+        circle.velX = 0.0f;
+        circle.velY = 0.0f;
+        return;
+    }
+
+    int newGridX = static_cast<int>((1.0f - tip.x) * gridX);
+    int newGridY = static_cast<int>((1.0f - tip.y) * gridY);
+    newGridX = std::max(baseCircleRadius, std::min(newGridX, gridX - baseCircleRadius - 1));
+    newGridY = std::max(baseCircleRadius, std::min(newGridY, gridY - baseCircleRadius - 1));
+
+    float handSpeed = 0.0f;
+    if (circle.wasPresent) {
+        float dx = static_cast<float>(newGridX) - circle.smoothedX;
+        float dy = static_cast<float>(newGridY) - circle.smoothedY;
+        handSpeed = std::sqrt(dx * dx + dy * dy) / timestep;
+    }
+
+    applyHandSmoothing(newGridX, newGridY, circle.smoothedX, circle.smoothedY,
+                       circle.x, circle.y, circle.wasPresent, cfg, timestep);
+    circle.z = tip.z;
+    circle.scaledRadius = scaleRadiusByZ(tip.z, baseCircleRadius, cfg);
+    circle.present = true;
+    circle.wasPresent = true;
+
+    // Duplicate/hold samples leave grid pose unchanged — keep last velocity instead of EMA→0.
+    if (circle.x == circle.prevX && circle.y == circle.prevY) {
+        return;
+    }
+
+    float instantVelX = (circle.x - circle.prevX) / timestep;
+    float instantVelY = (circle.y - circle.prevY) / timestep;
+    applyCircleVelocitySmoothing(instantVelX, instantVelY, circle.velX, circle.velY,
+                                 handSpeed, cfg);
+}
+
 inline float computeMomentumImpulseScale(float velX, float velY, const HandSensitivityParams& params) {
     const float deadZone = params.momentumDeadZone;
     if (params.lowMotionImpulseScale >= 1.0f || deadZone <= 0.0f) {
@@ -183,15 +243,6 @@ inline bool shouldApplyMomentumTransferVelocity(float velX, float velY, float de
 
 inline bool shouldApplyMomentumTransferVelocity(float velX, float velY, const HandSensitivityParams& params) {
     return shouldApplyMomentumTransferVelocity(velX, velY, params.momentumDeadZone);
-}
-
-inline int scaleRadiusByZ(float z, int baseRadius, const CircleConfig& cfg) {
-    if (z != z) z = 0.0f; // nan check
-    float zRange = cfg.zMax - cfg.zMin;
-    float t = (zRange > 0.0001f) ? (z - cfg.zMin) / zRange : 0.5f;
-    t = (t < 0.0f) ? 0.0f : (t > 1.0f ? 1.0f : t);
-    float scale = cfg.zScaleMin + t * (cfg.zScaleMax - cfg.zScaleMin);
-    return static_cast<int>(baseRadius * scale);
 }
 
 struct ImageData {
@@ -235,6 +286,9 @@ public:
     float mouseCircleVelX = 0.0f, mouseCircleVelY = 0.0f;
     int mouseCircleRadius = 0;
     bool isMouseDragging = false;
+    // Set when the pointer leaves the sim viewport mid-drag so the next
+    // in-viewport sample teleports without injecting a huge leave→re-entry delta.
+    bool mouseDragNeedsResync = false;
 
     // wind tunnel state
     float windTunnelStart; // 0-1 (pass this one in)
@@ -342,10 +396,13 @@ public:
 
     void onMouseDown(int mouseX, int mouseY) {
         isMouseDragging = true;
-        mouseCircleX = mouseX;
-        mouseCircleY = mouseY;
-        mousePrevCircleX = mouseX;
-        mousePrevCircleY = mouseY;
+        mouseDragNeedsResync = false;
+        int newX = std::max(mouseCircleRadius, std::min(mouseX, gridX - mouseCircleRadius - 1));
+        int newY = std::max(mouseCircleRadius, std::min(mouseY, gridY - mouseCircleRadius - 1));
+        mouseCircleX = newX;
+        mouseCircleY = newY;
+        mousePrevCircleX = newX;
+        mousePrevCircleY = newY;
         mouseCircleVelX = 0.0f;
         mouseCircleVelY = 0.0f;
         clearMousePullFootprint();
@@ -354,6 +411,18 @@ public:
     void onMouseUp() {
         clearMousePullFootprint();
         isMouseDragging = false;
+        mouseDragNeedsResync = false;
+        mouseCircleVelX = 0.0f;
+        mouseCircleVelY = 0.0f;
+        mousePrevCircleX = mouseCircleX;
+        mousePrevCircleY = mouseCircleY;
+    }
+
+    // Pointer left the sim viewport (or canvas) while the button is still held.
+    // Zero any pending impulse and mark the next in-viewport sample as a teleport.
+    void onMouseDragLost() {
+        if (!isMouseDragging) return;
+        mouseDragNeedsResync = true;
         mouseCircleVelX = 0.0f;
         mouseCircleVelY = 0.0f;
         mousePrevCircleX = mouseCircleX;
@@ -361,13 +430,27 @@ public:
     }
 
     void onMouseDrag(int mouseX, int mouseY) {
-        if (isMouseDragging) {
-            // clamp circle to bounds
-            int newX = std::max(mouseCircleRadius, std::min(mouseX, gridX - mouseCircleRadius - 1));
-            int newY = std::max(mouseCircleRadius, std::min(mouseY, gridY - mouseCircleRadius - 1));
-            if (newX != mouseCircleX || newY != mouseCircleY) {
-                moveCircle(newX, newY);
-            }
+        if (!isMouseDragging) return;
+
+        int newX = std::max(mouseCircleRadius, std::min(mouseX, gridX - mouseCircleRadius - 1));
+        int newY = std::max(mouseCircleRadius, std::min(mouseY, gridY - mouseCircleRadius - 1));
+
+        // After leaving the viewport, snap without momentum so re-entry near an
+        // open edge cannot inject a canvas-sized inward velocity impulse.
+        if (mouseDragNeedsResync) {
+            mouseCircleX = newX;
+            mouseCircleY = newY;
+            mousePrevCircleX = newX;
+            mousePrevCircleY = newY;
+            mouseCircleVelX = 0.0f;
+            mouseCircleVelY = 0.0f;
+            mouseDragNeedsResync = false;
+            clearMousePullFootprint();
+            return;
+        }
+
+        if (newX != mouseCircleX || newY != mouseCircleY) {
+            moveCircle(newX, newY);
         }
     }
 

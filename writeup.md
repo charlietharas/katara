@@ -1,5 +1,7 @@
 # Setup
 
+TODO
+
 ## General structure
 
 ## Entrypoint
@@ -19,12 +21,23 @@ Entrypoint is `main.cpp`
 
 ## GPU
 
+textures:
+- velocity / newVelocity
+- density / newDensity
+- pressure / newPressure
+- ink / newInk
+- solid / newSolid
+- divergence
+- curl
+texture management & copying; ping-pong patterns, storage texture limits
+
 ### Pipeline
 - init
 - loop logistics/setup (uniform buffer, submission)
 - line segments
 - user object input
-- projection: divergence -> jacobi -> jacobi_apply
+- projection [jacobi]: divergence -> jacobi -> jacobi_apply
+- projection [gauss-seidel]: red/black
 - extrapolate
 - advect (velocity, density, ink)
 - vorticity: curl -> vorticity

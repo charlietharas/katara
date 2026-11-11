@@ -7,7 +7,7 @@
 #include "sim_shared.h"
 #include "config.h"
 #include "boilerplate.h"
-#include "shader_bundle.h"
+#include "render_views.h"
 #include <array>
 #include <optional>
 #include <vector>
@@ -29,15 +29,11 @@ struct alignas(16) UniformData {
     float cellSize;
     float pressureMin;
     float pressureMax;
-    float velScale;
-    float windowWidth;
-    float windowHeight;
     float simWidth;
     float simHeight;
-    int disableHistograms; // 0=enabled, 1=disabled
+    int viewportCount;
 
     // Viewport configuration (up to 4 viewports)
-    int viewportCount;
     int viewportX[4];
     int viewportY[4];
     int viewportWidth[4];
@@ -45,6 +41,8 @@ struct alignas(16) UniformData {
     int viewportRenderTarget[4];
     int viewportRenderVelocity[4];
     int viewportRotation[4];
+    int viewportCameraAlpha[4];
+    alignas(16) Vec4Float backgroundColor;  // .rgb = background color, .a unused
 
     // Histogram configuration
     int densityHistogramEnabled;
@@ -57,40 +55,39 @@ struct alignas(16) UniformData {
     int velocityHistogramY;
     int velocityHistogramWidth;
     int velocityHistogramHeight;
+
+    // Time series configuration
     int entropyTimeSeriesEnabled;
     int entropyTimeSeriesX;
     int entropyTimeSeriesY;
     int entropyTimeSeriesWidth;
     int entropyTimeSeriesHeight;
-    int entropyHistoryCount;
-    int entropyHistoryWriteIndex;
-    int entropyPad0;
-    Vec4Float entropyHistory[16];
-
-    // Volume time series configuration + data (2 lines)
     int volumeTimeSeriesEnabled;
     int volumeTimeSeriesX;
     int volumeTimeSeriesY;
     int volumeTimeSeriesWidth;
     int volumeTimeSeriesHeight;
-    float volumeHistoryMax;
-    int volumeHistoryCount;
-    int volumeHistoryWriteIndex;
-    int volumePad0;
-    Vec4Float volumeDomainHistory[16];
-    Vec4Float volumeMassHistory[16];
 
     // Histogram data
-    float densityHistogramMin;
-    float densityHistogramMax;
     int densityHistogramMaxCount;
     float velocityHistogramMin;
     float velocityHistogramMax;
     int velocityHistogramMaxCount;
-    int pad0;
     Vec4Int densityHistogramBins[16];
     Vec4Int velocityHistogramBins[16];
-    alignas(16) Vec4Float backgroundColor;  // .rgb = background color, .a unused
+
+    // Time series data
+    int entropyHistoryCount;
+    int entropyHistoryWriteIndex;
+    float volumeHistoryMax;
+    int volumeHistoryCount;
+    int volumeHistoryWriteIndex;
+    float cameraBackgroundDensityExponent;
+    int pad1;
+    int pad2;
+    Vec4Float entropyHistory[16];
+    Vec4Float volumeDomainHistory[16];
+    Vec4Float volumeMassHistory[16];
 };
 static_assert(sizeof(UniformData) % 16 == 0, "UniformData invalid alignment");
 
@@ -114,7 +111,10 @@ public:
     bool resetViewSource(int index);
     bool applyViewShaders();
     std::string getViewSource(int index) const;
+    std::string getViewName(int index) const;
+    int getViewTargetCount() const;
     std::string getLastShaderError() const;
+    std::string annotateWebGpuError(const std::string& message) const;
     void loadPersistedViewOverrides();
     void setBackgroundColor(float r, float g, float b);
     void onWindowResize(int width, int height);
@@ -170,8 +170,10 @@ private:
     WGPUBindGroupLayout bindGroupLayout = nullptr;
 
     std::vector<ViewRegistryEntry> builtinViews;
-    std::array<std::optional<std::string>, kViewTargetCount> viewOverrides = {};
+    std::vector<std::optional<std::string>> viewOverrides;
     std::string lastShaderError;
+    BundleLineRegion bundleRegions[kMaxBundleRegions] = {};
+    int bundleRegionCount = 0;
 
     // CPU texture upload dimensions (decoupled from uniformData, which is updated before upload)
     int textureGridX = 0;

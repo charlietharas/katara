@@ -20,9 +20,48 @@ struct HandsConfig {
 
 
 enum class PipelineType {
-    GPU,    // "device"
-    HYBRID, // "hybrid"
+    GPU_JACOBI,  // "device_jacobi"
+    GPU_GS,      // "device_gs"
+    HOST_GS,     // "host_gs"
 };
+
+inline bool isGpuPipeline(PipelineType p) {
+    return p == PipelineType::GPU_JACOBI || p == PipelineType::GPU_GS;
+}
+
+enum CameraBackgroundMode : int {
+    CAMERA_BACKGROUND_NONE = 0,
+    CAMERA_BACKGROUND_CURRENT = 1,
+    CAMERA_BACKGROUND_INVERTED = 2,
+};
+
+inline int parseCameraBackgroundMode(const json& v) {
+    if (v.is_null()) return CAMERA_BACKGROUND_NONE;
+    if (v.is_boolean()) return v.get<bool>() ? CAMERA_BACKGROUND_CURRENT : CAMERA_BACKGROUND_NONE;
+    if (v.is_number_integer()) {
+        const int mode = v.get<int>();
+        return (mode >= CAMERA_BACKGROUND_NONE && mode <= CAMERA_BACKGROUND_INVERTED)
+            ? mode : CAMERA_BACKGROUND_NONE;
+    }
+    if (v.is_string()) {
+        const std::string& s = v.get_ref<const std::string&>();
+        if (s == "current" || s == "true") return CAMERA_BACKGROUND_CURRENT;
+        if (s == "inverted") return CAMERA_BACKGROUND_INVERTED;
+        return CAMERA_BACKGROUND_NONE;
+    }
+    return CAMERA_BACKGROUND_NONE;
+}
+
+inline const char* cameraBackgroundModeName(int mode) {
+    switch (mode) {
+        case CAMERA_BACKGROUND_CURRENT: return "current";
+        case CAMERA_BACKGROUND_INVERTED: return "inverted";
+        default: return "none";
+    }
+}
+
+inline bool isGpuJacobi(PipelineType p) { return p == PipelineType::GPU_JACOBI; }
+inline bool isGpuGaussSeidel(PipelineType p) { return p == PipelineType::GPU_GS; }
 
 
 struct WindowConfig {
@@ -57,6 +96,8 @@ struct CircleConfig {
     float momentumTransferStrength;
     float momentumTransferRadius;
     float handSensitivity; // 0-1 low-high
+    // When a solid cell becomes fluid, clear density to 1.0 (true) or refill from neighbors (false).
+    bool clearDensityOnVacate = true;
 
     // depth scaling
     float zMin;        // closest hand
@@ -87,6 +128,8 @@ struct ComponentBBox {
     int rotation = 0;
     int viewportTarget;
     bool viewportVelocityViewEnabled;
+    // 0 = none, 1 = current density alpha, 2 = inverted density alpha
+    int viewportCameraBackground = 0;
     bool histogramEnabled;
 };
 
@@ -96,8 +139,9 @@ struct LayoutConfig {
     bool labelsEnabled = true;
     bool buttonsEnabled = true;
     bool camerasEnabled = true;
-    bool disableHistograms = false;
+    bool divergenceBinomialFiltering = true;
     float velocityScale = 0.01f;
+    float cameraBackgroundDensityExponent = 2.0f;
     std::map<std::string, ComponentBBox> components;
 };
 
@@ -136,7 +180,7 @@ struct LayoutPixels {
 struct Config {
     InputMode inputMode = InputMode::Hand;
     HandsConfig hands;
-    PipelineType pipeline;
+    PipelineType pipeline = PipelineType::GPU_JACOBI;
     std::string imagePath;
     WindowConfig window;
     SimulationConfig simulation;
@@ -158,7 +202,7 @@ std::string inputModeToString(InputMode mode);
 
 inline bool layoutHasInkViewport(const LayoutConfig& layout) {
     for (const auto& [name, bbox] : layout.components) {
-        if (name.rfind("viewport_", 0) == 0 && bbox.viewportTarget == 3) {
+        if (name.rfind("viewport_", 0) == 0 && bbox.viewportTarget == 2) {
             return true;
         }
     }

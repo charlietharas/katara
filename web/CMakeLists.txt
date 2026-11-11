@@ -40,7 +40,7 @@ set(SOURCES
     ../sim_cpu.cpp
     ../config.cpp
     ../layout.cpp
-    ../shader_bundle.cpp
+    ../render_views.cpp
 )
 
 add_executable(katara ${SOURCES})
@@ -51,7 +51,7 @@ target_link_libraries(katara PRIVATE SDL2::SDL2 SDL2_image webgpu sdl2webgpu)
 target_compile_options(katara PRIVATE -Wno-deprecated-literal-operator)
 
 # emscripten linker flags
-set(EXPORTED_FUNCTIONS "\"_main\",\"_malloc\",\"_free\",\"_setSimulatorPointer\",\"_updateFingertips\",\"_updateLineSegments\",\"_update\",\"_setInputMode\",\"_onMouseDown\",\"_onMouseUp\",\"_onMouseDrag\",\"_getSimDomainWidth\",\"_getSimDomainHeight\",\"_getSimCellSize\",\"_setViewportTarget\",\"_setViewportVelocity\",\"_setViewportRotation\",\"_getViewSource\",\"_setViewSource\",\"_resetViewSource\",\"_applyViewShaders\",\"_getLastShaderError\",\"_freeShaderString\",\"_reloadConfig\",\"_resetFluidField\",\"_initLayout\"")
+set(EXPORTED_FUNCTIONS "\"_main\",\"_malloc\",\"_free\",\"_setSimulatorPointer\",\"_updateFingertips\",\"_updateLineSegments\",\"_update\",\"_setInputMode\",\"_onMouseDown\",\"_onMouseUp\",\"_onMouseDrag\",\"_onMouseDragLost\",\"_getSimDomainWidth\",\"_getSimDomainHeight\",\"_getSimCellSize\",\"_setViewportTarget\",\"_setViewportVelocity\",\"_setViewportCameraBackground\",\"_setViewportRotation\",\"_getViewSource\",\"_getViewName\",\"_getViewTargetCount\",\"_setViewSource\",\"_resetViewSource\",\"_applyViewShaders\",\"_getLastShaderError\",\"_freeShaderString\",\"_reloadConfig\",\"_resetFluidField\",\"_initLayout\",\"_getLayoutPreviewJson\",\"_setSimulationPaused\",\"_setBackgroundColor\"")
 
 target_link_options(katara PUBLIC
     "SHELL:-s WASM=1"
@@ -70,32 +70,52 @@ target_link_options(katara PUBLIC
 # stage shader and config files for embedding
 set(PROJECT_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set(EMBED_STAGE_DIR ${CMAKE_CURRENT_BINARY_DIR}/embed)
-file(MAKE_DIRECTORY ${EMBED_STAGE_DIR})
-file(GLOB SHADER_FILES "${PROJECT_ROOT}/*.wgsl")
+set(EMBED_STAMP ${CMAKE_CURRENT_BINARY_DIR}/embed.stamp)
 
-set(COMPUTE_CIRCLE_SRC "${PROJECT_ROOT}/compute_circle_fingertip.wgsl")
-configure_file(${COMPUTE_CIRCLE_SRC} "${EMBED_STAGE_DIR}/compute_circle.wgsl" COPYONLY)
-
-set(MODULAR_FRAGMENT_FILES
-    fragment_uniform.wgsl
-    fragment.wgsl
+file(GLOB SHADER_FILES CONFIGURE_DEPENDS "${PROJECT_ROOT}/*.wgsl")
+file(GLOB VIEW_FILES CONFIGURE_DEPENDS
+    "${PROJECT_ROOT}/views/*.wgsl"
+    "${PROJECT_ROOT}/views/*.json"
 )
-foreach(MODULAR_FILE ${MODULAR_FRAGMENT_FILES})
-    configure_file("${PROJECT_ROOT}/${MODULAR_FILE}" "${EMBED_STAGE_DIR}/${MODULAR_FILE}" COPYONLY)
-endforeach()
 
-file(COPY "${PROJECT_ROOT}/views" DESTINATION "${EMBED_STAGE_DIR}")
+set(EMBED_SOURCES
+    ${SHADER_FILES}
+    ${VIEW_FILES}
+    "${CMAKE_CURRENT_SOURCE_DIR}/config.json"
+    "${PROJECT_ROOT}/img1.png"
+)
 
+set(STAGE_EMBED_COMMANDS
+    COMMAND ${CMAKE_COMMAND} -E rm -rf "${EMBED_STAGE_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${EMBED_STAGE_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${PROJECT_ROOT}/views" "${EMBED_STAGE_DIR}/views"
+)
 foreach(SHADER ${SHADER_FILES})
     get_filename_component(SHADER_NAME ${SHADER} NAME)
-    if(NOT SHADER_NAME STREQUAL "compute_circle.wgsl"
-       AND NOT SHADER_NAME STREQUAL "fragment.wgsl"
-       AND NOT SHADER_NAME STREQUAL "fragment_uniform.wgsl")
-        configure_file(${SHADER} "${EMBED_STAGE_DIR}/${SHADER_NAME}" COPYONLY)
-    endif()
+    list(APPEND STAGE_EMBED_COMMANDS
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${SHADER}" "${EMBED_STAGE_DIR}/${SHADER_NAME}"
+    )
 endforeach()
-configure_file("${CMAKE_CURRENT_SOURCE_DIR}/config.json" "${EMBED_STAGE_DIR}/config.json" COPYONLY)
-configure_file("${CMAKE_CURRENT_SOURCE_DIR}/public/img1.png" "${EMBED_STAGE_DIR}/img1.png" COPYONLY)
+list(APPEND STAGE_EMBED_COMMANDS
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/config.json" "${EMBED_STAGE_DIR}/config.json"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${PROJECT_ROOT}/img1.png" "${EMBED_STAGE_DIR}/img1.png"
+    COMMAND ${CMAKE_COMMAND} -E touch "${EMBED_STAMP}"
+)
+
+add_custom_command(
+    OUTPUT "${EMBED_STAMP}"
+    ${STAGE_EMBED_COMMANDS}
+    DEPENDS ${EMBED_SOURCES}
+    COMMENT "Staging files for Emscripten --embed-file"
+    VERBATIM
+)
+add_custom_target(katara_stage_embed DEPENDS "${EMBED_STAMP}")
+add_dependencies(katara katara_stage_embed)
+set_property(TARGET katara APPEND PROPERTY LINK_DEPENDS "${EMBED_STAMP}")
 
 # embed data files (mounted at / in Emscripten virtual FS)
 target_link_options(katara PUBLIC

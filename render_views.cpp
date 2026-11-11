@@ -1,9 +1,11 @@
-#include "shader_bundle.h"
+#include "render_views.h"
 #include "config.h"
 #include "json.hpp"
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
+#include <cstring>
 #include <sstream>
 
 using json = nlohmann::json;
@@ -58,10 +60,84 @@ void replaceFunctionCalls(std::string& text, const std::string& name, const std:
     }
 }
 
-} // namespace
+// draw() wrapper
+constexpr const char* kViewDrawOpen =
+    "fn draw(\n"
+    "    texCoord: vec2<i32>,\n"
+    "    pressureTexture: texture_2d<f32>,\n"
+    "    densityTexture: texture_2d<f32>,\n"
+    "    velocityTexture: texture_2d<f32>,\n"
+    "    solidTexture: texture_2d<f32>,\n"
+    "    inkTexture: texture_2d<f32>,\n"
+    ") -> vec4<f32> {\n";
+constexpr const char* kViewDrawClose = "\n}\n";
+constexpr const char* kViewDrawMarker = "#draw";
+
+constexpr const char* kViewDrawSignatureHint =
+    "fn draw(texCoord: vec2<i32>, pressureTexture: texture_2d<f32>, "
+    "densityTexture: texture_2d<f32>, velocityTexture: texture_2d<f32>, "
+    "solidTexture: texture_2d<f32>, inkTexture: texture_2d<f32>) -> vec4<f32>";
+
+std::string trimLeadingNewlines(std::string text) {
+    size_t start = 0;
+    while (start < text.size() && (text[start] == '\n' || text[start] == '\r')) {
+        start++;
+    }
+    return text.substr(start);
+}
+
+int countLines(const std::string& text) {
+    if (text.empty()) {
+        return 0;
+    }
+    int lines = 0;
+    for (char c : text) {
+        if (c == '\n') {
+            ++lines;
+        }
+    }
+    if (text.back() != '\n') {
+        ++lines;
+    }
+    return lines;
+}
+
+}
 
 std::string viewDrawFunctionName(int index) {
     return "view" + std::to_string(index) + "_draw";
+}
+
+std::string materializeViewDrawSource(const std::string& fileSource,
+                                      int* outHelperLines,
+                                      int* outOpenLines) {
+    auto setMap = [&](int helperLines, int openLines) {
+        if (outHelperLines) {
+            *outHelperLines = helperLines;
+        }
+        if (outOpenLines) {
+            *outOpenLines = openLines;
+        }
+    };
+
+    if (containsSubstring(fileSource, "fn draw(")) {
+        setMap(0, 0);
+        return fileSource;
+    }
+
+    const int openLines = countLines(kViewDrawOpen);
+    const size_t markerPos = fileSource.find(kViewDrawMarker);
+    if (markerPos == std::string::npos) {
+        setMap(0, openLines);
+        return std::string(kViewDrawOpen) + fileSource + kViewDrawClose;
+    }
+
+    const std::string helpers = fileSource.substr(0, markerPos);
+    const std::string body = trimLeadingNewlines(
+        fileSource.substr(markerPos + std::char_traits<char>::length(kViewDrawMarker))
+    );
+    setMap(countLines(helpers), openLines);
+    return helpers + kViewDrawOpen + body + kViewDrawClose;
 }
 
 std::string prefixViewFunctions(int index, const std::string& source) {
@@ -90,28 +166,34 @@ std::string generateApplyRenderTargetDispatch(const std::vector<ViewRegistryEntr
     oss << "fn applyRenderTarget(\n";
     oss << "    renderTarget: i32,\n";
     oss << "    texCoord: vec2<i32>,\n";
-    oss << "    pressure: f32,\n";
-    oss << "    density: f32,\n";
-    oss << ") -> vec3<f32> {\n";
+    oss << "    pressureTexture: texture_2d<f32>,\n";
+    oss << "    densityTexture: texture_2d<f32>,\n";
+    oss << "    velocityTexture: texture_2d<f32>,\n";
+    oss << "    solidTexture: texture_2d<f32>,\n";
+    oss << "    inkTexture: texture_2d<f32>,\n";
+    oss << ") -> vec4<f32> {\n";
 
+    const char* args =
+        "(texCoord, pressureTexture, densityTexture, velocityTexture, solidTexture, inkTexture)";
     for (const ViewRegistryEntry& view : views) {
         oss << "    if (renderTarget == " << view.index << ") {\n";
-        oss << "        return " << viewDrawFunctionName(view.index) << "(texCoord, pressure, density);\n";
+        oss << "        return " << viewDrawFunctionName(view.index) << args << ";\n";
         oss << "    }\n";
     }
 
-    oss << "    var color = mapValueToColor(pressure, uniforms.pressureMin, uniforms.pressureMax);\n";
-    oss << "    color = color - density * vec3<f32>(1.0, 1.0, 1.0);\n";
-    oss << "    return max(color, vec3<f32>(0.0, 0.0, 0.0));\n";
+    // fallback
+    oss << "    let checker = ((texCoord.x ^ texCoord.y) & 8) != 0;\n";
+    oss << "    let errColor = select(vec3<f32>(1.0, 0.0, 1.0), vec3<f32>(0.0, 0.0, 0.0), checker);\n";
+    oss << "    return vec4<f32>(errColor, 1.0);\n";
     oss << "}\n";
     return oss.str();
 }
 
-ShaderBundleResult bundleFragmentShader(const std::vector<ViewRegistryEntry>& views) {
+ShaderBundleResult bundleFragmentShader(const std::vector<ViewRegistryEntry>& views,
+                                        bool divergenceBinomialFiltering) {
     ShaderBundleResult result;
-    if (static_cast<int>(views.size()) != kViewTargetCount) {
-        result.error = "Expected " + std::to_string(kViewTargetCount) + " view targets, got " +
-                       std::to_string(views.size());
+    if (views.empty()) {
+        result.error = "View registry is empty";
         return result;
     }
 
@@ -137,19 +219,46 @@ ShaderBundleResult bundleFragmentShader(const std::vector<ViewRegistryEntry>& vi
     }
 
     std::ostringstream bundled;
-    bundled << uniformSource << "\n";
+    int nextLine = 1;
+    auto pushRegion = [&](const std::string& chunk, const char* regionName,
+                          int helperLines = 0, int openLines = 0) {
+        if (result.regionCount >= kMaxBundleRegions) {
+            bundled << chunk;
+            return;
+        }
+        BundleLineRegion& region = result.regions[result.regionCount++];
+        region.endLine = nextLine + countLines(chunk);
+        region.helperLines = helperLines;
+        region.openLines = openLines;
+        std::snprintf(region.name, sizeof(region.name), "%s", regionName);
+        nextLine = region.endLine;
+        bundled << chunk;
+    };
+
+    pushRegion(uniformSource + "\n", "fragment_uniform.wgsl");
+    pushRegion(
+        std::string("const DIVERGENCE_BINOMIAL_FILTERING: bool = ")
+            + (divergenceBinomialFiltering ? "true" : "false") + ";\n",
+        "fragment_uniform.wgsl"
+    );
     for (const ViewRegistryEntry& view : views) {
-        bundled << prefixViewFunctions(view.index, view.source) << "\n";
+        const std::string label = !view.file.empty() ? view.file : view.name;
+        pushRegion(
+            prefixViewFunctions(view.index, view.source) + "\n",
+            label.c_str(),
+            view.errHelperLines,
+            view.errOpenLines
+        );
     }
-    bundled << generateApplyRenderTargetDispatch(views) << "\n";
-    bundled << fragmentSource;
+    pushRegion(generateApplyRenderTargetDispatch(views) + "\n", "dispatch");
+    pushRegion(fragmentSource, "fragment.wgsl");
 
     result.wgsl = bundled.str();
     return result;
 }
 
 bool validateViewSource(int index, const std::string& source, std::string& outError) {
-    if (index < 0 || index >= kViewTargetCount) {
+    if (index < 0) {
         outError = "View target index out of range: " + std::to_string(index);
         return false;
     }
@@ -159,11 +268,14 @@ bool validateViewSource(int index, const std::string& source, std::string& outEr
         return false;
     }
     if (!containsSubstring(source, "texCoord: vec2<i32>") ||
-        !containsSubstring(source, "pressure: f32") ||
-        !containsSubstring(source, "density: f32") ||
-        !containsSubstring(source, "-> vec3<f32>")) {
-        outError = "Target " + std::to_string(index) +
-                   ": expected signature fn draw(texCoord: vec2<i32>, pressure: f32, density: f32) -> vec3<f32>";
+        !containsSubstring(source, "pressureTexture: texture_2d<f32>") ||
+        !containsSubstring(source, "densityTexture: texture_2d<f32>") ||
+        !containsSubstring(source, "velocityTexture: texture_2d<f32>") ||
+        !containsSubstring(source, "solidTexture: texture_2d<f32>") ||
+        !containsSubstring(source, "inkTexture: texture_2d<f32>") ||
+        !containsSubstring(source, "-> vec4<f32>")) {
+        outError = std::string("Target ") + std::to_string(index) +
+                   ": expected signature " + kViewDrawSignatureHint;
         return false;
     }
 
@@ -201,8 +313,19 @@ bool loadBuiltinViewRegistry(std::vector<ViewRegistryEntry>& outViews, std::stri
         return false;
     }
 
-    outViews.reserve(kViewTargetCount);
-    for (int index = 0; index < kViewTargetCount; ++index) {
+    if (!registry.contains("count") || !registry["count"].is_number_integer()) {
+        outError = "views/registry.json missing integer count";
+        return false;
+    }
+
+    const int count = registry["count"].get<int>();
+    if (count <= 0) {
+        outError = "views/registry.json count must be positive";
+        return false;
+    }
+
+    outViews.reserve(count);
+    for (int index = 0; index < count; ++index) {
         const std::string key = std::to_string(index);
         if (!registry.contains(key)) {
             outError = "views/registry.json missing entry for index " + key;
@@ -218,8 +341,8 @@ bool loadBuiltinViewRegistry(std::vector<ViewRegistryEntry>& outViews, std::stri
         }
 
         const std::string filePath = "views/" + fileName;
-        const std::string source = ConfigLoader::readFile(filePath.c_str());
-        if (source.empty()) {
+        const std::string fileSource = ConfigLoader::readFile(filePath.c_str());
+        if (fileSource.empty()) {
             outError = "Failed to read view file: " + filePath;
             return false;
         }
@@ -227,8 +350,11 @@ bool loadBuiltinViewRegistry(std::vector<ViewRegistryEntry>& outViews, std::stri
         ViewRegistryEntry view;
         view.index = index;
         view.name = name;
+        view.file = fileName;
         view.fnName = viewDrawFunctionName(index);
-        view.source = source;
+        view.source = materializeViewDrawSource(
+            fileSource, &view.errHelperLines, &view.errOpenLines
+        );
         outViews.push_back(std::move(view));
     }
 

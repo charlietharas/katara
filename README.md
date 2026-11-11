@@ -82,7 +82,6 @@ Parameters will either change fluid behavior, simulation components (e.g. fluid 
 | rendering      | target                    | `0`=colored density grid, `1`=greyscale smoke grid, `2`=combined smoke/density grid, `3`=ink mode (requires `imagePath` set)             |
 |                | showVelocityVectors       | Enable/disable rendering velocity grid as white lines                                                                   |
 |                | velocityScale             | Controls the length of displayed velocity vectors                                                                       |
-|                | disableHistograms         | Disable calculating and rendering density and velocity histograms                                                       |
 | ink            | imagePath                 | Path to load input image for ink mode                                                          |
 ## Project Structure
 `main.cpp` and `config.cpp` manage program initialization and main loop. Simulation parameters are loaded from `config.json`.

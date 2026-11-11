@@ -79,9 +79,14 @@ private:
     void clearCircleArea(int prevX, int prevY, int radius);
 
     bool isPointNearSegment(int px, int py, int x1, int y1, float r1, int x2, int y2, float r2);
+    bool segmentHit(int px, int py, int x1, int y1, float r1, int x2, int y2, float r2, float& tFrac);
+    float refillDensityFromNeighbors(int i, int j, float fallback);
+    void applyVacatedDensity(int i, int j);
     void applyInput();
     void applyLineSegmentSolidFieldFullGrid();
     void applyCircleSolids();
+
+    static constexpr float MOVING_WALL_MOMENTUM_SCALE = 0.25f;
 
 public:
     // image initialization helpers (public so GPU simulator can access via member)

@@ -1,45 +1,38 @@
 // TODO MAIN -- WIP ^_^
 // we in the browser baby
 
-// TODO bug: border condition issues along non-solid sides (GPU)
-
-// TODO custom renderer [WIP]
-// - bug: shader map button clicking broken
-
-// TODO bug: maybe something wrong with the volume, entropy calculations [WIP]
-// - entropy and volume graphs need to make sense
-// - histogram jitteriness [WIP]
-
 /*
 // TODO big cleanup: test, unify, and document codebase, particularly build steps + config (& generally simplify flow of data/modularize) [WIP]
-
 TARGETS:
-- GPU compute pipeline [WIP]
+- start from main and config again after updates; briefly document
+- GPU compute pipeline
 - histogram compute pipeline
 - GPU render pipeline
-- frontend
-- CPU simulation (verify)
-- desktop build (verify)
+- CPU simulation
+- desktop build (ezpz)
+- final check :)
+
+// TODO README
+- follow the fluid simulation process to explain the major steps of the project; light and accessible overview
+that explains controls and simulation features while also being vaguely educational
+// TODO writeup html file; interactive architectural diagrams
+- flow of information (matrices/textures) throughout compute pipelines; including equations
+- more detailed description of actual project decisions, tradeoffs, development process, design philosophy, 
+  info about webgpu programming, etc.
+- analyze differences in pressure/velocity histograms between solvers (plotting script; gpu_j/gpu_gs/cpu_gs)
 */
 
-// TODO writeup html file; interactive architectural diagram; website changes
-
 /*
-// TODO LATER examine differences in pressure/velocity histograms between GPU/CPU
-- see plotting script
-// TODO LATER swap to different pressure solver
-
+// TODO WAY LATER better fluid entry (upgrade wind tunnel system; allow hand emissions ?)
 // TODO WAY LATER better qol/ide features
-// TODO WAY LATER dev mode & better build/release system
-
+// TODO WAY LATER better dev mode & build/release system
 // TODO WAY LATER integrate gravity with gyroscope on the phone
-
 // TODO WAY LATER lots of tiny memory problems in valgrind, investigate if some of these are my fault
 */
 
 fn getViewportForPixel(pixelCoord: vec2<f32>) -> i32 {
     if (uniforms.viewportCount == 0) {
-        return -1; // No viewports defined, use default rendering
+        return -1; // no viewports defined, use default rendering
     }
 
     for (var i = 0; i < uniforms.viewportCount; i++) {
@@ -53,7 +46,7 @@ fn getViewportForPixel(pixelCoord: vec2<f32>) -> i32 {
             return i;
         }
     }
-    return -1; // Not in any viewport
+    return -1; // not in any viewport
 }
 
 fn viewportRotatedNorm(normX: f32, normY: f32, rotation: i32) -> vec2<f32> {
@@ -117,11 +110,8 @@ fn distanceToLineSegment(point: vec2<f32>, lineStart: vec2<f32>, lineEnd: vec2<f
 
 // VELOCITY OVERLAY
 const VELOCITY_STRIDE: i32 = 16;
-// segment length is expressed as a fraction of the stride spacing so glyphs stay
-// readable regardless of sim resolution / cells-per-pixel
 const VELOCITY_MIN_LEN_FRAC: f32 = 0.4;
 const VELOCITY_MAX_LEN_FRAC: f32 = 1.0;
-// skip only effectively stationary fluid; no fraction-of-max cutoff
 const VELOCITY_MIN_SPEED: f32 = 1e-5;
 const VELOCITY_LINE_WIDTH_PX: f32 = 1.0;
 
@@ -144,8 +134,7 @@ fn drawVelocityField(coord: vec2<f32>, gridX: i32, gridY: i32, simUnitsPerPixel:
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
 
-    // snap this pixel to its nearest stride anchor so the whole glyph (which can span
-    // many cells) is evaluated by every pixel it covers, not just the anchor cell itself
+    // snap this pixel to its nearest stride anchor
     let halfStride = VELOCITY_STRIDE / 2;
     let anchorX = clamp(((gridX + halfStride) / VELOCITY_STRIDE) * VELOCITY_STRIDE, 0, uniforms.gridX - 1);
     let anchorY = clamp(((gridY + halfStride) / VELOCITY_STRIDE) * VELOCITY_STRIDE, 0, uniforms.gridY - 1);
@@ -173,7 +162,7 @@ fn drawVelocityField(coord: vec2<f32>, gridX: i32, gridY: i32, simUnitsPerPixel:
         (f32(anchorX) + 0.5) * uniforms.cellSize,
         (f32(anchorY) + 0.5) * uniforms.cellSize
     );
-    // center the glyph on the cell; brightness ramps tail -> tip to show direction
+    // center the glyph on the cell
     let lineStart = center - dir * segmentLengthWorld * 0.5;
     let lineEnd = center + dir * segmentLengthWorld * 0.5;
 
@@ -185,13 +174,12 @@ fn drawVelocityField(coord: vec2<f32>, gridX: i32, gridY: i32, simUnitsPerPixel:
     let projected = lineStart + t * line;
     let dist = distance(coord, projected);
 
-    // teardrop profile: width tapers toward the tail so each glyph reads as a brush
-    // stroke / comet rather than a blunt bar; the tip keeps a full rounded cap
+    // teardrop/comet profile
     let widthProfile = mix(0.12, 1.0, t);
     let halfWidth = lineWidthWorld * widthProfile;
     let strokeAlpha = 1.0 - smoothstep(halfWidth, halfWidth + edgeWidthWorld, dist);
 
-    // strength via velocity histogram palette; tail -> tip luminance keeps direction readable
+    // strength via velocity histogram palette
     let velColor = mapValueToVelocityColor(speed, speedMin, speedMax);
     let headBrightness = mix(0.45, 1.0, smoothstep(0.0, 1.0, t));
     let alpha = strokeAlpha * headBrightness * 0.85;
@@ -423,10 +411,6 @@ fn drawVolumeTimeSeries(pixelCoord: vec2<f32>) -> vec4<f32> {
 }
 
 fn drawHistograms(pixelCoord: vec2<f32>) -> vec4<f32> {
-    if (uniforms.disableHistograms != 0) {
-        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    }
-
     let volumeIndicator = drawVolumeTimeSeries(pixelCoord);
     if (volumeIndicator.a > 0.0) {
         return volumeIndicator;
@@ -437,7 +421,7 @@ fn drawHistograms(pixelCoord: vec2<f32>) -> vec4<f32> {
         return entropyIndicator;
     }
 
-    // Draw density histogram (configurable position)
+    // density histogram
     if (uniforms.densityHistogramEnabled != 0) {
         let dhistX = f32(uniforms.densityHistogramX);
         let dhistY = f32(uniforms.densityHistogramY);
@@ -493,7 +477,7 @@ fn drawHistograms(pixelCoord: vec2<f32>) -> vec4<f32> {
         }
     }
 
-    // Draw velocity histogram (configurable position)
+    // velocity histogram
     if (uniforms.velocityHistogramEnabled != 0) {
         let vhistX = f32(uniforms.velocityHistogramX);
         let vhistY = f32(uniforms.velocityHistogramY);
@@ -562,19 +546,19 @@ fn fs_main(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
         return histColor;
     }
 
-    // Check which viewport we're in
+    // check which viewport we're in
     let viewportIndex = getViewportForPixel(pixelCoord);
 
-    var finalColor: vec3<f32> = vec3<f32>(0.0);
+    var finalColor = vec4<f32>(0.0);
 
     if (viewportIndex >= 0) {
-        // Render to viewport
+        // render to viewport
         let vx = f32(uniforms.viewportX[viewportIndex]);
         let vy = f32(uniforms.viewportY[viewportIndex]);
         let vw = f32(uniforms.viewportWidth[viewportIndex]);
         let vh = f32(uniforms.viewportHeight[viewportIndex]);
 
-        // Transform pixel to simulation coordinates relative to viewport
+        // transform pixel to simulation coordinates relative to viewport
         let normX = (pixelCoord.x - vx) / vw;
         let normY = (pixelCoord.y - vy) / vh;
         let rotation = uniforms.viewportRotation[viewportIndex];
@@ -584,43 +568,58 @@ fn fs_main(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
             (1.0 - rotated.y) * uniforms.simHeight  // flip Y for WebGL convention
         );
 
-        // Convert to grid coordinates
+        // convert to grid coordinates
         let simCoord = worldCoord / uniforms.cellSize;
         let texCoord = vec2<i32>(i32(simCoord.x), i32(simCoord.y));
 
-        // Guard against sampling outside the simulation domain
+        // don't sample outside simulation domain
         if (texCoord.x < 0 || texCoord.x >= uniforms.gridX ||
             texCoord.y < 0 || texCoord.y >= uniforms.gridY) {
-            return uniforms.backgroundColor;
+            return vec4<f32>(0.0);
         }
 
-        // Use viewport's render target
+        // use viewport's render target
         let viewportRenderTarget = uniforms.viewportRenderTarget[viewportIndex];
+        let viewColor = applyRenderTarget(
+            viewportRenderTarget,
+            texCoord,
+            pressureTexture,
+            densityTexture,
+            velocityTexture,
+            solidTexture,
+            inkTexture
+        );
+        var outRgb = viewColor.rgb;
+        var outA = viewColor.a;
 
-        // Load and render simulation data
-        let pressure = textureLoad(pressureTexture, texCoord, 0).r;
-        let density = textureLoad(densityTexture, texCoord, 0).r;
-        let solid = textureLoad(solidTexture, texCoord, 0).r;
-
-        if (solid > 0.5) {
-            finalColor = applyRenderTarget(viewportRenderTarget, texCoord, pressure, density);
-        } else {
-            // solid obstacles (grey)
-            finalColor = vec3<f32>(0.47);
+        if (uniforms.viewportCameraAlpha[viewportIndex] != 0) {
+            let density = textureLoad(densityTexture, texCoord, 0).r;
+            let mask = 1.0 - pow(clamp(density, 0.0, 1.0), uniforms.cameraBackgroundDensityExponent);
+            if (uniforms.viewportCameraAlpha[viewportIndex] == 2) {
+                outA = outA * (1.0 - mask);
+            } else {
+                outA = outA * mask;
+            }
         }
 
-        // Draw velocity field if enabled for this viewport
+        // premultiply so transparent views composite correctly over DOM layers
+        finalColor = vec4<f32>(outRgb * outA, outA);
+
+        // velocity field
         if (uniforms.viewportRenderVelocity[viewportIndex] != 0) {
             let simUnitsPerPixel = max(uniforms.simWidth / vw, uniforms.simHeight / vh);
             var velColor = drawVelocityField(worldCoord, texCoord.x, texCoord.y, simUnitsPerPixel);
             if (velColor.a > 0.0) {
-                finalColor = velColor.rgb * velColor.a + finalColor * (1.0 - velColor.a);
+                let srcA = velColor.a;
+                let outA = srcA + finalColor.a * (1.0 - srcA);
+                let outRgb = velColor.rgb * srcA + finalColor.rgb * (1.0 - srcA);
+                finalColor = vec4<f32>(outRgb, outA);
             }
         }
     } else {
-        // background (uses runtime-configurable backgroundColor uniform)
-        finalColor = uniforms.backgroundColor.rgb;
+        // outside viewports: fully transparent
+        finalColor = vec4<f32>(0.0);
     }
 
-    return vec4<f32>(finalColor, 1.0);
+    return finalColor;
 }

@@ -1,9 +1,10 @@
 struct SimParams {
     gridX: i32,
     gridY: i32,
+    overrelaxationCoefficient: f32,
+    timestep: f32,
     cellSize: f32,
     halfCellSize: f32,
-    timestep: f32,
 };
 
 @group(0) @binding(0) var<uniform> params: SimParams;
@@ -66,8 +67,12 @@ fn advectVelocity(@builtin(global_invocation_id) id: vec3<u32>) {
     let i = i32(id.x);
     let j = i32(id.y);
 
-    if (i < 1 || i >= params.gridX || j < 1 || j >= params.gridY) {
-        textureStore(newVelocityTexture, vec2<i32>(i, j), vec4<f32>(0.0));
+    // match CPU interior loop (1, gridX-2) x (1, gridY-2)
+    if (i < 1 || i >= params.gridX - 1 || j < 1 || j >= params.gridY - 1) {
+        if (i < params.gridX && j < params.gridY) {
+            textureStore(newVelocityTexture, vec2<i32>(i, j),
+                textureLoad(velocityTexture, vec2<i32>(i, j)));
+        }
         return;
     }
 
@@ -75,14 +80,10 @@ fn advectVelocity(@builtin(global_invocation_id) id: vec3<u32>) {
     let solid = textureLoad(solidTexture, vec2<i32>(i, j), 0).r;
 
     if (solid != 0.0) {
-        // x vel advection — require fluid neighbors on both sides of this MAC face.
-        // Left/bottom walls already gate via solidLeft / solidBelow; right/top walls
-        // need the symmetric solidRight check or the first interior column (gridX-2 /
-        // gridY-2) gets traced and the inlet jet smears into a diffuse spew.
         if (i > 0 && j < params.gridY - 1) {
             let solidLeft = textureLoad(solidTexture, vec2<i32>(i - 1, j), 0).r;
             if (solidLeft != 0.0) {
-                var advectX = true;
+                var advectX = false;
                 if (i + 1 < params.gridX) {
                     let solidRight = textureLoad(solidTexture, vec2<i32>(i + 1, j), 0).r;
                     advectX = solidRight != 0.0;
@@ -99,11 +100,10 @@ fn advectVelocity(@builtin(global_invocation_id) id: vec3<u32>) {
             }
         }
 
-        // y vel advection — same symmetric high-index wall guard via solidAbove.
         if (j > 0 && i < params.gridX - 1) {
             let solidBelow = textureLoad(solidTexture, vec2<i32>(i, j - 1), 0).r;
             if (solidBelow != 0.0) {
-                var advectY = true;
+                var advectY = false;
                 if (j + 1 < params.gridY) {
                     let solidAbove = textureLoad(solidTexture, vec2<i32>(i, j + 1), 0).r;
                     advectY = solidAbove != 0.0;

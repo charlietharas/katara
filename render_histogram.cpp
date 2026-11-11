@@ -93,4 +93,4 @@ void computeHistograms(const ISimulator& simulator, HistogramData& data) {
     }
 }
 
-} // namespace RenderHistogram
+}

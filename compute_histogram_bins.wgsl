@@ -1,8 +1,6 @@
 struct SimParams {
     gridX: i32,
     gridY: i32,
-    cellSize: f32,
-    halfCellSize: f32,
 }
 
 struct HistogramBins {

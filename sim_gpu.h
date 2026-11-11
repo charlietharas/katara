@@ -13,79 +13,60 @@ struct MinMaxUniform {
     float pressMin, pressMax, velMin, velMax;
 };
 
-struct alignas(16) I32Vec4 {
-    int x, y, z, w;
-};
-
-struct alignas(16) F32Vec4 {
-    float x, y, z, w;
-};
-
-inline int& simPackedI32(I32Vec4* arr, int index) {
-    return reinterpret_cast<int*>(arr)[index];
-}
-
-inline const int& simPackedI32(const I32Vec4* arr, int index) {
-    return reinterpret_cast<const int*>(arr)[index];
-}
-
-inline float& simPackedF32(F32Vec4* arr, int index) {
-    return reinterpret_cast<float*>(arr)[index];
-}
-
-inline const float& simPackedF32(const F32Vec4* arr, int index) {
-    return reinterpret_cast<const float*>(arr)[index];
-}
-
 // SIM PARAMS UNIFORM
+// Circle/segment payloads live in storage buffers (see CircleGPU/SegmentGPU) so this
+// stays small and every shader can declare just the prefix of fields it reads.
 struct alignas(16) SimParams {
-    static constexpr int CIRCLE_VEC4_COUNT = (HandTracking::MAX_CIRCLES + 3) / 4;
-    static constexpr int SEGMENT_VEC4_COUNT = (HandTracking::MAX_SEGMENTS + 3) / 4;
-
     int gridX;
     int gridY;
+    float overrelaxationCoefficient;
+    float timestep;
     float cellSize;
     float halfCellSize;
-    float timestep;
     int windTunnelSide;
     int windTunnelStart;
     int windTunnelEnd;
     float windTunnelSpeed;
-    int edges; // 4-bit mask: left(8), top(4), bottom(2), right(1)
+    int edges;
+    float vorticity;
+    float vorticityLen;
+    int inputMode;
+    int numPresentSegments;
+    int numCircles;
+    int numSegments;
     float momentumTransferStrength;
     float momentumTransferRadius;
     float momentumTransferDeadZone;
-    float vorticity;
-    float vorticityLen;
-    int _pad0;
-    // track 21 landmarks per hand
-    I32Vec4 circleX[CIRCLE_VEC4_COUNT], circleY[CIRCLE_VEC4_COUNT];
-    I32Vec4 prevCircleX[CIRCLE_VEC4_COUNT], prevCircleY[CIRCLE_VEC4_COUNT];
-    F32Vec4 circleZ[CIRCLE_VEC4_COUNT];
-    I32Vec4 circleScaledRadius[CIRCLE_VEC4_COUNT];
-    I32Vec4 circlePresent[CIRCLE_VEC4_COUNT];
-    I32Vec4 circleWasPresent[CIRCLE_VEC4_COUNT];
-    F32Vec4 circleVelX[CIRCLE_VEC4_COUNT], circleVelY[CIRCLE_VEC4_COUNT];
-    int numCircles;
-    int baseCircleRadius; // base radius from config
-
-    // hand skeleton connections (23 per hand)
-    I32Vec4 segmentStartX[SEGMENT_VEC4_COUNT], segmentStartY[SEGMENT_VEC4_COUNT];
-    I32Vec4 segmentEndX[SEGMENT_VEC4_COUNT], segmentEndY[SEGMENT_VEC4_COUNT];
-    I32Vec4 segmentPrevStartX[SEGMENT_VEC4_COUNT], segmentPrevStartY[SEGMENT_VEC4_COUNT];
-    I32Vec4 segmentPrevEndX[SEGMENT_VEC4_COUNT], segmentPrevEndY[SEGMENT_VEC4_COUNT];
-    F32Vec4 segmentStartRadius[SEGMENT_VEC4_COUNT], segmentEndRadius[SEGMENT_VEC4_COUNT];
-    F32Vec4 segmentPrevStartRadius[SEGMENT_VEC4_COUNT], segmentPrevEndRadius[SEGMENT_VEC4_COUNT];
-    I32Vec4 segmentPresent[SEGMENT_VEC4_COUNT];
-    I32Vec4 segmentWasPresent[SEGMENT_VEC4_COUNT];
-    int numSegments;
-    int inputMode;
-    int numPresentSegments;
     float momentumLowMotionScale;
     float momentumLowMotionSoftCeilingMul;
-    int _padEnd;
+    int clearDensityOnVacate;
+    int _pad2;
 };
 static_assert(sizeof(SimParams) % 16 == 0, "SimParams invalid alignment");
+
+// Input-pass storage buffer payloads (must match compute_input.wgsl)
+constexpr uint32_t CIRCLE_FLAG_PRESENT = 1u;
+constexpr uint32_t CIRCLE_FLAG_WAS_PRESENT = 2u;
+
+struct alignas(8) CircleGPU {
+    float posX, posY;
+    float prevPosX, prevPosY;
+    float velX, velY;
+    float radius;
+    uint32_t flags;
+};
+static_assert(sizeof(CircleGPU) == 32, "CircleGPU must match WGSL layout");
+
+struct alignas(8) SegmentGPU {
+    float startX, startY;
+    float endX, endY;
+    float startVelX, startVelY;
+    float endVelX, endVelY;
+    float startRadius, endRadius;
+    float cullRadiusSq;
+    float _pad;
+};
+static_assert(sizeof(SegmentGPU) == 48, "SegmentGPU must match WGSL layout");
 
 // ring buffer histogram slots
 enum HistogramSlotState {
@@ -179,7 +160,6 @@ private:
     DECLARE_TEXTURE_AND_VIEW(pressure)
     DECLARE_TEXTURE_AND_VIEW(density)
     DECLARE_TEXTURE_AND_VIEW(solid)
-    DECLARE_TEXTURE_AND_VIEW(solidStaging)
     DECLARE_TEXTURE_AND_VIEW(ink)
     DECLARE_TEXTURE_AND_VIEW(divergence)
     DECLARE_TEXTURE_AND_VIEW(curl)
@@ -187,11 +167,14 @@ private:
     DECLARE_TEXTURE_AND_VIEW(newDensity)
     DECLARE_TEXTURE_AND_VIEW(newInk)
     DECLARE_TEXTURE_AND_VIEW(newPressure)
+    DECLARE_TEXTURE_AND_VIEW(newSolid)
 
     // pipeline resources
     DECLARE_PIPELINE_RESOURCES(divergence)
     DECLARE_PIPELINE_RESOURCES(jacobi)
     DECLARE_PIPELINE_RESOURCES(jacobiPingPong)
+    DECLARE_PIPELINE_RESOURCES(gs)
+    WGPUComputePipeline gsBlackPipeline = nullptr;
     DECLARE_PIPELINE_RESOURCES(velocityUpdate)
     DECLARE_PIPELINE_RESOURCES(extrapolate)
     DECLARE_PIPELINE_RESOURCES(advectVelocity)
@@ -200,13 +183,18 @@ private:
     DECLARE_PIPELINE_RESOURCES(boundary)
     DECLARE_PIPELINE_RESOURCES(vorticityCompute)
     DECLARE_PIPELINE_RESOURCES(vorticityApply)
-    DECLARE_PIPELINE_RESOURCES(circle)
-    DECLARE_PIPELINE_RESOURCES(lineSegment)
+    DECLARE_PIPELINE_RESOURCES(input)
     DECLARE_PIPELINE_RESOURCES(pressureMinMax)
     DECLARE_PIPELINE_RESOURCES(histogramBins)
 
+    // input-pass storage buffers (circles + skeleton segments)
+    WGPUBuffer circleBuffer = nullptr;
+    WGPUBuffer segmentBuffer = nullptr;
+
     // updated with SimParams
     void updateUniformBufferSim();
+    // packs the compacted circle/segment payloads, returns how many of each were uploaded
+    void uploadInputBuffers(int& circleCount, int& segmentCount);
 
     // compute dispatch
     void dispatchComputePass(WGPUCommandEncoder encoder, WGPUComputePipeline pipeline, WGPUBindGroup bindGroup);
@@ -215,8 +203,7 @@ private:
     void dispatchAdvect(WGPUCommandEncoder encoder);
     void dispatchBoundaryConditions(WGPUCommandEncoder encoder);
     void dispatchVorticity(WGPUCommandEncoder encoder);
-    void dispatchCircle(WGPUCommandEncoder encoder);
-    void dispatchLineSegments(WGPUCommandEncoder encoder);
+    void dispatchInput(WGPUCommandEncoder encoder);
     void dispatchPressureMinMax(int slotIndex);
     void dispatchHistogramBins(int slotIndex);
     void dispatchHistogramCompute(const struct HistogramDispatchDesc& desc); // async helper
@@ -244,7 +231,7 @@ private:
     WGPUBindGroupDescriptor createBindGroupDescriptor(int count, WGPUBindGroupEntry* entries, WGPUBindGroupLayout layout);
     WGPUComputePipeline createComputePipeline(const char* shaderFile, const char* entryPoint, WGPUPipelineLayout layout);
     WGPUBindGroupLayoutEntry createStorageTextureLayoutEntry(int binding, WGPUStorageTextureAccess access, WGPUTextureFormat format);
-    WGPUBindGroupLayoutEntry createStorageBufferLayoutEntry(int binding, size_t minSize);
+    WGPUBindGroupLayoutEntry createStorageBufferLayoutEntry(int binding, size_t minSize, bool readOnly = false);
     WGPUBindGroupEntry createStorageBufferBindGroupEntry(int binding, WGPUBuffer buffer, size_t size);
 
     // gpu resource initialization boilerplate

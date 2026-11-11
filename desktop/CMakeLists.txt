@@ -6,7 +6,22 @@ project(katara)
 # https://eliemichel.github.io/LearnWebGPU/appendices/using-sdl.html
 find_package(SDL2 REQUIRED)
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(SDL2_IMAGE REQUIRED SDL2_image)
+pkg_check_modules(SDL2_IMAGE REQUIRED IMPORTED_TARGET SDL2_image)
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    find_program(HOMEBREW_EXECUTABLE brew)
+    if(HOMEBREW_EXECUTABLE)
+        execute_process(
+            COMMAND "${HOMEBREW_EXECUTABLE}" --prefix libomp
+            OUTPUT_VARIABLE HOMEBREW_LIBOMP_PREFIX
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+            RESULT_VARIABLE HOMEBREW_LIBOMP_RESULT
+        )
+        if(HOMEBREW_LIBOMP_RESULT EQUAL 0 AND IS_DIRECTORY "${HOMEBREW_LIBOMP_PREFIX}")
+            list(APPEND CMAKE_PREFIX_PATH "${HOMEBREW_LIBOMP_PREFIX}")
+        endif()
+    endif()
+endif()
 find_package(OpenMP REQUIRED)
 
 # use dawn as webgpu backend
@@ -27,14 +42,13 @@ set(SOURCES
     ../sim_cpu.cpp
     ../config.cpp
     ../layout.cpp
-    ../shader_bundle.cpp
+    ../render_views.cpp
 )
 
 add_executable(katara ${SOURCES})
 
-target_link_libraries(katara PRIVATE SDL2::SDL2 ${SDL2_IMAGE_LIBRARIES} webgpu sdl2webgpu OpenMP::OpenMP_CXX)
-target_include_directories(katara PRIVATE ${SDL2_IMAGE_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_compile_options(katara PRIVATE ${SDL2_IMAGE_CFLAGS_OTHER})
+target_link_libraries(katara PRIVATE SDL2::SDL2 PkgConfig::SDL2_IMAGE webgpu sdl2webgpu OpenMP::OpenMP_CXX)
+target_include_directories(katara PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 target_copy_webgpu_binaries(katara)
 
@@ -61,14 +75,11 @@ file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/../views DESTINATION ${CMAKE_CURRENT_BINAR
 file(GLOB SHADER_FILES "${CMAKE_CURRENT_SOURCE_DIR}/../*.wgsl")
 foreach(SHADER ${SHADER_FILES})
     get_filename_component(SHADER_NAME ${SHADER} NAME)
-    if(NOT SHADER_NAME STREQUAL "compute_circle_fingertip.wgsl")
+    if(NOT SHADER_NAME STREQUAL "fragment.wgsl"
+       AND NOT SHADER_NAME STREQUAL "fragment_uniform.wgsl")
         configure_file(${SHADER} ${CMAKE_CURRENT_BINARY_DIR}/${SHADER_NAME} COPYONLY)
     endif()
 endforeach()
-configure_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/../compute_circle_fingertip.wgsl
-    ${CMAKE_CURRENT_BINARY_DIR}/compute_circle.wgsl
-    COPYONLY)
 
 # modular fragment shader files
 set(MODULAR_FRAGMENT_FILES

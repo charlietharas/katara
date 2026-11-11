@@ -20,6 +20,6 @@ struct HistogramData {
 float computeShannonEntropy(const std::vector<int>& bins);
 void computeHistograms(const ISimulator& simulator, HistogramData& data);
 
-} // namespace RenderHistogram
+}
 
 #endif

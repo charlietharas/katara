@@ -101,6 +101,7 @@ bool Simulator::rebuildGridFromConfig(const Config& config) {
         mouseCircleVelX = 0.0f;
         mouseCircleVelY = 0.0f;
         isMouseDragging = false;
+        mouseDragNeedsResync = false;
     }
 
     numCircles = 0;
@@ -257,45 +258,9 @@ void Simulator::updateCircles(const FingertipData* fingertips, int count) {
     numCircles = actualCount;
 
     for (int i = 0; i < actualCount; i++) {
-        CircleState& circle = circles[i];
-        circle.prevX = circle.x;
-        circle.prevY = circle.y;
-
-        if (fingertips[i].present <= 0.5f) {
-            circle.present = false;
-            circle.x = 0;
-            circle.y = 0;
-            circle.smoothedX = 0.0f;
-            circle.smoothedY = 0.0f;
-            circle.velX = 0.0f;
-            circle.velY = 0.0f;
-        } else {
-            int newGridX = static_cast<int>((1.0f - fingertips[i].x) * gridX);
-            int newGridY = static_cast<int>((1.0f - fingertips[i].y) * gridY);
-            newGridX = std::max(baseCircleRadius, std::min(newGridX, gridX - baseCircleRadius - 1));
-            newGridY = std::max(baseCircleRadius, std::min(newGridY, gridY - baseCircleRadius - 1));
-
-            float handSpeed = 0.0f;
-            if (circle.wasPresent) {
-                float dx = static_cast<float>(newGridX) - circle.smoothedX;
-                float dy = static_cast<float>(newGridY) - circle.smoothedY;
-                handSpeed = std::sqrt(dx * dx + dy * dy) / timestep;
-            }
-
-            applyHandSmoothing(newGridX, newGridY, circle.smoothedX, circle.smoothedY,
-                               circle.x, circle.y, circle.wasPresent,
-                               config->simulation.circle, timestep);
-
-            circle.z = fingertips[i].z;
-            circle.scaledRadius = scaleRadiusByZ(fingertips[i].z);
-            circle.present = true;
-            circle.wasPresent = true;
-
-            float instantVelX = (circle.x - circle.prevX) / timestep;
-            float instantVelY = (circle.y - circle.prevY) / timestep;
-            applyCircleVelocitySmoothing(instantVelX, instantVelY, circle.velX, circle.velY,
-                                         handSpeed, config->simulation.circle);
-        }
+        updateCircleFromFingertip(
+            circles[i], fingertips[i], gridX, gridY, baseCircleRadius,
+            config->simulation.circle, timestep);
     }
 
     for (int i = actualCount; i < HandTracking::MAX_CIRCLES; i++) {
@@ -328,6 +293,188 @@ void Simulator::clearCircleArea(int prevX, int prevY, int radius) {
                     y[idx(i, j)] = 0.0f;
                 }
             }
+        }
+    }
+}
+
+float Simulator::refillDensityFromNeighbors(int i, int j, float fallback) {
+    float sum = 0.0f;
+    int count = 0;
+    const int offsets[4][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+    const bool useSegments = numPresentSegments > 0;
+    for (int n = 0; n < 4; n++) {
+        int ni = i + offsets[n][0];
+        int nj = j + offsets[n][1];
+        if (ni <= 0 || nj <= 0 || ni >= gridX - 1 || nj >= gridY - 1) continue;
+
+        bool neighborSolid = false;
+        if (useSegments) {
+            for (int sIdx = 0; sIdx < numSegments; sIdx++) {
+                const LineSegment& seg = segments[sIdx];
+                if (!seg.present) continue;
+                float tFrac = 0.0f;
+                if (segmentHit(ni, nj, seg.startX, seg.startY, seg.startRadius,
+                               seg.endX, seg.endY, seg.endRadius, tFrac)) {
+                    neighborSolid = true;
+                    break;
+                }
+            }
+        } else {
+            for (int c = 0; c < HandTracking::MAX_CIRCLES; c++) {
+                const CircleState& circle = circles[c];
+                if (!circle.present) continue;
+                float dx = (ni + 0.5f) - circle.x;
+                float dy = (nj + 0.5f) - circle.y;
+                if (sqrt(dx * dx + dy * dy) <= circle.scaledRadius) {
+                    neighborSolid = true;
+                    break;
+                }
+            }
+        }
+        if (neighborSolid) continue;
+
+        sum += d[idx(ni, nj)];
+        count++;
+    }
+    if (count > 0) return sum / static_cast<float>(count);
+    return fallback;
+}
+
+void Simulator::applyVacatedDensity(int i, int j) {
+    if (config->simulation.circle.clearDensityOnVacate) {
+        d[idx(i, j)] = 1.0f;
+    } else {
+        d[idx(i, j)] = refillDensityFromNeighbors(i, j, d[idx(i, j)]);
+    }
+}
+
+bool Simulator::segmentHit(int px, int py, int x1, int y1, float r1, int x2, int y2, float r2, float& tFrac) {
+    float dx = static_cast<float>(x2 - x1);
+    float dy = static_cast<float>(y2 - y1);
+    float length = sqrt(dx * dx + dy * dy);
+
+    if (length < 0.001f) {
+        float dist = sqrt(static_cast<float>((px - x1) * (px - x1) + (py - y1) * (py - y1)));
+        tFrac = 0.0f;
+        return dist <= r1;
+    }
+
+    float nx = dx / length;
+    float ny = dy / length;
+    float tx = static_cast<float>(px - x1);
+    float ty = static_cast<float>(py - y1);
+    float t = tx * nx + ty * ny;
+    t = std::max(0.0f, std::min(length, t));
+    float cx = x1 + t * nx;
+    float cy = y1 + t * ny;
+    float radius = r1 + (r2 - r1) * (t / length);
+    float dist = sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy));
+    tFrac = t / length;
+    return dist <= radius;
+}
+
+bool Simulator::isPointNearSegment(int px, int py, int x1, int y1, float r1, int x2, int y2, float r2) {
+    float tFrac = 0.0f;
+    return segmentHit(px, py, x1, y1, r1, x2, y2, r2, tFrac);
+}
+
+void Simulator::applyLineSegmentSolidFieldFullGrid() {
+    const std::vector<float> oldS = s;
+
+    for (int i = 1; i < gridX - 1; i++) {
+        for (int j = 1; j < gridY - 1; j++) {
+            bool isInAnySegment = false;
+            float solidVelX = 0.0f;
+            float solidVelY = 0.0f;
+
+            for (int sIdx = 0; sIdx < numSegments; sIdx++) {
+                const LineSegment& seg = segments[sIdx];
+                if (!seg.present) continue;
+
+                float tFrac = 0.0f;
+                bool isInNew = segmentHit(
+                    i, j,
+                    seg.startX, seg.startY, seg.startRadius,
+                    seg.endX, seg.endY, seg.endRadius, tFrac);
+
+                if (isInNew) {
+                    isInAnySegment = true;
+                    solidVelX = seg.startVelX + (seg.endVelX - seg.startVelX) * tFrac;
+                    solidVelY = seg.startVelY + (seg.endVelY - seg.startVelY) * tFrac;
+                }
+            }
+
+            if (isInAnySegment) {
+                s[idx(i, j)] = 0.0f;
+                x[idx(i, j)] = solidVelX * cellSize;
+                y[idx(i, j)] = solidVelY * cellSize;
+            } else {
+                s[idx(i, j)] = 1.0f;
+            }
+        }
+    }
+
+    for (int i = 1; i < gridX - 1; i++) {
+        for (int j = 1; j < gridY - 1; j++) {
+            if (!(oldS[idx(i, j)] == 0.0f && s[idx(i, j)] != 0.0f)) continue;
+            applyVacatedDensity(i, j);
+            x[idx(i, j)] = 0.0f;
+            y[idx(i, j)] = 0.0f;
+        }
+    }
+}
+
+void Simulator::applyCircleSolids() {
+    const bool jointsOnly = numPresentSegments == 0;
+    std::vector<float> oldS;
+    if (jointsOnly) {
+        oldS = s;
+        for (int i = 1; i < gridX - 1; i++) {
+            for (int j = 1; j < gridY - 1; j++) {
+                s[idx(i, j)] = 1.0f;
+            }
+        }
+    }
+
+    for (int i = 1; i < gridX - 1; i++) {
+        for (int j = 1; j < gridY - 1; j++) {
+            bool isInAnyCircle = false;
+            float solidVelX = 0.0f;
+            float solidVelY = 0.0f;
+
+            for (int c = 0; c < HandTracking::MAX_CIRCLES; c++) {
+                const CircleState& circle = circles[c];
+                if (!circle.present) continue;
+
+                float dx = (i + 0.5f) - circle.x;
+                float dy = (j + 0.5f) - circle.y;
+                float dist = sqrt(dx * dx + dy * dy);
+                if (dist <= circle.scaledRadius) {
+                    isInAnyCircle = true;
+                    solidVelX = circle.velX;
+                    solidVelY = circle.velY;
+                }
+            }
+
+            if (isInAnyCircle) {
+                s[idx(i, j)] = 0.0f;
+                x[idx(i, j)] = solidVelX * cellSize;
+                y[idx(i, j)] = solidVelY * cellSize;
+            } else if (jointsOnly) {
+                s[idx(i, j)] = 1.0f;
+            }
+        }
+    }
+
+    // Full mode: segment pass already handled vacated density.
+    if (!jointsOnly) return;
+
+    for (int i = 1; i < gridX - 1; i++) {
+        for (int j = 1; j < gridY - 1; j++) {
+            if (!(oldS[idx(i, j)] == 0.0f && s[idx(i, j)] != 0.0f)) continue;
+            applyVacatedDensity(i, j);
+            x[idx(i, j)] = 0.0f;
+            y[idx(i, j)] = 0.0f;
         }
     }
 }
@@ -378,12 +525,20 @@ void Simulator::updateLineSegments(const FingertipData* landmarks, int count) {
                 seg.endY = circles[endIdx].y;
                 seg.startRadius = scaleRadiusByZ(p1.z);
                 seg.endRadius = scaleRadiusByZ(p2.z);
+                seg.startVelX = circles[startIdx].velX;
+                seg.startVelY = circles[startIdx].velY;
+                seg.endVelX = circles[endIdx].velX;
+                seg.endVelY = circles[endIdx].velY;
                 numPresentSegments++;
             } else if (seg.wasPresent) {
                 seg.startX = 0;
                 seg.startY = 0;
                 seg.endX = 0;
                 seg.endY = 0;
+                seg.startVelX = 0.0f;
+                seg.startVelY = 0.0f;
+                seg.endVelX = 0.0f;
+                seg.endVelY = 0.0f;
             }
 
             numSegments++;
@@ -399,116 +554,10 @@ void Simulator::updateLineSegments(const FingertipData* landmarks, int count) {
         segments[i].endY = 0;
         segments[i].startRadius = 0.0f;
         segments[i].endRadius = 0.0f;
-    }
-}
-
-bool Simulator::isPointNearSegment(int px, int py, int x1, int y1, float r1, int x2, int y2, float r2) {
-    // vector from p1 to p2
-    float dx = static_cast<float>(x2 - x1);
-    float dy = static_cast<float>(y2 - y1);
-    float length = sqrt(dx * dx + dy * dy);
-
-    if (length < 0.001f) {
-        // point
-        float dist = sqrt(static_cast<float>((px - x1) * (px - x1) + (py - y1) * (py - y1)));
-        return dist <= r1;
-    }
-
-    // normalized direction
-    float nx = dx / length;
-    float ny = dy / length;
-
-    // vector from p1 to test point
-    float tx = static_cast<float>(px - x1);
-    float ty = static_cast<float>(py - y1);
-
-    // project onto line
-    float t = tx * nx + ty * ny;
-    t = std::max(0.0f, std::min(length, t));
-
-    // closest point on segment
-    float cx = x1 + t * nx;
-    float cy = y1 + t * ny;
-
-    // interpolate radius at closest point
-    float radius = r1 + (r2 - r1) * (t / length);
-
-    // distance from closest point
-    float dist = sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy));
-
-    return dist <= radius;
-}
-
-void Simulator::applyLineSegmentSolidFieldFullGrid() {
-    for (int i = 1; i < gridX - 1; i++) {
-        for (int j = 1; j < gridY - 1; j++) {
-            bool isInAnySegment = false;
-            bool wasInAnyPrevSegment = false;
-
-            for (int sIdx = 0; sIdx < numSegments; sIdx++) {
-                const LineSegment& seg = segments[sIdx];
-                if (!seg.present) continue;
-
-                bool wasInPrev = isPointNearSegment(
-                    i, j,
-                    seg.prevStartX, seg.prevStartY, seg.prevStartRadius,
-                    seg.prevEndX, seg.prevEndY, seg.prevEndRadius);
-                bool isInNew = isPointNearSegment(
-                    i, j,
-                    seg.startX, seg.startY, seg.startRadius,
-                    seg.endX, seg.endY, seg.endRadius);
-
-                if (wasInPrev && !isInNew) {
-                    d[idx(i, j)] = 1.0f;
-                }
-                if (wasInPrev) {
-                    wasInAnyPrevSegment = true;
-                }
-                if (isInNew) {
-                    isInAnySegment = true;
-                }
-            }
-
-            if (wasInAnyPrevSegment) {
-                x[idx(i, j)] = 0.0f;
-                y[idx(i, j)] = 0.0f;
-            }
-            if (isInAnySegment) {
-                x[idx(i, j)] = 0.0f;
-                y[idx(i, j)] = 0.0f;
-                s[idx(i, j)] = 0.0f;
-            } else {
-                s[idx(i, j)] = 1.0f;
-            }
-        }
-    }
-}
-
-void Simulator::applyCircleSolids() {
-    // Line-segment mode owns the full interior solid field; circles only update local footprints.
-    if (numPresentSegments == 0) {
-        for (int i = 1; i < gridX - 1; i++) {
-            for (int j = 1; j < gridY - 1; j++) {
-                s[idx(i, j)] = 1.0f;
-            }
-        }
-    }
-
-    for (int c = 0; c < numCircles; c++) {
-        const CircleState& circle = circles[c];
-        if (circle.present) {
-            updateCircleAreas(circle.prevX, circle.prevY, circle.x, circle.y,
-                               circle.scaledRadius, circle.scaledRadius);
-        } else if (circle.wasPresent) {
-            clearCircleArea(circle.prevX, circle.prevY, circle.scaledRadius);
-        }
-    }
-
-    for (int c = numCircles; c < HandTracking::MAX_CIRCLES; c++) {
-        const CircleState& circle = circles[c];
-        if (circle.wasPresent) {
-            clearCircleArea(circle.prevX, circle.prevY, circle.scaledRadius);
-        }
+        segments[i].startVelX = 0.0f;
+        segments[i].startVelY = 0.0f;
+        segments[i].endVelX = 0.0f;
+        segments[i].endVelY = 0.0f;
     }
 }
 
@@ -523,11 +572,11 @@ void Simulator::applyInput() {
     }
 
     if (isMouseInput(g_config.inputMode)) {
-        // Pull mode: momentum only, never carve solids (matches compute_circle.wgsl)
+        // Pull mode: momentum only, never carve solids (matches compute_input.wgsl)
         if (isMouseDragging) {
             clearMousePullFootprint();
         }
-    } else if (numCircles > 0) {
+    } else {
         applyCircleSolids();
     }
 
@@ -880,35 +929,33 @@ void Simulator::enforceBoundaryConditions() {
         for (int j = 0; j < gridY; j++) {
             if (i == 0) {
                 if (leftEdge) x[idx(i, j)] = 0.0f;
-                else if (gridX > 1) x[idx(i, j)] = x[idx(i + 1, j)];
+                else if (gridX > 1) x[idx(i, j)] = std::min(x[idx(i + 1, j)], 0.0f);
             }
             if (i == gridX - 1) {
                 if (rightEdge) x[idx(i, j)] = 0.0f;
-                else if (gridX > 1) x[idx(i, j)] = x[idx(i - 1, j)];
+                else if (gridX > 1) x[idx(i, j)] = std::max(x[idx(i - 1, j)], 0.0f);
             }
             if (j == 0) {
                 if (bottomEdge) y[idx(i, j)] = 0.0f;
-                else if (gridY > 1) y[idx(i, j)] = y[idx(i, j + 1)];
+                else if (gridY > 1) y[idx(i, j)] = std::min(y[idx(i, j + 1)], 0.0f);
             }
             if (j == gridY - 1) {
                 if (topEdge) y[idx(i, j)] = 0.0f;
-                else if (gridY > 1) y[idx(i, j)] = y[idx(i, j - 1)];
+                else if (gridY > 1) y[idx(i, j)] = std::max(y[idx(i, j - 1)], 0.0f);
             }
         }
     }
 
-    // Zero velocity samples on MAC faces shared with solid neighbors.
+    // Moving walls: solid cells keep obstacle body velocity. Fluid cells copy the
+    // solid neighbor's body velocity onto shared MAC faces.
     for (int i = 0; i < gridX; i++) {
         for (int j = 0; j < gridY; j++) {
-            if (s[idx(i, j)] == 0.0f) {
-                x[idx(i, j)] = 0.0f;
-                y[idx(i, j)] = 0.0f;
-            } else {
+            if (s[idx(i, j)] != 0.0f) {
                 if (i > 0 && s[idx(i - 1, j)] == 0.0f) {
-                    x[idx(i, j)] = 0.0f;
+                    x[idx(i, j)] = x[idx(i - 1, j)];
                 }
                 if (j > 0 && s[idx(i, j - 1)] == 0.0f) {
-                    y[idx(i, j)] = 0.0f;
+                    y[idx(i, j)] = y[idx(i, j - 1)];
                 }
             }
         }
@@ -1051,8 +1098,8 @@ void Simulator::circleMomentumTransfer() {
 
                             float densityFactor = d[idx(i, j)]; // weight velocity imparted by local density
 
-                            float momentumX = circle.velX * timestep * momentumTransferStrength * falloff * densityFactor * impulseScale;
-                            float momentumY = circle.velY * timestep * momentumTransferStrength * falloff * densityFactor * impulseScale;
+                            float momentumX = circle.velX * timestep * momentumTransferStrength * falloff * densityFactor * impulseScale * MOVING_WALL_MOMENTUM_SCALE;
+                            float momentumY = circle.velY * timestep * momentumTransferStrength * falloff * densityFactor * impulseScale * MOVING_WALL_MOMENTUM_SCALE;
 
                             x[idx(i, j)] += momentumX;
                             y[idx(i, j)] += momentumY;
@@ -1095,12 +1142,10 @@ void Simulator::updateCircleAreas(int prevX, int prevY, int newX, int newY,
                 bool isInNewCircle = distNew <= newRadius;
 
                 if (wasInPrevCircle && !isInNewCircle) {
-                    s[idx(i, j)] = 1.0f; // make it fluid again
-                    d[idx(i, j)] = 1.0f; // reset to default density
-                    x[idx(i, j)] = 0.0f; // clear velocity
-                    y[idx(i, j)] = 0.0f;
+                    s[idx(i, j)] = 1.0f;
+                    applyVacatedDensity(i, j);
                 } else if (!wasInPrevCircle && isInNewCircle) {
-                    s[idx(i, j)] = 0.0f; // make it solid
+                    s[idx(i, j)] = 0.0f;
                     // don't touch density -- this fixed the wisp !!!
                 }
             }
@@ -1166,6 +1211,7 @@ void Simulator::resetFluidState(bool clearInk) {
     mouseCircleVelX = 0.0f;
     mouseCircleVelY = 0.0f;
     isMouseDragging = false;
+    mouseDragNeedsResync = false;
 
     // Reset hand circles and segments
     numCircles = 0;

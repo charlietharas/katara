@@ -1,9 +1,10 @@
 struct SimParams {
     gridX: i32,
     gridY: i32,
+    overrelaxationCoefficient: f32,
+    timestep: f32,
     cellSize: f32,
     halfCellSize: f32,
-    timestep: f32,
 };
 
 @group(0) @binding(0) var<uniform> params: SimParams;
@@ -43,8 +44,12 @@ fn advectDensity(@builtin(global_invocation_id) id: vec3<u32>) {
     let i = i32(id.x);
     let j = i32(id.y);
 
-    if (i < 1 || i >= params.gridX || j < 1 || j >= params.gridY) {
-        textureStore(newDensityTexture, vec2<i32>(i, j), vec4<f32>(0.0));
+    // match CPU interior loop; avoid OOB velRight/velTop at gridX-1/gridY-1
+    if (i < 1 || i >= params.gridX - 1 || j < 1 || j >= params.gridY - 1) {
+        if (i < params.gridX && j < params.gridY) {
+            textureStore(newDensityTexture, vec2<i32>(i, j),
+                textureLoad(densityTexture, vec2<i32>(i, j)));
+        }
         return;
     }
 
