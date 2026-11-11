@@ -128,6 +128,11 @@ public:
     WGPUDevice device = nullptr;
     WGPUQueue queue = nullptr;
 
+    static bool& annotateFragmentBundleErrors() {
+        static bool enabled = false;
+        return enabled;
+    }
+
     // load code from shaders
     WGPUShaderModule createShaderModuleFromSource(const std::string& shaderSource) {
         if (!device || shaderSource.empty()) {

@@ -43,6 +43,10 @@ struct LineSegment {
     float endRadius;
     float prevStartRadius;
     float prevEndRadius;
+    float startVelX = 0.0f;
+    float startVelY = 0.0f;
+    float endVelX = 0.0f;
+    float endVelY = 0.0f;
     bool present;
     bool wasPresent;
 };

@@ -31,7 +31,7 @@ std::unique_ptr<Renderer> createRenderer(SDL_Window* window, const Config& confi
 }
 
 std::unique_ptr<ISimulator> createSimulator(const Config& config) {
-    if (config.pipeline == PipelineType::GPU) {
+    if (isGpuPipeline(config.pipeline)) {
         return std::make_unique<GPUSimulator>(config);
     }
     return std::make_unique<Simulator>(config);
@@ -39,8 +39,6 @@ std::unique_ptr<ISimulator> createSimulator(const Config& config) {
 
 
 // viewport helpers
-constexpr int NUM_VIEWPORTS = 12;
-
 void setViewportTargetByIndex(int index, int target) {
     const std::string name = "viewport_" + std::to_string(index + 1);
     auto it = g_config.layout.components.find(name);
@@ -51,17 +49,24 @@ void setViewportTargetByIndex(int index, int target) {
     }
 }
 
-void cycleViewportTargetByNumber(int number, bool forward) {
+void cycleViewportTargetByNumber(Renderer* renderer, int number, bool forward) {
     const std::string name = "viewport_" + std::to_string(number);
     auto it = g_config.layout.components.find(name);
     if (it == g_config.layout.components.end()) {
         return;
     }
+    if (!renderer) {
+        return;
+    }
+    const int count = renderer->getViewTargetCount();
+    if (count <= 0) {
+        return;
+    }
     int& target = it->second.viewportTarget;
     if (forward) {
-        target = (target + 1) % NUM_VIEWPORTS;
+        target = (target + 1) % count;
     } else {
-        target = (target - 1 + NUM_VIEWPORTS) % NUM_VIEWPORTS;
+        target = (target - 1 + count) % count;
     }
 }
 
@@ -89,7 +94,7 @@ struct LoadedImage {
     SDL_Surface* surface = nullptr;
     SDL_Surface* converted = nullptr;
     ImageData* imageData = nullptr;
-    float aspectRatio = DEFAULT_PLOT_ASPECT_RATIO;
+    float aspectRatio = 1.5f;
 
     void cleanup() {
         delete imageData;
@@ -188,8 +193,10 @@ extern "C" {
             g_simulator->mouseCircleVelX = 0.0f;
             g_simulator->mouseCircleVelY = 0.0f;
             g_simulator->isMouseDragging = false;
+            g_simulator->mouseDragNeedsResync = false;
         } else if (!isMouse) {
             g_simulator->isMouseDragging = false;
+            g_simulator->mouseDragNeedsResync = false;
         }
     }
 
@@ -275,11 +282,15 @@ extern "C" {
     EMSCRIPTEN_KEEPALIVE
     void onMouseDown(int gridX, int gridY) {
         if (g_simulator && isMouseInput(g_config.inputMode)) {
+            int r = g_simulator->mouseCircleRadius;
+            int newX = std::max(r, std::min(gridX, g_simulator->gridX - r - 1));
+            int newY = std::max(r, std::min(gridY, g_simulator->gridY - r - 1));
             g_simulator->isMouseDragging = true;
-            g_simulator->mouseCircleX = gridX;
-            g_simulator->mouseCircleY = gridY;
-            g_simulator->mousePrevCircleX = gridX;
-            g_simulator->mousePrevCircleY = gridY;
+            g_simulator->mouseDragNeedsResync = false;
+            g_simulator->mouseCircleX = newX;
+            g_simulator->mouseCircleY = newY;
+            g_simulator->mousePrevCircleX = newX;
+            g_simulator->mousePrevCircleY = newY;
             g_simulator->mouseCircleVelX = 0.0f;
             g_simulator->mouseCircleVelY = 0.0f;
             g_simulator->clearMousePullFootprint();
@@ -293,6 +304,7 @@ extern "C" {
                 g_simulator->clearMousePullFootprint();
             }
             g_simulator->isMouseDragging = false;
+            g_simulator->mouseDragNeedsResync = false;
             g_simulator->mouseCircleVelX = 0.0f;
             g_simulator->mouseCircleVelY = 0.0f;
             g_simulator->mousePrevCircleX = g_simulator->mouseCircleX;
@@ -301,14 +313,16 @@ extern "C" {
     }
 
     EMSCRIPTEN_KEEPALIVE
+    void onMouseDragLost() {
+        if (g_simulator && isMouseInput(g_config.inputMode)) {
+            g_simulator->onMouseDragLost();
+        }
+    }
+
+    EMSCRIPTEN_KEEPALIVE
     void onMouseDrag(int gridX, int gridY) {
         if (g_simulator && isMouseInput(g_config.inputMode) && g_simulator->isMouseDragging) {
-            int r = g_simulator->mouseCircleRadius;
-            int newX = std::max(r, std::min(gridX, g_simulator->gridX - r - 1));
-            int newY = std::max(r, std::min(gridY, g_simulator->gridY - r - 1));
-            if (newX != g_simulator->mouseCircleX || newY != g_simulator->mouseCircleY) {
-                g_simulator->moveCircle(newX, newY);
-            }
+            g_simulator->onMouseDrag(gridX, gridY);
         }
     }
 
@@ -330,6 +344,57 @@ extern "C" {
             fputs(json.c_str(), f);
             fclose(f);
         }
+    }
+
+    EMSCRIPTEN_KEEPALIVE
+    const char* getLayoutPreviewJson(
+        const char* preset,
+        int canvasW,
+        int canvasH,
+        float inkAspectRatio,
+        float cameraAspectRatio,
+        const char* layoutOverridesJson
+    ) {
+        static std::string result;
+        if (!preset || canvasW <= 0 || canvasH <= 0) {
+            result = "{}";
+            return result.c_str();
+        }
+
+        const LayoutPixels savedPixels = g_layoutPixels;
+        LayoutConfig previewLayout = g_config.layout;
+        previewLayout.preset = preset;
+
+        if (layoutOverridesJson && layoutOverridesJson[0] != '\0') {
+            try {
+                const json overrides = json::parse(layoutOverridesJson);
+                if (overrides.contains("camerasEnabled")) {
+                    previewLayout.camerasEnabled = overrides["camerasEnabled"].get<bool>();
+                }
+                if (overrides.contains("components") && overrides["components"].is_object()) {
+                    for (auto& [key, val] : overrides["components"].items()) {
+                        auto it = previewLayout.components.find(key);
+                        if (it != previewLayout.components.end()
+                            && val.contains("histogramEnabled")) {
+                            it->second.histogramEnabled = val["histogramEnabled"].get<bool>();
+                        }
+                    }
+                }
+            } catch (const std::exception&) {
+            }
+        }
+
+        result = ConfigLoader::computeLayout(
+            previewLayout,
+            canvasW,
+            canvasH,
+            configUsesInkAspect(g_config),
+            inkAspectRatio,
+            cameraAspectRatio
+        );
+
+        g_layoutPixels = savedPixels;
+        return result.c_str();
     }
 
     // config and fluid
@@ -402,6 +467,19 @@ extern "C" {
     }
 
     EMSCRIPTEN_KEEPALIVE
+    void setViewportCameraBackground(int viewportIndex, int mode) {
+        std::string vpName = "viewport_" + std::to_string(viewportIndex + 1);
+        auto it = g_config.layout.components.find(vpName);
+        if (it != g_config.layout.components.end()) {
+            it->second.viewportCameraBackground =
+                (mode >= CAMERA_BACKGROUND_NONE && mode <= CAMERA_BACKGROUND_INVERTED)
+                    ? mode : CAMERA_BACKGROUND_NONE;
+        } else {
+            std::cerr << "ERR (camera) finding viewport " << vpName << " in config" << std::endl;
+        }
+    }
+
+    EMSCRIPTEN_KEEPALIVE
     void setViewportRotation(int viewportIndex, int rotation) {
         std::string vpName = "viewport_" + std::to_string(viewportIndex + 1);
         auto it = g_config.layout.components.find(vpName);
@@ -419,6 +497,22 @@ extern "C" {
             return duplicateShaderString("");
         }
         return duplicateShaderString(g_renderer->getViewSource(index));
+    }
+
+    EMSCRIPTEN_KEEPALIVE
+    char* getViewName(int index) {
+        if (!g_renderer) {
+            return duplicateShaderString("");
+        }
+        return duplicateShaderString(g_renderer->getViewName(index));
+    }
+
+    EMSCRIPTEN_KEEPALIVE
+    int getViewTargetCount() {
+        if (!g_renderer) {
+            return 0;
+        }
+        return g_renderer->getViewTargetCount();
     }
 
     EMSCRIPTEN_KEEPALIVE
@@ -476,7 +570,7 @@ static void initLayoutFromWindow(int w, int h, float inkAspect) {
         h,
         configUsesInkAspect(g_config),
         inkAspect,
-        DEFAULT_CAMERA_ASPECT_RATIO
+        4.0f / 3.0f
     );
 }
 
@@ -598,7 +692,7 @@ int main(int argc, char** argv) {
     }
     std::cout << "Renderer initialized" << std::endl;
 
-    if (config.pipeline == PipelineType::GPU) {
+    if (isGpuPipeline(config.pipeline)) {
         auto gpuSimulator = static_cast<GPUSimulator*>(simulator.get());
         gpuSimulator->device = renderer->device;
         gpuSimulator->queue = renderer->queue;
@@ -650,22 +744,22 @@ int main(int argc, char** argv) {
                     switch (event.key.keysym.sym) {
                         case SDLK_1:
                         case SDLK_KP_1: // 1
-                            cycleViewportTargetByNumber(1, forward);
+                            cycleViewportTargetByNumber(renderer.get(), 1, forward);
                             layoutChanged = true;
                             break;
                         case SDLK_2:
                         case SDLK_KP_2: // 2
-                            cycleViewportTargetByNumber(2, forward);
+                            cycleViewportTargetByNumber(renderer.get(), 2, forward);
                             layoutChanged = true;
                             break;
                         case SDLK_3:
                         case SDLK_KP_3: // 3
-                            cycleViewportTargetByNumber(3, forward);
+                            cycleViewportTargetByNumber(renderer.get(), 3, forward);
                             layoutChanged = true;
                             break;
                         case SDLK_4:
                         case SDLK_KP_4: // 4
-                            cycleViewportTargetByNumber(4, forward);
+                            cycleViewportTargetByNumber(renderer.get(), 4, forward);
                             layoutChanged = true;
                             break;
                         case SDLK_l: // L (lowercase)
@@ -692,6 +786,8 @@ int main(int argc, char** argv) {
                     auto coords = simulator->viewportAwareScreenToGrid(event.motion.x, event.motion.y, windowWidth, windowHeight);
                     if (coords.first >= 0) {
                         simulator->onMouseDrag(coords.first, coords.second);
+                    } else {
+                        simulator->onMouseDragLost();
                     }
                 }
             }

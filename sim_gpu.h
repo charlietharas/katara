@@ -1,10 +1,11 @@
-#ifndef GPU_SIMULATOR_H
-#define GPU_SIMULATOR_H
+#ifndef SIM_GPU_H
+#define SIM_GPU_H
 
+#include <cstdint>
 #include <webgpu/webgpu.h>
 #include "boilerplate.h"
-#include "isimulator.h"
-#include "sim.h"
+#include "sim_shared.h"
+#include "sim_cpu.h"
 #include "config.h"
 #include "circle_state.h"
 
@@ -13,49 +14,59 @@ struct MinMaxUniform {
 };
 
 // SIM PARAMS UNIFORM
+// Circle/segment payloads live in storage buffers (see CircleGPU/SegmentGPU) so this
+// stays small and every shader can declare just the prefix of fields it reads.
 struct alignas(16) SimParams {
     int gridX;
     int gridY;
+    float overrelaxationCoefficient;
+    float timestep;
     float cellSize;
     float halfCellSize;
-    float timestep;
-    float density;
-    float gravity;
-    float projectionIters;
     int windTunnelSide;
     int windTunnelStart;
     int windTunnelEnd;
     float windTunnelSpeed;
+    int edges;
+    float vorticity;
+    float vorticityLen;
+    int inputMode;
+    int numPresentSegments;
+    int numCircles;
+    int numSegments;
     float momentumTransferStrength;
     float momentumTransferRadius;
     float momentumTransferDeadZone;
-    float vorticity;
-    float vorticityLen;
-    // track 21 landmarks per hand (mouse mode uses index 0 only)
-    int circleX[HandTracking::MAX_CIRCLES], circleY[HandTracking::MAX_CIRCLES];
-    int prevCircleX[HandTracking::MAX_CIRCLES], prevCircleY[HandTracking::MAX_CIRCLES];
-    float circleZ[HandTracking::MAX_CIRCLES]; // we use this to scale radii by distance to wrist
-    int circleScaledRadius[HandTracking::MAX_CIRCLES]; // pre-scaled
-    int circlePresent[HandTracking::MAX_CIRCLES];
-    int circleWasPresent[HandTracking::MAX_CIRCLES];
-    float circleVelX[HandTracking::MAX_CIRCLES], circleVelY[HandTracking::MAX_CIRCLES];
-    int numCircles;
-    int baseCircleRadius; // base radius from config
-
-    // hand skeleton connections (23 per hand)
-    int segmentStartX[HandTracking::MAX_SEGMENTS], segmentStartY[HandTracking::MAX_SEGMENTS];
-    int segmentEndX[HandTracking::MAX_SEGMENTS], segmentEndY[HandTracking::MAX_SEGMENTS];
-    int segmentPrevStartX[HandTracking::MAX_SEGMENTS], segmentPrevStartY[HandTracking::MAX_SEGMENTS];
-    int segmentPrevEndX[HandTracking::MAX_SEGMENTS], segmentPrevEndY[HandTracking::MAX_SEGMENTS];
-    float segmentStartRadius[HandTracking::MAX_SEGMENTS], segmentEndRadius[HandTracking::MAX_SEGMENTS];
-    float segmentPrevStartRadius[HandTracking::MAX_SEGMENTS], segmentPrevEndRadius[HandTracking::MAX_SEGMENTS];
-    int segmentPresent[HandTracking::MAX_SEGMENTS];
-    int segmentWasPresent[HandTracking::MAX_SEGMENTS];
-    int numSegments;
-    int inputMode;
-    int pad1, pad2;
+    float momentumLowMotionScale;
+    float momentumLowMotionSoftCeilingMul;
+    int clearDensityOnVacate;
+    int _pad2;
 };
 static_assert(sizeof(SimParams) % 16 == 0, "SimParams invalid alignment");
+
+// Input-pass storage buffer payloads (must match compute_input.wgsl)
+constexpr uint32_t CIRCLE_FLAG_PRESENT = 1u;
+constexpr uint32_t CIRCLE_FLAG_WAS_PRESENT = 2u;
+
+struct alignas(8) CircleGPU {
+    float posX, posY;
+    float prevPosX, prevPosY;
+    float velX, velY;
+    float radius;
+    uint32_t flags;
+};
+static_assert(sizeof(CircleGPU) == 32, "CircleGPU must match WGSL layout");
+
+struct alignas(8) SegmentGPU {
+    float startX, startY;
+    float endX, endY;
+    float startVelX, startVelY;
+    float endVelX, endVelY;
+    float startRadius, endRadius;
+    float cullRadiusSq;
+    float _pad;
+};
+static_assert(sizeof(SegmentGPU) == 48, "SegmentGPU must match WGSL layout");
 
 // ring buffer histogram slots
 enum HistogramSlotState {
@@ -93,15 +104,12 @@ public:
     void update() override;
 
     // fields
-    // TODO LATER add shitty slow cpu callback (test: would this work with CPU/GPU rendering/sim?)
     CPU_SIM_GETTER(getVelocityX)
     CPU_SIM_GETTER(getVelocityY)
     CPU_SIM_GETTER(getPressure)
     CPU_SIM_GETTER(getDensity)
     CPU_SIM_GETTER(getSolid)
-    CPU_SIM_GETTER(getRedInk)
-    CPU_SIM_GETTER(getGreenInk)
-    CPU_SIM_GETTER(getBlueInk)
+    CPU_SIM_GETTER(getInk)
 
     // modes
     bool isUsingGPU() const override { return true; }
@@ -134,13 +142,11 @@ private:
     // workgroup size (initialized to ceil(gridDim / 16))
     uint32_t workgroupX = 0, workgroupY = 0;
 
-    int numCircles = 0;
     float momentumTransferStrength;
     float momentumTransferRadius;
-    float momentumTransferDeadZone;
 
     // histogram state
-    mutable HistogramSlot histogramSlots[HISTOGRAM_RING_SIZE];
+    mutable HistogramSlot histogramSlots[HISTOGRAM_RING_SIZE] = {};
     mutable int histogramWriteIndex = 0;
     mutable int histogramReadIndex = 0;
 
@@ -154,7 +160,6 @@ private:
     DECLARE_TEXTURE_AND_VIEW(pressure)
     DECLARE_TEXTURE_AND_VIEW(density)
     DECLARE_TEXTURE_AND_VIEW(solid)
-    DECLARE_TEXTURE_AND_VIEW(solidStaging)
     DECLARE_TEXTURE_AND_VIEW(ink)
     DECLARE_TEXTURE_AND_VIEW(divergence)
     DECLARE_TEXTURE_AND_VIEW(curl)
@@ -162,12 +167,14 @@ private:
     DECLARE_TEXTURE_AND_VIEW(newDensity)
     DECLARE_TEXTURE_AND_VIEW(newInk)
     DECLARE_TEXTURE_AND_VIEW(newPressure)
+    DECLARE_TEXTURE_AND_VIEW(newSolid)
 
     // pipeline resources
-    DECLARE_PIPELINE_RESOURCES(integrate)
     DECLARE_PIPELINE_RESOURCES(divergence)
     DECLARE_PIPELINE_RESOURCES(jacobi)
     DECLARE_PIPELINE_RESOURCES(jacobiPingPong)
+    DECLARE_PIPELINE_RESOURCES(gs)
+    WGPUComputePipeline gsBlackPipeline = nullptr;
     DECLARE_PIPELINE_RESOURCES(velocityUpdate)
     DECLARE_PIPELINE_RESOURCES(extrapolate)
     DECLARE_PIPELINE_RESOURCES(advectVelocity)
@@ -176,25 +183,27 @@ private:
     DECLARE_PIPELINE_RESOURCES(boundary)
     DECLARE_PIPELINE_RESOURCES(vorticityCompute)
     DECLARE_PIPELINE_RESOURCES(vorticityApply)
-    DECLARE_PIPELINE_RESOURCES(circle)
-    DECLARE_PIPELINE_RESOURCES(lineSegment)
+    DECLARE_PIPELINE_RESOURCES(input)
     DECLARE_PIPELINE_RESOURCES(pressureMinMax)
     DECLARE_PIPELINE_RESOURCES(histogramBins)
 
+    // input-pass storage buffers (circles + skeleton segments)
+    WGPUBuffer circleBuffer = nullptr;
+    WGPUBuffer segmentBuffer = nullptr;
+
     // updated with SimParams
-    void updateProjectionIterations();
     void updateUniformBufferSim();
+    // packs the compacted circle/segment payloads, returns how many of each were uploaded
+    void uploadInputBuffers(int& circleCount, int& segmentCount);
 
     // compute dispatch
     void dispatchComputePass(WGPUCommandEncoder encoder, WGPUComputePipeline pipeline, WGPUBindGroup bindGroup);
-    void dispatchIntegrate(WGPUCommandEncoder encoder);
     void dispatchProjection(WGPUCommandEncoder encoder);
     void dispatchExtrapolate(WGPUCommandEncoder encoder);
     void dispatchAdvect(WGPUCommandEncoder encoder);
     void dispatchBoundaryConditions(WGPUCommandEncoder encoder);
     void dispatchVorticity(WGPUCommandEncoder encoder);
-    void dispatchCircle(WGPUCommandEncoder encoder);
-    void dispatchLineSegments(WGPUCommandEncoder encoder);
+    void dispatchInput(WGPUCommandEncoder encoder);
     void dispatchPressureMinMax(int slotIndex);
     void dispatchHistogramBins(int slotIndex);
     void dispatchHistogramCompute(const struct HistogramDispatchDesc& desc); // async helper
@@ -222,12 +231,19 @@ private:
     WGPUBindGroupDescriptor createBindGroupDescriptor(int count, WGPUBindGroupEntry* entries, WGPUBindGroupLayout layout);
     WGPUComputePipeline createComputePipeline(const char* shaderFile, const char* entryPoint, WGPUPipelineLayout layout);
     WGPUBindGroupLayoutEntry createStorageTextureLayoutEntry(int binding, WGPUStorageTextureAccess access, WGPUTextureFormat format);
-    WGPUBindGroupLayoutEntry createStorageBufferLayoutEntry(int binding, size_t minSize);
+    WGPUBindGroupLayoutEntry createStorageBufferLayoutEntry(int binding, size_t minSize, bool readOnly = false);
     WGPUBindGroupEntry createStorageBufferBindGroupEntry(int binding, WGPUBuffer buffer, size_t size);
 
     // gpu resource initialization boilerplate
     bool initSimData(const Config& cfg, const ImageData* imageData, float aspectRatio);
+    void syncGridFromCpu();
+    void releaseSimGridResources();
+    bool rebuildGridResources();
+    void zeroScalarGpuTexture(WGPUTexture texture);
+    void uploadScalarGpuFieldsFromCpu();
     bool initUniformBuffer();
+    bool initSimTextures();
+    bool initHistogramResources();
     bool initTextures();
     bool initPipelineLayouts();
     bool initBindGroups();

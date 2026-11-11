@@ -1,120 +1,63 @@
-struct UniformData {
-    drawTarget: i32,
-    gridX: i32,
-    gridY: i32,
-    cellSize: f32,
-    pressureMin: f32,
-    pressureMax: f32,
-    gpuInkMode: i32, // 0=hybrid (R32 at bindings 6-8), 1=gpu (RGBA at binding 6)
-    velScale: f32,
-    windowWidth: f32,
-    windowHeight: f32,
-    simWidth: f32,
-    simHeight: f32,
-    disableHistograms: i32,
-
-    // Viewport configuration
-    viewportCount: i32,
-    viewportX: vec4<i32>,
-    viewportY: vec4<i32>,
-    viewportWidth: vec4<i32>,
-    viewportHeight: vec4<i32>,
-    viewportRenderTarget: vec4<i32>,
-    viewportRenderVelocity: vec4<i32>,
-    pad1: vec3<i32>,
-
-    // Histogram configuration
-    densityHistogramEnabled: i32,
-    densityHistogramX: i32,
-    densityHistogramY: i32,
-    densityHistogramWidth: i32,
-    densityHistogramHeight: i32,
-    velocityHistogramEnabled: i32,
-    velocityHistogramX: i32,
-    velocityHistogramY: i32,
-    velocityHistogramWidth: i32,
-    velocityHistogramHeight: i32,
-    entropyTimeSeriesEnabled: i32,
-    entropyTimeSeriesX: i32,
-    entropyTimeSeriesY: i32,
-    entropyTimeSeriesWidth: i32,
-    entropyTimeSeriesHeight: i32,
-    entropyCurrentValue: f32,
-    entropyThreshold: f32,
-    entropyBloomStrength: f32,
-    entropyAboveThreshold: i32,
-    entropyHistoryMax: f32,
-    entropyHistoryCount: i32,
-    entropyHistoryWriteIndex: i32,
-    entropyPad0: i32,
-    entropyHistory: array<vec4<f32>, 16>,
-
-    // Volume time series configuration + data (2 lines)
-    volumeTimeSeriesEnabled: i32,
-    volumeTimeSeriesX: i32,
-    volumeTimeSeriesY: i32,
-    volumeTimeSeriesWidth: i32,
-    volumeTimeSeriesHeight: i32,
-    volumeHistoryMax: f32,
-    volumeHistoryCount: i32,
-    volumeHistoryWriteIndex: i32,
-    volumePad0: i32,
-    volumeDomainHistory: array<vec4<f32>, 16>,
-    volumeMassHistory: array<vec4<f32>, 16>,
-
-    // Histogram data
-    densityHistogramMin: f32,
-    densityHistogramMax: f32,
-    densityHistogramMaxCount: i32,
-    velocityHistogramMin: f32,
-    velocityHistogramMax: f32,
-    velocityHistogramMaxCount: i32,
-    pad0: i32,
-    densityHistogramBins: array<vec4<i32>, 16>,
-    velocityHistogramBins: array<vec4<i32>, 16>,
-};
-
-@group(0) @binding(0) var<uniform> uniforms: UniformData;
-@group(0) @binding(1) var pressureSampler: sampler;
-@group(0) @binding(2) var pressureTexture: texture_2d<f32>;
-@group(0) @binding(3) var densityTexture: texture_2d<f32>;
-@group(0) @binding(4) var velocityTexture: texture_2d<f32>;
-@group(0) @binding(5) var solidTexture: texture_2d<f32>;
-@group(0) @binding(6) var inkTexture0: texture_2d<f32>; // R; RGBA in gpu mode
-@group(0) @binding(7) var inkTexture1: texture_2d<f32>; // G; unused in gpu mode
-@group(0) @binding(8) var inkTexture2: texture_2d<f32>; // B; unused in gpu mode
-
 // TODO MAIN -- WIP ^_^
 // we in the browser baby
 
-// TODO bug: up/right wind tunnel behaves differently from down/left
-// likely because of the forward texture accesses (e.g. asymmetric +1) somewhere
-// TODO bug: fluid spotted (sometimes) leaking out of bottom edge
-// TODO bug: maybe something wrong with the volume, entropy calculations
-// TODO bug: gravity basically broken
+/*
+// TODO big cleanup: test, unify, and document codebase, particularly build steps + config (& generally simplify flow of data/modularize) [WIP]
+TARGETS:
+- start from main and config again after updates; briefly document
+- GPU compute pipeline
+- histogram compute pipeline
+- GPU render pipeline
+- CPU simulation
+- desktop build (ezpz)
+- final check :)
 
-// TODO bug: mouse fidelity bad because of hand smoothing
-
-// TODO big cleanup: test, unify, and document codebase, particularly build steps + config (& generally simplify flow of data/modularize)
-//  - fix outdated config stuff (e.g. rendering vs layout)
-//  - python script for modifying simParams struct uniformly
-// TODO unify cpu and gpu stuff (at least partially)
-// TODO rebuild desktop version, test sth basic still works
-// TODO writeup html file; interactive architectural diagram; website changes
+// TODO README
+- follow the fluid simulation process to explain the major steps of the project; light and accessible overview
+that explains controls and simulation features while also being vaguely educational
+// TODO writeup html file; interactive architectural diagrams
+- flow of information (matrices/textures) throughout compute pipelines; including equations
+- more detailed description of actual project decisions, tradeoffs, development process, design philosophy, 
+  info about webgpu programming, etc.
+- analyze differences in pressure/velocity histograms between solvers (plotting script; gpu_j/gpu_gs/cpu_gs)
+*/
 
 /*
-// TODO LATER custom renderer??
-
-// TODO LATER examine differences in pressure/velocity histograms between GPU/CPU
-- see plotting script
-// TODO LATER swap to different pressure solver
-
-// TODO LATER integrate gravity with gyroscope on the phone
-
+// TODO WAY LATER better fluid entry (upgrade wind tunnel system; allow hand emissions ?)
+// TODO WAY LATER better qol/ide features
+// TODO WAY LATER better dev mode & build/release system
+// TODO WAY LATER integrate gravity with gyroscope on the phone
 // TODO WAY LATER lots of tiny memory problems in valgrind, investigate if some of these are my fault
 */
 
-// color helpers
+fn getViewportForPixel(pixelCoord: vec2<f32>) -> i32 {
+    if (uniforms.viewportCount == 0) {
+        return -1; // no viewports defined, use default rendering
+    }
+
+    for (var i = 0; i < uniforms.viewportCount; i++) {
+        let vx = f32(uniforms.viewportX[i]);
+        let vy = f32(uniforms.viewportY[i]);
+        let vw = f32(uniforms.viewportWidth[i]);
+        let vh = f32(uniforms.viewportHeight[i]);
+
+        if (pixelCoord.x >= vx && pixelCoord.x < vx + vw &&
+            pixelCoord.y >= vy && pixelCoord.y < vy + vh) {
+            return i;
+        }
+    }
+    return -1; // not in any viewport
+}
+
+fn viewportRotatedNorm(normX: f32, normY: f32, rotation: i32) -> vec2<f32> {
+    switch rotation % 4 {
+        case 0: { return vec2<f32>(normX, normY); }
+        case 1: { return vec2<f32>(normY, 1.0 - normX); }
+        case 2: { return vec2<f32>(1.0 - normX, 1.0 - normY); }
+        default: { return vec2<f32>(1.0 - normY, normX); }
+    }
+}
+
 fn mapValueToColor(value: f32, min: f32, max: f32) -> vec3<f32> {
     var clampedValue = clamp(value, min, max - 0.0001);
     var delta = max - min;
@@ -137,125 +80,6 @@ fn mapValueToColor(value: f32, min: f32, max: f32) -> vec3<f32> {
     return color;
 }
 
-fn mapValueToGreyscale(value: f32, min: f32, max: f32) -> vec3<f32> {
-    var t = (value - min) / (max - min);
-    t = clamp(t, 0.0, 1.0);
-    return vec3<f32>(t, t, t);
-}
-
-fn mapValueToHeatmap(value: f32, min: f32, max: f32) -> vec3<f32> {
-    var t = (value - min) / (max - min);
-    t = clamp(t, 0.0, 1.0);
-
-    if (t < 0.33) {
-        let k = t / 0.33;
-        return vec3<f32>(0.0, k, 1.0);
-    } else if (t < 0.66) {
-        let k = (t - 0.33) / 0.33;
-        return vec3<f32>(k, 1.0, 1.0 - k);
-    }
-
-    let k = (t - 0.66) / 0.34;
-    return vec3<f32>(1.0, 1.0 - 0.75 * k, 0.0);
-}
-
-fn getClampedCoord(coord: vec2<i32>) -> vec2<i32> {
-    return vec2<i32>(
-        clamp(coord.x, 0, uniforms.gridX - 1),
-        clamp(coord.y, 0, uniforms.gridY - 1)
-    );
-}
-
-fn sampleDensityClamped(coord: vec2<i32>) -> f32 {
-    return textureLoad(densityTexture, getClampedCoord(coord), 0).r;
-}
-
-fn sampleVelocityClamped(coord: vec2<i32>) -> vec2<f32> {
-    return textureLoad(velocityTexture, getClampedCoord(coord), 0).rg;
-}
-
-fn computeDivergenceFromVelocity(coord: vec2<i32>) -> f32 {
-    let center = sampleVelocityClamped(coord);
-    let right = sampleVelocityClamped(coord + vec2<i32>(1, 0));
-    let top = sampleVelocityClamped(coord + vec2<i32>(0, 1));
-    let bottom = sampleVelocityClamped(coord + vec2<i32>(0, -1));
-    return right.x - center.x + top.y - bottom.y;
-}
-
-fn computeLocalDivergenceScale(coord: vec2<i32>) -> f32 {
-    var maxAbsDiv = abs(computeDivergenceFromVelocity(coord));
-    maxAbsDiv = max(maxAbsDiv, abs(computeDivergenceFromVelocity(coord + vec2<i32>(1, 0))));
-    maxAbsDiv = max(maxAbsDiv, abs(computeDivergenceFromVelocity(coord + vec2<i32>(-1, 0))));
-    maxAbsDiv = max(maxAbsDiv, abs(computeDivergenceFromVelocity(coord + vec2<i32>(0, 1))));
-    maxAbsDiv = max(maxAbsDiv, abs(computeDivergenceFromVelocity(coord + vec2<i32>(0, -1))));
-    return max(maxAbsDiv, 1e-4);
-}
-
-fn mapDivergenceDebug(divergence: f32, scale: f32) -> vec3<f32> {
-    let normalized = clamp(divergence / scale, -1.0, 1.0);
-    let magnitude = pow(abs(normalized), 0.65);
-    let base = vec3<f32>(0.02, 0.02, 0.025);
-    let negColor = vec3<f32>(0.12, 0.38, 1.0);
-    let posColor = vec3<f32>(1.0, 0.24, 0.14);
-    let signedColor = select(negColor, posColor, normalized >= 0.0);
-    return clamp(base + signedColor * magnitude, vec3<f32>(0.0), vec3<f32>(1.0));
-}
-
-fn computeNormalLighting(coord: vec2<i32>) -> vec3<f32> {
-    let left = sampleDensityClamped(coord + vec2<i32>(-1, 0));
-    let right = sampleDensityClamped(coord + vec2<i32>(1, 0));
-    let top = sampleDensityClamped(coord + vec2<i32>(0, 1));
-    let bottom = sampleDensityClamped(coord + vec2<i32>(0, -1));
-
-    let dx = right - left;
-    let dy = top - bottom;
-    let normal = normalize(vec3<f32>(-dx * 4.0, -dy * 4.0, 1.0));
-    let lightDir = normalize(vec3<f32>(0.45, -0.55, 0.7));
-    let diffuse = max(dot(normal, lightDir), 0.0);
-    let intensity = 0.2 + 0.8 * diffuse;
-    return vec3<f32>(intensity, intensity, intensity);
-}
-
-fn renderThresholdBloom(coord: vec2<i32>, centerDensity: f32) -> vec3<f32> {
-    let threshold = 0.35;
-    let softness = 0.10;
-    let thresholdMask = smoothstep(threshold, threshold + softness, centerDensity);
-
-    var glowAccum = 0.0;
-    var glowSamples = 0;
-    for (var oy = -1; oy <= 1; oy++) {
-        for (var ox = -1; ox <= 1; ox++) {
-            let d = sampleDensityClamped(coord + vec2<i32>(ox, oy));
-            glowAccum += max(0.0, d - threshold);
-            glowSamples += 1;
-        }
-    }
-
-    let glow = clamp((glowAccum / f32(glowSamples)) * 2.0, 0.0, 1.0);
-    let base = mapValueToHeatmap(centerDensity, 0.0, 1.0) * (1.0 - 0.35 * thresholdMask);
-    let glowColor = vec3<f32>(1.0, 0.75, 0.31) * glow;
-    return clamp(base + glowColor, vec3<f32>(0.0), vec3<f32>(1.0));
-}
-
-fn getViewportForPixel(pixelCoord: vec2<f32>) -> i32 {
-    if (uniforms.viewportCount == 0) {
-        return -1; // No viewports defined, use default rendering
-    }
-
-    for (var i = 0; i < uniforms.viewportCount; i++) {
-        let vx = f32(uniforms.viewportX[i]);
-        let vy = f32(uniforms.viewportY[i]);
-        let vw = f32(uniforms.viewportWidth[i]);
-        let vh = f32(uniforms.viewportHeight[i]);
-
-        if (pixelCoord.x >= vx && pixelCoord.x < vx + vw &&
-            pixelCoord.y >= vy && pixelCoord.y < vy + vh) {
-            return i;
-        }
-    }
-    return -1; // Not in any viewport
-}
-
 fn mapValueToVelocityColor(value: f32, min: f32, max: f32) -> vec3<f32> {
     var clampedValue = clamp(value, min, max - 0.0001);
     var delta = max - min;
@@ -268,21 +92,6 @@ fn mapValueToVelocityColor(value: f32, min: f32, max: f32) -> vec3<f32> {
         var t = (normalized - 0.5) * 2.0;
         return vec3<f32>(1.0, 0.647 + t * 0.353, 0.0); // yellow to white
     }
-}
-
-fn mapInkToColor(r: f32, g: f32, b: f32) -> vec3<f32> {
-    return vec3<f32>(clamp(r, 0.0, 1.0), clamp(g, 0.0, 1.0), clamp(b, 0.0, 1.0));
-}
-
-fn sampleInkColor(coord: vec2<i32>) -> vec3<f32> {
-    if (uniforms.gpuInkMode != 0) {
-        return textureLoad(inkTexture0, coord, 0).rgb;
-    }
-    return mapInkToColor(
-        textureLoad(inkTexture0, coord, 0).r,
-        textureLoad(inkTexture1, coord, 0).r,
-        textureLoad(inkTexture2, coord, 0).r
-    );
 }
 
 fn distanceToLineSegment(point: vec2<f32>, lineStart: vec2<f32>, lineEnd: vec2<f32>) -> f32 {
@@ -300,12 +109,9 @@ fn distanceToLineSegment(point: vec2<f32>, lineStart: vec2<f32>, lineEnd: vec2<f
 }
 
 // VELOCITY OVERLAY
-const VELOCITY_STRIDE: i32 = 12;
-// segment length is expressed as a fraction of the stride spacing so glyphs stay
-// readable regardless of sim resolution / cells-per-pixel
+const VELOCITY_STRIDE: i32 = 16;
 const VELOCITY_MIN_LEN_FRAC: f32 = 0.4;
 const VELOCITY_MAX_LEN_FRAC: f32 = 1.0;
-// skip only effectively stationary fluid; no fraction-of-max cutoff
 const VELOCITY_MIN_SPEED: f32 = 1e-5;
 const VELOCITY_LINE_WIDTH_PX: f32 = 1.0;
 
@@ -328,8 +134,7 @@ fn drawVelocityField(coord: vec2<f32>, gridX: i32, gridY: i32, simUnitsPerPixel:
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
 
-    // snap this pixel to its nearest stride anchor so the whole glyph (which can span
-    // many cells) is evaluated by every pixel it covers, not just the anchor cell itself
+    // snap this pixel to its nearest stride anchor
     let halfStride = VELOCITY_STRIDE / 2;
     let anchorX = clamp(((gridX + halfStride) / VELOCITY_STRIDE) * VELOCITY_STRIDE, 0, uniforms.gridX - 1);
     let anchorY = clamp(((gridY + halfStride) / VELOCITY_STRIDE) * VELOCITY_STRIDE, 0, uniforms.gridY - 1);
@@ -357,7 +162,7 @@ fn drawVelocityField(coord: vec2<f32>, gridX: i32, gridY: i32, simUnitsPerPixel:
         (f32(anchorX) + 0.5) * uniforms.cellSize,
         (f32(anchorY) + 0.5) * uniforms.cellSize
     );
-    // center the glyph on the cell; brightness ramps tail -> tip to show direction
+    // center the glyph on the cell
     let lineStart = center - dir * segmentLengthWorld * 0.5;
     let lineEnd = center + dir * segmentLengthWorld * 0.5;
 
@@ -369,13 +174,12 @@ fn drawVelocityField(coord: vec2<f32>, gridX: i32, gridY: i32, simUnitsPerPixel:
     let projected = lineStart + t * line;
     let dist = distance(coord, projected);
 
-    // teardrop profile: width tapers toward the tail so each glyph reads as a brush
-    // stroke / comet rather than a blunt bar; the tip keeps a full rounded cap
+    // teardrop/comet profile
     let widthProfile = mix(0.12, 1.0, t);
     let halfWidth = lineWidthWorld * widthProfile;
     let strokeAlpha = 1.0 - smoothstep(halfWidth, halfWidth + edgeWidthWorld, dist);
 
-    // strength via velocity histogram palette; tail -> tip luminance keeps direction readable
+    // strength via velocity histogram palette
     let velColor = mapValueToVelocityColor(speed, speedMin, speedMax);
     let headBrightness = mix(0.45, 1.0, smoothstep(0.0, 1.0, t));
     let alpha = strokeAlpha * headBrightness * 0.85;
@@ -607,10 +411,6 @@ fn drawVolumeTimeSeries(pixelCoord: vec2<f32>) -> vec4<f32> {
 }
 
 fn drawHistograms(pixelCoord: vec2<f32>) -> vec4<f32> {
-    if (uniforms.disableHistograms != 0) {
-        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    }
-
     let volumeIndicator = drawVolumeTimeSeries(pixelCoord);
     if (volumeIndicator.a > 0.0) {
         return volumeIndicator;
@@ -621,7 +421,7 @@ fn drawHistograms(pixelCoord: vec2<f32>) -> vec4<f32> {
         return entropyIndicator;
     }
 
-    // Draw density histogram (configurable position)
+    // density histogram
     if (uniforms.densityHistogramEnabled != 0) {
         let dhistX = f32(uniforms.densityHistogramX);
         let dhistY = f32(uniforms.densityHistogramY);
@@ -677,7 +477,7 @@ fn drawHistograms(pixelCoord: vec2<f32>) -> vec4<f32> {
         }
     }
 
-    // Draw velocity histogram (configurable position)
+    // velocity histogram
     if (uniforms.velocityHistogramEnabled != 0) {
         let vhistX = f32(uniforms.velocityHistogramX);
         let vhistY = f32(uniforms.velocityHistogramY);
@@ -746,82 +546,80 @@ fn fs_main(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
         return histColor;
     }
 
-    // Check which viewport we're in
+    // check which viewport we're in
     let viewportIndex = getViewportForPixel(pixelCoord);
 
-    var finalColor: vec3<f32> = vec3<f32>(0.0);
+    var finalColor = vec4<f32>(0.0);
 
     if (viewportIndex >= 0) {
-        // Render to viewport
+        // render to viewport
         let vx = f32(uniforms.viewportX[viewportIndex]);
         let vy = f32(uniforms.viewportY[viewportIndex]);
         let vw = f32(uniforms.viewportWidth[viewportIndex]);
         let vh = f32(uniforms.viewportHeight[viewportIndex]);
 
-        // Transform pixel to simulation coordinates relative to viewport
+        // transform pixel to simulation coordinates relative to viewport
         let normX = (pixelCoord.x - vx) / vw;
         let normY = (pixelCoord.y - vy) / vh;
+        let rotation = uniforms.viewportRotation[viewportIndex];
+        let rotated = viewportRotatedNorm(normX, normY, rotation);
         let worldCoord = vec2<f32>(
-            normX * uniforms.simWidth,
-            (1.0 - normY) * uniforms.simHeight  // flip Y for WebGL convention
+            rotated.x * uniforms.simWidth,
+            (1.0 - rotated.y) * uniforms.simHeight  // flip Y for WebGL convention
         );
 
-        // Convert to grid coordinates
+        // convert to grid coordinates
         let simCoord = worldCoord / uniforms.cellSize;
         let texCoord = vec2<i32>(i32(simCoord.x), i32(simCoord.y));
 
-        // Guard against sampling outside the simulation domain
+        // don't sample outside simulation domain
         if (texCoord.x < 0 || texCoord.x >= uniforms.gridX ||
             texCoord.y < 0 || texCoord.y >= uniforms.gridY) {
-            return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+            return vec4<f32>(0.0);
         }
 
-        // Use viewport's render target
+        // use viewport's render target
         let viewportRenderTarget = uniforms.viewportRenderTarget[viewportIndex];
+        let viewColor = applyRenderTarget(
+            viewportRenderTarget,
+            texCoord,
+            pressureTexture,
+            densityTexture,
+            velocityTexture,
+            solidTexture,
+            inkTexture
+        );
+        var outRgb = viewColor.rgb;
+        var outA = viewColor.a;
 
-        // Load and render simulation data
-        let pressure = textureLoad(pressureTexture, texCoord, 0).r;
-        let density = textureLoad(densityTexture, texCoord, 0).r;
-        let solid = textureLoad(solidTexture, texCoord, 0).r;
-
-        if (solid > 0.5) {
-            if (viewportRenderTarget == 0) {
-                finalColor = mapValueToColor(pressure, uniforms.pressureMin, uniforms.pressureMax);
-            } else if (viewportRenderTarget == 1) {
-                finalColor = mapValueToGreyscale(density, 0.0, 1.0);
-            } else if (viewportRenderTarget == 2) {
-                finalColor = mapValueToColor(pressure, uniforms.pressureMin, uniforms.pressureMax);
-                finalColor = finalColor - density * vec3<f32>(1.0, 1.0, 1.0);
-                finalColor = max(finalColor, vec3<f32>(0.0, 0.0, 0.0));
-            } else if (viewportRenderTarget == 3) {
-                finalColor = sampleInkColor(texCoord);
-            } else if (viewportRenderTarget == 4) {
-                let divergence = computeDivergenceFromVelocity(texCoord);
-                let divergenceScale = computeLocalDivergenceScale(texCoord);
-                finalColor = mapDivergenceDebug(divergence, divergenceScale);
-            } else if (viewportRenderTarget == 5) {
-                finalColor = mapValueToHeatmap(density, 0.0, 1.0);
-            } else if (viewportRenderTarget == 6) {
-                finalColor = computeNormalLighting(texCoord);
-            } else if (viewportRenderTarget == 7) {
-                finalColor = renderThresholdBloom(texCoord, density);
+        if (uniforms.viewportCameraAlpha[viewportIndex] != 0) {
+            let density = textureLoad(densityTexture, texCoord, 0).r;
+            let mask = 1.0 - pow(clamp(density, 0.0, 1.0), uniforms.cameraBackgroundDensityExponent);
+            if (uniforms.viewportCameraAlpha[viewportIndex] == 2) {
+                outA = outA * (1.0 - mask);
+            } else {
+                outA = outA * mask;
             }
-        } else {
-            finalColor = vec3<f32>(0.47);
         }
 
-        // Draw velocity field if enabled for this viewport
+        // premultiply so transparent views composite correctly over DOM layers
+        finalColor = vec4<f32>(outRgb * outA, outA);
+
+        // velocity field
         if (uniforms.viewportRenderVelocity[viewportIndex] != 0) {
             let simUnitsPerPixel = max(uniforms.simWidth / vw, uniforms.simHeight / vh);
             var velColor = drawVelocityField(worldCoord, texCoord.x, texCoord.y, simUnitsPerPixel);
             if (velColor.a > 0.0) {
-                finalColor = velColor.rgb * velColor.a + finalColor * (1.0 - velColor.a);
+                let srcA = velColor.a;
+                let outA = srcA + finalColor.a * (1.0 - srcA);
+                let outRgb = velColor.rgb * srcA + finalColor.rgb * (1.0 - srcA);
+                finalColor = vec4<f32>(outRgb, outA);
             }
         }
     } else {
-        // background (matches charliemax.dev --offblack)
-        finalColor = vec3<f32>(5.0 / 255.0);
+        // outside viewports: fully transparent
+        finalColor = vec4<f32>(0.0);
     }
 
-    return vec4<f32>(finalColor, 1.0);
+    return finalColor;
 }
